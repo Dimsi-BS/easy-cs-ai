@@ -4,4 +4,4 @@
 
 This directory contains the files specific to the snap packaging layer. Due to technical requirements, some of the packaging files may be at the root of the repository.
 
-See also: [install_scripts](../install_scripts/README.md), the layer this package wraps.
+See also: [install_scripts](../install_scripts/README.md), the layer this package wraps, and [docs/snap-commands](../docs/snap-commands.md) for the planned command reference.
