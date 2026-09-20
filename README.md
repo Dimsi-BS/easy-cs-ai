@@ -71,6 +71,8 @@ Several AI inference engines are supported:
 
 Some inference engines do not provide authentication nor HTTPS so a reverse proxy wraps them to provide HTTPS and an API Key access.
 
+- nginx
+
 ### AI Model Provisioning
 
 - llmfit
@@ -91,7 +93,7 @@ A script generator helps you to generate parameterless install-and-configure scr
 
 ### Snap Package
 
-The snap package is wrapping everything in one package. Each install-and-configure script is reachable from the snap commands and each component's commands are mirrored by the snap.
+The snap package is wrapping everything in one package. Each install-and-configure script is reachable from the snap commands and each component's commands are mirrored by the snap. It also includes the HTTPS and API Key wrapping.
 
 Extra commands :
 
@@ -109,17 +111,17 @@ Same as the install scripts but with the snap. One script with some parameters t
 
 Nothing is implemented yet — this is the first commit. Planned work, in dependency order:
 
-| Layer | Item | Status |
-| --- | --- | --- |
-| Install scripts | Ollama install script | Not started |
-| Install scripts | vLLM install script | Not started |
-| Install scripts | llmfit install script | Not started |
+| Layer           | Item                            | Status      |
+| --------------- | ------------------------------- | ----------- |
+| Install scripts | Ollama install script           | Not started |
+| Install scripts | vLLM install script             | Not started |
+| Install scripts | llmfit install script           | Not started |
 | Install scripts | Reverse proxy (HTTPS + API key) | Not started |
-| Install scripts | LibreChat install script | Not started |
-| Install scripts | Script generator | Not started |
-| Snap package | Core snap wrapping the above | Not started |
-| Snap package | `status` command | Not started |
-| Snap package | `install` command | Not started |
-| Snap package | `add` model command | Not started |
-| VM post-install | Post-install script | Not started |
-| VM post-install | Script generator | Not started |
+| Install scripts | LibreChat install script        | Not started |
+| Install scripts | Script generator                | Not started |
+| Snap package    | Core snap wrapping the above    | Not started |
+| Snap package    | `status` command                | Not started |
+| Snap package    | `install` command               | Not started |
+| Snap package    | `add` model command             | Not started |
+| VM post-install | Post-install script             | Not started |
+| VM post-install | Script generator                | Not started |
