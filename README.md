@@ -47,6 +47,17 @@ graph TD
 
 Each layer wraps the previous one and can be used on its own: install scripts alone for a single server, the snap package for a self-contained bundle, or the VM post-install layer for provisioning fleets of VMs.
 
+## Project Layout
+
+- [install_scripts](install_scripts/README.md) — Layer 1: install-and-configure scripts
+- [snap_package](snap_package/README.md) — Layer 2: snap packaging
+- [vm_script](vm_script/README.md) — Layer 3: VM post-install
+- [generators](generators/README.md) — script generators shared by the layers above
+- [search](search/README.md) — findings on candidate components and tools
+- [docs](docs/README.md) — design decisions and write-ups
+- [tests](tests/README.md) — tests validating scripts, package and VM provisioning
+- [.github/workflows](.github/workflows/README.md) — CI workflows
+
 ## Components
 
 ### AI Inference Engines
