@@ -62,6 +62,8 @@ Each layer wraps the previous one and can be used on its own: install scripts al
 
 ### AI Inference Engines
 
+Several AI inference engines are supported:
+
 - Ollama
 - vLLM
 
