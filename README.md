@@ -1,6 +1,6 @@
 # All-in-one zero-conf local AI
 
-This project is a wrapper of the best open-source AI tools available out there.
+This project is toolbox which wraps the best open-source AI tools available out there.
 
 > **Status: early planning.** No code has been written yet — this README describes the intended design and roadmap, not a working tool. See [Roadmap](#roadmap) for what's built vs. planned.
 
