@@ -107,6 +107,12 @@ See [docs/snap-commands](docs/snap-commands.md) for the full command reference.
 
 Same as the install scripts but with the snap. One script with some parameters to install and configure the snap in one go and a generator script to generate some parameterless install-and-configure scripts with fixed parameters.
 
+### Apache CloudStack integration
+
+TODO
+- init VM, properly provisionned
+- show AI model requests (Is it used ?)
+
 ## Roadmap
 
 Nothing is implemented yet — this is the first commit. Planned work, in dependency order:
