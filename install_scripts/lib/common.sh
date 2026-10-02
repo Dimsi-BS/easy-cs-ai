@@ -48,3 +48,31 @@ die() {
     log_error "$@"
     exit "$code"
 }
+
+# --- Paths and test mode (spec-script-contract.md, "Paths and testability") --
+# EASY_CS_AI_ROOT is a prefix applied to every absolute path a script writes.
+# When set to something other than "/", the scripts run in test mode: no
+# package installation, no service control, no journal, no root requirement.
+
+# is_test_root: succeeds when EASY_CS_AI_ROOT points somewhere other than "/".
+is_test_root() {
+    local root="${EASY_CS_AI_ROOT:-/}"
+    [[ "$root" != "/" && -n "$root" ]]
+}
+
+# root_path <absolute-path>: print the path under EASY_CS_AI_ROOT.
+root_path() {
+    local path="${1:-}"
+    if [[ "$path" != /* ]]; then
+        die "$EXIT_ERROR" "root_path: absolute path expected, got '$path'"
+    fi
+    if is_test_root; then
+        printf '%s%s\n' "${EASY_CS_AI_ROOT%/}" "$path"
+    else
+        printf '%s\n' "$path"
+    fi
+}
+
+# state_dir / config_dir: the logical directories, under EASY_CS_AI_ROOT.
+state_dir() { root_path "${EASY_CS_AI_STATE_DIR:-/var/lib/easy-cs-ai}"; }
+config_dir() { root_path "${EASY_CS_AI_CONFIG_DIR:-/etc/easy-cs-ai}"; }
