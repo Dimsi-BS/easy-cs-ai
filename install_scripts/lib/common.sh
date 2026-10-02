@@ -264,3 +264,99 @@ generate_secret() {
     head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n'
     printf '\n'
 }
+
+# --- Locking (spec-script-contract.md, "Locking") ---------------------------
+# Two flock-based locks, always taken component first, then state:
+#   - state lock     <state>/.lock, fd 9, a few seconds, waits (60 s) then exit 1
+#   - component lock <state>/locks/<type>-<name>.lock, fd 8, whole action,
+#                    fails at once with exit 4 unless a lock timeout is given
+# Neither is reentrant: the held locks are listed in EASY_CS_AI_LOCK_HELD, and
+# taking one twice is a bug that ends with exit 1 instead of a silent hang.
+# The command runs with the lock descriptors closed (the lock stays held by
+# this shell), so background children it starts never keep the lock alive.
+# The command runs in the current shell, so it can be a function.
+
+# _lock_check_free <lock-id>: die if this lock is already held by this chain.
+_lock_check_free() {
+    if [[ " ${EASY_CS_AI_LOCK_HELD:-} " == *" $1 "* ]]; then
+        die "$EXIT_ERROR" "lock '$1' is already held, locks are not reentrant"
+    fi
+}
+
+# with_state_lock <command…>: run the command under the state lock, waiting up
+# to 60 s for it (the contract's value).
+with_state_lock() {
+    with_state_lock_timeout 60 "$@"
+}
+
+# with_state_lock_timeout <seconds> <command…>: same, with another wait. Busy
+# after that: exit 1. A state directory that is not an absolute path ends the
+# script (die in root_path) before any lock file is created.
+with_state_lock_timeout() {
+    if [[ $# -lt 2 || ! "$1" =~ ^[0-9]+$ ]]; then
+        die "$EXIT_USAGE" "with_state_lock: usage: with_state_lock <command…>"
+    fi
+    local wait="$1"
+    shift
+    _lock_check_free state
+
+    local dir
+    dir="$(state_dir)" || exit "$?"
+    mkdir -p "$dir"
+    exec 9>>"$dir/.lock"
+    if ! flock -w "$wait" 9; then
+        exec 9>&-
+        die "$EXIT_ERROR" "could not take the state lock within ${wait}s"
+    fi
+
+    local previous="${EASY_CS_AI_LOCK_HELD:-}" rc=0
+    export EASY_CS_AI_LOCK_HELD="$previous state"
+    "$@" 8>&- 9>&-
+    rc=$?
+    exec 9>&-
+    export EASY_CS_AI_LOCK_HELD="$previous"
+    return "$rc"
+}
+
+# with_component_lock <type> <name> <action> <command…>: run the command under the lock
+# of one component. Busy: exit 4 naming the holder's action and pid, unless
+# EASY_CS_AI_<NAME>_LOCK_TIMEOUT (--lock-timeout) gives a number of seconds to
+# wait. The action (install, uninstall, add-model…) is recorded in the lock
+# file so that a busy message can name it.
+with_component_lock() {
+    if [[ $# -lt 4 ]]; then
+        die "$EXIT_USAGE" "with_component_lock: usage: with_component_lock <type> <name> <action> <command…>"
+    fi
+    local type="$1" name="$2" action="$3"
+    shift 3
+    local id="component:${type}-${name}"
+    _lock_check_free "$id"
+
+    local dir file wait
+    dir="$(state_dir)/locks" || exit "$?"
+    file="$dir/${type}-${name}.lock"
+    wait="$(get_option "$name" lock-timeout)"
+    wait="${wait:-0}"
+    if [[ ! "$wait" =~ ^[0-9]+$ ]]; then
+        die "$EXIT_USAGE" "invalid lock timeout '$wait' for $name: a number of seconds is expected"
+    fi
+    mkdir -p "$dir"
+    exec 8>>"$file"
+    if ! flock -w "$wait" 8; then
+        exec 8>&-
+        local holder
+        holder="$(cat "$file" 2>/dev/null || true)"
+        local holder_action="${holder%% *}" holder_pid="${holder##* }"
+        die "$EXIT_PRECONDITION" "another action is running on $name (${holder_action:-unknown}, pid ${holder_pid:-unknown})"
+    fi
+    # Informative only: who holds the lock. Written after the lock is taken.
+    printf '%s %s\n' "$action" "$$" >"$file"
+
+    local previous="${EASY_CS_AI_LOCK_HELD:-}" rc=0
+    export EASY_CS_AI_LOCK_HELD="$previous $id"
+    "$@" 8>&- 9>&-
+    rc=$?
+    exec 8>&-
+    export EASY_CS_AI_LOCK_HELD="$previous"
+    return "$rc"
+}
