@@ -34,17 +34,14 @@ graph TD
     end
     subgraph L1["Layer 1: Install Scripts"]
         ISGen["Script Generator"] -.generates.-> IS["Install Scripts"]
-        IS --> Ollama
-        IS --> vLLM
-        IS --> llmfit
-        IS --> Proxy["Reverse Proxy\n(HTTPS + API Key)"]
-        IS --> LibreChat
+        IS --> Engine
+        IS --> Provisioning
+        IS --> Proxy
+        IS --> Chat
     end
-    Ollama["Ollama"] --> Proxy
-    vLLM["vLLM"] --> Proxy
-    Proxy --> LibreChat["LibreChat (Web UI)"]
-    llmfit["llmfit (Model Provisioning)"] --> Ollama
-    llmfit --> vLLM
+    Engine["Inference Engine\n(e.g. Ollama, vLLM)"] --> Proxy
+    Proxy["Reverse Proxy: HTTPS + API Key\n(e.g. nginx)"] --> Chat["Chat Interface\n(e.g. LibreChat)"]
+    Provisioning["Model Provisioning\n(e.g. llmfit)"] --> Engine
 ```
 
 Each layer wraps the previous one and can be used on its own: install scripts alone for a single server, the package/CLI for a self-contained bundle, or the VM post-install layer for provisioning fleets of VMs.
