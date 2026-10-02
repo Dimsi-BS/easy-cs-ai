@@ -28,7 +28,9 @@ graph TD
     end
     subgraph L2["Layer 2: Package / CLI"]
         PKG["easy-cs-ai CLI\n(tarball / deb / rpm)"] --> IS
-        PKG --> Extra["Extra commands:\nstatus / install / add model"]
+        PKG --> Extra["Extra commands:\nstatus / install / add model / generate"]
+        Extra -.generate install-script.-> ISGen
+        Extra -.generate vm-script.-> VMGen
     end
     subgraph L1["Layer 1: Install Scripts"]
         ISGen["Script Generator"] -.generates.-> IS["Install Scripts"]
@@ -100,6 +102,7 @@ Extra commands :
 - `status`, listing what is currently installed and running
 - `install`, installing a new component
 - `add`, adding a new model in an inference engine, wrapping it with the reverse proxy if needed and adding it to the chat interface website
+- `generate`, producing parameterless scripts with fixed parameters: `generate install-script` calls the layer 1 script generator and `generate vm-script` calls the layer 3 (VM post-install) script generator
 
 See [docs/cli-commands](docs/cli-commands.md) for the full command reference and [docs/decision-packaging](docs/decision-packaging.md) for the packaging choices.
 
@@ -130,5 +133,6 @@ Planned work, in dependency order:
 | Package / CLI   | `status` command                 | Not started |
 | Package / CLI   | `install` command                | Not started |
 | Package / CLI   | `add` model command              | Not started |
+| Package / CLI   | `generate` command               | Not started |
 | VM post-install | Post-install script              | Not started |
 | VM post-install | Script generator                 | Not started |

@@ -11,5 +11,9 @@ Here is what the commands roughly look like, as exposed by the `easy-cs-ai` CLI 
     - chat-interface
 - `<component-name> …`: mirrors the component's commands
 - `add <model-name> [--engine <engine-name>] [--chat-interface <interface-name>]`: uses llmfit to check if the model can be installed, adds the model to the inference engine, wraps it with HTTPS and API Key if not included in the inference engine and links it to the chat interface. Defaults to the currently installed inference engine and the currently installed chat web interface.
+- `generate <script-type> [parameters…]`: calls a [script generator](../generators/README.md) to produce a parameterless script with fixed parameters:
+  - script-type:
+    - install-script: layer 1 install-and-configure script, via the install scripts generator
+    - vm-script: layer 3 VM post-install script, via the VM script generator
 
 See also: [package](../package/README.md), the layer these commands belong to.
