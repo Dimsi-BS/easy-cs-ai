@@ -360,3 +360,274 @@ with_component_lock() {
     export EASY_CS_AI_LOCK_HELD="$previous"
     return "$rc"
 }
+
+# --- State (spec-state-format.md) -------------------------------------------
+# One JSON file per installed component: <state>/components/<name>.json.
+# Writers take the state lock (callers never hold it) and write atomically
+# (temp file, jq empty, mv). Readers take no lock. Everything below needs jq.
+# The *_unlocked functions run inside with_state_lock and are internal.
+
+readonly STATE_SCHEMA_VERSION=1
+
+_require_jq() {
+    if ! command -v jq >/dev/null 2>&1; then
+        die "$EXIT_PRECONDITION" "jq is required but not installed"
+    fi
+}
+
+# _state_now: current time, ISO 8601 UTC.
+_state_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# _state_check_name <name>: component names are plain words, never a path.
+_state_check_name() {
+    if [[ ! "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        die "$EXIT_USAGE" "invalid component name '${1:-}': lowercase letters, digits and dashes expected"
+    fi
+}
+
+# _state_dir_components: directory of the component files.
+_state_dir_components() {
+    local dir
+    dir="$(state_dir)" || exit "$?"
+    printf '%s/components\n' "$dir"
+}
+
+# _state_file <name>: path of the file of one component.
+_state_file() {
+    _state_check_name "$1"
+    local dir
+    dir="$(_state_dir_components)" || exit "$?"
+    printf '%s/%s.json\n' "$dir" "$1"
+}
+
+# _state_store_unlocked <name> <json>: validate and write one component file
+# atomically (temp file in the same directory, jq empty, mv), mode 0644.
+_state_store_unlocked() {
+    local name="$1" json="$2" file dir tmp
+    file="$(_state_file "$name")" || exit "$?"
+    dir="${file%/*}"
+    mkdir -p "$dir"
+    tmp="$(mktemp "$dir/.${name}.XXXXXX")"
+    printf '%s\n' "$json" >"$tmp"
+    if ! jq empty "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        die "$EXIT_ERROR" "refusing to write invalid JSON for component $name"
+    fi
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$file"
+}
+
+# _state_names [<type>]: component names, one per line, sorted.
+_state_names() {
+    local dir file
+    dir="$(_state_dir_components)" || exit "$?"
+    for file in "$dir"/*.json; do
+        [[ -e "$file" ]] || continue
+        if [[ -n "${1:-}" ]]; then
+            jq -e --arg t "$1" '.type == $t' "$file" >/dev/null 2>&1 || continue
+        fi
+        file="${file##*/}"
+        printf '%s\n' "${file%.json}"
+    done
+}
+
+# _state_defaults <type>: names of the components of this type flagged default.
+_state_defaults() {
+    local dir file
+    dir="$(_state_dir_components)" || exit "$?"
+    for file in "$dir"/*.json; do
+        [[ -e "$file" ]] || continue
+        jq -e --arg t "$1" '.type == $t and .default == true' "$file" >/dev/null 2>&1 || continue
+        file="${file##*/}"
+        printf '%s\n' "${file%.json}"
+    done
+}
+
+# _state_set_default_flag_unlocked <name> <true|false>: change one flag, and
+# updated_at when it actually changed.
+_state_set_default_flag_unlocked() {
+    local name="$1" flag="$2" file old new
+    file="$(_state_file "$name")" || exit "$?"
+    old="$(cat "$file")"
+    new="$(jq --argjson f "$flag" --arg now "$(_state_now)" \
+        'if .default == $f then . else .default = $f | .updated_at = $now end' <<<"$old")"
+    if [[ "$new" != "$old" ]]; then
+        _state_store_unlocked "$name" "$new"
+    fi
+}
+
+# _state_clear_other_defaults_unlocked <type> <name>: the writer sets the new
+# flag first (done by the caller), then clears the others.
+_state_clear_other_defaults_unlocked() {
+    local other
+    while IFS= read -r other; do
+        if [[ -n "$other" && "$other" != "$2" ]]; then
+            _state_set_default_flag_unlocked "$other" false
+        fi
+    done < <(_state_defaults "$1")
+}
+
+# _state_write_unlocked <name> <json>
+_state_write_unlocked() {
+    local name="$1" json="$2" file old merged now type others
+    file="$(_state_file "$name")" || exit "$?"
+    now="$(_state_now)"
+    if ! jq -e 'type == "object"' <<<"$json" >/dev/null 2>&1; then
+        die "$EXIT_ERROR" "state for $name is not a JSON object"
+    fi
+    if [[ "$(jq -r '.name // empty' <<<"$json")" != "$name" ]]; then
+        die "$EXIT_ERROR" "state for $name has a different or missing \"name\""
+    fi
+    type="$(jq -r '.type // empty' <<<"$json")"
+    case "$type" in
+        engine | chat-interface | proxy | provisioning) ;;
+        *) die "$EXIT_ERROR" "state for $name has an invalid or missing \"type\": '$type'" ;;
+    esac
+
+    old='{}'
+    if [[ -f "$file" ]]; then
+        old="$(cat "$file")"
+    fi
+    # Unknown fields of the existing file are kept (old + new, new wins).
+    merged="$(jq --argjson old "$old" --arg now "$now" --argjson v "$STATE_SCHEMA_VERSION" \
+        '$old + . | .schema_version = (.schema_version // $v)
+         | .installed_at = ($old.installed_at // .installed_at // $now)' <<<"$json")"
+
+    # The first component of a type becomes its default, unless told otherwise.
+    if [[ "$(jq 'has("default")' <<<"$merged")" == "false" ]]; then
+        others="$(_state_defaults "$type" | grep -vx "$name" || true)"
+        if [[ -z "$others" ]]; then
+            merged="$(jq '.default = true' <<<"$merged")"
+        else
+            merged="$(jq '.default = false' <<<"$merged")"
+        fi
+    fi
+
+    # Rewrite only when the content changed, so updated_at means something.
+    if [[ "$old" != '{}' ]] &&
+        [[ "$(jq -S 'del(.updated_at)' <<<"$old")" == "$(jq -S 'del(.updated_at)' <<<"$merged")" ]]; then
+        return 0
+    fi
+    merged="$(jq --arg now "$now" '.updated_at = $now' <<<"$merged")"
+    _state_store_unlocked "$name" "$merged"
+
+    if [[ "$(jq '.default' <<<"$merged")" == "true" ]]; then
+        _state_clear_other_defaults_unlocked "$type" "$name"
+    fi
+}
+
+# state_write <component> <json>: create or update the state of a component.
+# Fields the writer does not know are kept, installed_at is kept, updated_at
+# only changes when the content does, and the first component of a type
+# becomes its default. A "default": true clears the flag of the others.
+state_write() {
+    _require_jq
+    if [[ $# -ne 2 ]]; then
+        die "$EXIT_USAGE" "state_write: usage: state_write <component> <json>"
+    fi
+    _state_check_name "$1"
+    with_state_lock _state_write_unlocked "$1" "$2"
+}
+
+# state_read <component>: print the state JSON. Returns 1, printing nothing,
+# when the component has no state. No lock (writes are atomic). A state of a
+# newer schema than this library knows is refused (exit 1).
+state_read() {
+    _require_jq
+    local file version
+    file="$(_state_file "${1:-}")" || exit "$?"
+    if [[ ! -f "$file" ]]; then
+        return 1
+    fi
+    if ! version="$(jq -er '.schema_version' "$file" 2>/dev/null)"; then
+        die "$EXIT_ERROR" "state file $file is not valid or has no schema_version"
+    fi
+    if ((version > STATE_SCHEMA_VERSION)); then
+        die "$EXIT_ERROR" "state file $file has schema_version $version, this version understands up to $STATE_SCHEMA_VERSION"
+    fi
+    cat "$file"
+}
+
+# state_list [<type>]: names of the components that have a state, sorted.
+state_list() {
+    _require_jq
+    _state_names "${1:-}"
+}
+
+_state_remove_unlocked() {
+    local name="$1" file type was_default remaining
+    file="$(_state_file "$name")" || exit "$?"
+    if [[ ! -f "$file" ]]; then
+        return 0
+    fi
+    type="$(jq -r '.type // empty' "$file")"
+    was_default="$(jq -r '.default // false' "$file")"
+    rm -f "$file"
+    # The default is gone: the only component left of the type is promoted,
+    # otherwise the type has no default and nothing is guessed.
+    if [[ "$was_default" == "true" && -n "$type" ]]; then
+        remaining="$(_state_names "$type")"
+        if [[ -n "$remaining" && "$remaining" != *$'\n'* ]]; then
+            _state_set_default_flag_unlocked "$remaining" true
+        fi
+    fi
+}
+
+# state_remove <component>: delete the state of a component (nothing to do if
+# it has none), and promote the last remaining component of its type to
+# default if it was the default.
+state_remove() {
+    _require_jq
+    if [[ $# -ne 1 ]]; then
+        die "$EXIT_USAGE" "state_remove: usage: state_remove <component>"
+    fi
+    _state_check_name "$1"
+    with_state_lock _state_remove_unlocked "$1"
+}
+
+# defaults_get <type>: print the name of the default component of a type.
+# Returns 1, printing nothing, when the type has none. Several defaults are
+# read again once (a change may be in progress), then it is an error (exit 1).
+defaults_get() {
+    _require_jq
+    local names count
+    names="$(_state_defaults "${1:-}")"
+    count="$(grep -c . <<<"$names" || true)"
+    if ((count > 1)); then
+        sleep 1
+        names="$(_state_defaults "$1")"
+        count="$(grep -c . <<<"$names" || true)"
+        if ((count > 1)); then
+            die "$EXIT_ERROR" "several defaults for type $1 ($(tr '\n' ' ' <<<"$names")): run 'install $1 <name> --default' to repair"
+        fi
+    fi
+    if ((count == 0)); then
+        return 1
+    fi
+    printf '%s\n' "$names"
+}
+
+_defaults_set_unlocked() {
+    local type="$1" name="$2" file
+    file="$(_state_file "$name")" || exit "$?"
+    if [[ ! -f "$file" ]]; then
+        die "$EXIT_PRECONDITION" "$name is not installed"
+    fi
+    if [[ "$(jq -r '.type' "$file")" != "$type" ]]; then
+        die "$EXIT_PRECONDITION" "$name is not a component of type $type"
+    fi
+    _state_set_default_flag_unlocked "$name" true
+    _state_clear_other_defaults_unlocked "$type" "$name"
+}
+
+# defaults_set <type> <name>: make a component the default of its type. The
+# new flag is set first, then the others are cleared, so an interruption
+# leaves two defaults (repaired by running it again), never none.
+defaults_set() {
+    _require_jq
+    if [[ $# -ne 2 ]]; then
+        die "$EXIT_USAGE" "defaults_set: usage: defaults_set <type> <name>"
+    fi
+    _state_check_name "$2"
+    with_state_lock _defaults_set_unlocked "$1" "$2"
+}
