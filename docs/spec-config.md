@@ -2,14 +2,14 @@
 
 [← Back to docs](README.md)
 
-**Status:** draft (see [open questions](#open-questions))
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions))
 
 ## Purpose
 
 One declarative **configuration file** describes a deployment: which components, with which options, and which models. It has two uses, with one format:
 
 - `easy-cs-ai apply <file>` (layer 2) interprets it and makes the machine match it;
-- the [generator](spec-vm-generator.md) reads it as its `--answers-file` (replay a session without prompting, tests) and writes it at the end of an interactive session.
+- the [generator](spec-vm-generator.md) writes it at the end of an interactive session (`--config-only`) and reads it back with `--config` to generate a script without prompting (regeneration, tests).
 
 For the VM post-install layer, the generated script embeds the configuration and hands it to `apply`, so the configuration travels **inside the generated script**: no external input file (see [spec: VM script generator](spec-vm-generator.md#generated-script)). The package itself is downloaded from a pinned source, not embedded, see [decision: VM script generator](decision-vm-generator.md).
 

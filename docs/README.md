@@ -14,5 +14,5 @@ This directory contains design decisions and write-ups about the project, comple
 - [Spec: script contract](spec-script-contract.md) — actions, parameters, secrets, output, exit codes and idempotence rules shared by all install scripts
 - [Spec: state format](spec-state-format.md) — layout and JSON schema of `/var/lib/easy-cs-ai/`, feeding `status` and the defaults of `add`
 - [Spec: CLI](spec-cli.md) — dispatch, `status`, `install`, `uninstall`, `add` orchestration with rollback, CLI exit codes
-- [Spec: configuration file and `apply`](spec-config.md) — declarative JSON deployment description, interpreted by `apply`, shared with the generator as `--answers-file`
+- [Spec: configuration file and `apply`](spec-config.md) — declarative JSON deployment description, interpreted by `apply`, written by the generator (`--config-only`) and read back with `--config`
 - [Spec: VM script generator](spec-vm-generator.md) — interactive session, package source, shape of the generated VM script

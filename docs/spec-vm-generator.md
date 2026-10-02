@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** draft (see [open questions](#open-questions))
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions))
 
 ## Purpose
 
@@ -10,7 +10,7 @@ The generator produces a **parameterless VM post-install script** (layer 3) with
 
 It builds on the [script contract](spec-script-contract.md) (`describe`, `requires`, options), the [CLI spec](spec-cli.md) and the [configuration file](spec-config.md); it does not repeat them.
 
-The common thread: **a session produces a configuration** (the format of [spec: config](spec-config.md)), and the generator turns it into the VM script. The same file is what `--answers-file` reads back.
+The common thread: **a session produces a configuration** (the format of [spec: config](spec-config.md)), and the generator turns it into the VM script. The same file is what `--config <file>` reads back, to generate without a session.
 
 ## Layout
 
@@ -26,19 +26,21 @@ It is reached through `easy-cs-ai generate` (see [CLI](spec-cli.md#generate)), w
 
 ## Interaction
 
-- The generator is the **only interactive program** of the project. Prompts and the summary go to stderr, answers are read from stdin. The result is written to the file given by `--output <path>` (default `./easy-cs-ai-vm.sh`, or `./easy-cs-ai.json` for `config`), never to stdout.
+- The generator is the **only interactive program** of the project. Prompts and the summary go to stderr, answers are read from stdin. The result is written to the file given by `--output <path>` (default `./easy-cs-ai-vm.sh`, or `./easy-cs-ai.json` with `--config-only`), never to stdout.
 - Every question shows its default (the script's own default from `describe`), what it means (the `description` of `describe`) and is validated before moving on. Invalid input asks again, it never aborts the session.
 - Nothing is chosen silently: a component is part of the output only if the administrator picked it, or accepted a dependency the generator proposed.
 - `--help`, `--version`, `--verbose` are accepted; `--dry-run` runs the whole session and prints the result to stderr without writing it.
 - The generator needs no root and changes nothing on the machine.
 
-### `--answers-file <file>`
+### `--config <file>`
 
-Replays a session **without any prompt**. The file is a [configuration](spec-config.md) and is validated first, with the same rules and the same exit code 2 as `apply`. It must be complete: the generator never asks the missing part, it reports it. The [package source](#package-source) comes from the options below, not from the file.
+Takes the [configuration](spec-config.md) from a file instead of a session: **no prompt at all**. There is no separate "answers" format: it is the configuration, the one `apply` reads and `--config-only` writes. The file is validated first, with the same rules and the same exit code 2 as `apply`. It must be complete: the generator never asks the missing part, it reports it. The [package source](#package-source) comes from its own options, not from the file.
 
+- It regenerates a script without answering again, for instance to move to a newer package version (a generated script is a snapshot, see [Generated script](#generated-script)).
 - It makes a generation reproducible and testable: `bats` tests generate a script from a file and check it.
-- A file written by an interactive session (or by `generate --config-only`) is a valid answers file, so a session can be done once by hand, then replayed.
-- With `--answers-file`, the summary is printed on stderr and **not** asked for confirmation.
+- A session can be done once by hand with `--config-only`, the file reviewed or edited, then turned into a script with `--config`.
+- The summary is printed on stderr and **not** asked for confirmation.
+- Incompatible with `--config-only` (it would only copy the file): exit 2.
 
 ## What the generator knows
 
@@ -64,11 +66,11 @@ It produces a configuration.
 4. **Models** (when an engine is selected): ask which models to add, and on which engine and chat interface when there is a choice. Whether a model fits the machine is checked at run time, on the target, not at generation time.
 5. **Summary**: components in install order, options (secrets masked), models, target platforms. The administrator confirms, goes back to a step, or cancels.
 
-`--config-only` stops here and writes the file. Otherwise the generator goes on to the package source, then emits the script.
+`--config-only` stops here and writes the file. With `--config`, steps 1 to 5 are replaced by the validation of the file. Otherwise the generator goes on to the package source, then emits the script.
 
 ### Package source
 
-Not asked with `--config-only` (and given as options with `--answers-file`):
+Not asked with `--config-only` (and given as options with `--config`):
 
 | Item | Meaning | Default |
 | --- | --- | --- |
@@ -103,14 +105,14 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 | --- | --- |
 | 0 | Output written (or dry run done), or the administrator cancelled |
 | 1 | Unexpected error, output file not writable |
-| 2 | Usage error: bad option, unknown component, invalid or incomplete `--answers-file` |
+| 2 | Usage error: bad option, unknown component, invalid or incomplete `--config` file, `--config` with `--config-only` |
 | 4 | Precondition not met: no component shipped, selection impossible to satisfy |
 | 5 | The package checksum could not be fetched or computed |
 
 ## Definition of done
 
 - `bats` tests feeding answers on stdin: component selection, dependency proposal, validation loop, cancel, back-navigation, `--dry-run`, the configuration written.
-- `bats` tests with `--answers-file`: valid file, each validation error, incomplete file, a file written by a session replayed to the same output.
+- `bats` tests with `--config`: valid file, each validation error, incomplete file, a file written by `--config-only` turned into the same script as the interactive session.
 - The generated script checked with `shellcheck`; its embedded configuration extracted and compared with the input (heredoc intact, nothing expanded); run against a fake package source in `EASY_CS_AI_ROOT` mode: checksum mismatch, already-installed version, failure of `apply`; size within the limit for a typical configuration.
 - Integration test: generate a script, run it on a fresh VM, `status` healthy, run it a second time, nothing changes.
 - `shellcheck` clean on the generator; `--help` text consistent with this spec.

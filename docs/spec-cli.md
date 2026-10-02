@@ -303,7 +303,7 @@ Reads a [configuration file](spec-config.md) and runs the equivalent of `install
 
 ## `generate`
 
-`generate [--config-only] [parameters…]` hands over to the generator with the remaining arguments, forwarding its streams and exit code. The options and the questions come from `describe`; the rest is in [spec: VM script generator](spec-vm-generator.md). The generator is interactive, the one exception to the rule that the CLI never prompts: `generate` hands over to it without adding any prompt of its own. The generator produces the layer 3 script only: there is none for layer 1, the CLI chains components with `apply`.
+`generate [--config-only] [parameters…]` hands over to the generator with the remaining arguments, forwarding its streams and exit code. The options and the questions come from `describe`; the rest is in [spec: VM script generator](spec-vm-generator.md). The generator is interactive unless given `--config <file>`, the one exception to the rule that the CLI never prompts: `generate` hands over to it without adding any prompt of its own. The generator produces the layer 3 script only: there is none for layer 1, the CLI chains components with `apply`.
 
 ## Contract additions
 

@@ -13,7 +13,7 @@ Two questions were asked: is a generator worth having, since one command can alr
 ## Decision
 
 - **One interactive generator, for layer 3**: `generate` produces a small parameterless VM post-install script. It downloads the package/CLI from a pinned source, embeds a configuration and runs `easy-cs-ai apply` on it.
-- **`generate --config-only`** runs the same session and writes only the configuration file ([spec: config](spec-config.md)). That file is also what `--answers-file` replays, which makes a generation reproducible and testable without prompts.
+- **`generate --config-only`** runs the same session and writes only the configuration file ([spec: config](spec-config.md)). That file is also what `generate --config <file>` takes in place of the session, which makes a generation reproducible and testable without prompts.
 - **No generator for layer 1.** It was planned for the case where layer 2 turned out too hard to build. With `apply`, the CLI chains the components, orders them from `requires` and fixes their parameters from the configuration, so a layer 1 generated script would only duplicate it. Layer 1 scripts stay usable on their own, with their own options.
 - **The package is downloaded, not embedded.** The script carries the URL, the version and the sha256 of the package, and verifies it before installing. The source is configurable, so a restricted network points at an internal mirror.
 
