@@ -171,15 +171,15 @@ Anything else is reserved. The CLI maps these codes to its own messages.
 
 ## Behaviour of `install`
 
-Phases, in order. A failure in any phase stops the script with the matching exit code; the state is written only at the end of a fully verified install.
+Phases, in order. A failure in any phase stops the script with the matching exit code; the state is written only at the end of a fully verified install. What the script creates along the way is recorded in the [pending manifest](spec-state-format.md#pending-manifest) **before** each creation, so a failed install can always be cleaned by `uninstall`, which does not rely on the state alone.
 
 1. **Preflight**: root, supported platform, `systemd` running as init (see [Platform](#platform)), `requires` satisfied (the script **checks** other components, it never installs them), free disk/RAM when it matters, port not taken by another process. No side effect.
-2. **Acquire**: take the global lock (`flock` on `/var/lib/easy-cs-ai/.lock`, waits up to 60 s, then exit 1). Download with checksum verification; versions are **pinned** in the script, `--version` overrides.
+2. **Acquire**: take the component lock (see [Locking](#locking); busy → exit 4). Download with checksum verification; versions are **pinned** in the script, `--version` overrides.
 3. **Install**: system packages through `apt-get` (non-interactive, `DEBIAN_FRONTEND=noninteractive`), binaries to `/opt` or `/usr/local`, Docker installed by the script when the component needs it and absent.
 4. **Configure**: generate whole files from templates or drop-ins (see conventions). Written atomically (temp file in the same directory, then `mv`), with explicit owner and mode.
 5. **Start**: enable and start the service (a `systemd` unit, which for a Docker-based component runs `docker compose`).
 6. **Verify**: poll the component's health endpoint every 2 s, up to the health timeout. Failure → exit 6. See [Health check](#health-check).
-7. **Record**: write the component state, including its `default` flag: true for the first component of its type, or when `--default` is given (see [state format](spec-state-format.md#defaults)).
+7. **Record**: write the component state, including its `default` flag: true for the first component of its type, or when `--default` is given (see [state format](spec-state-format.md#defaults)). This is done through the `state_*` helpers, which take the state lock for the few seconds of the write; under that same lock, `requires` is checked again, so a dependency uninstalled meanwhile is detected (exit 4, state not written).
 
 ### Health check
 
@@ -205,7 +205,7 @@ vLLM cannot start without a model, so for such an engine the phases differ:
 - `install` runs Preflight, Acquire, Install and Configure only (software, CUDA check, a systemd template unit such as `vllm@.service`). **Start and Verify are skipped**, since nothing can run yet. The state is recorded with an empty `models` list: "installed, no model" is a valid state.
 - `add-model <name>` creates one **instance** for the model (its own unit, port and options), starts it, runs the Verify phase with the engine's health timeout (600 s for vLLM, `--health-timeout` overrides), then records the model with its `unit` and `port` in the state. On failure the instance is removed and the state left untouched (exit 6).
 - `remove-model` stops and removes the instance. `list-models` reads the instances from the state.
-- The port of an instance is allocated by the script from a base port (`--base-port`, vLLM default 8001), first free one upward, under the global lock, and recorded in the state.
+- The port of an instance is allocated by the script from a base port (`--base-port`, vLLM default 8001), first free one upward, and recorded in the state. The allocation runs under the engine's component lock, which already serializes all its `add-model` actions, so the state lock is not held while the instance starts and is verified (up to 600 s). A port taken by another component is caught by the port probe before the start.
 - `status` probes every declared instance. The engine is `healthy` when **all** its instances answer, and an engine with no instance is healthy ("ready to receive a model"). The JSON gains a `models` array of `{ "name", "running", "healthy" }`.
 - `uninstall` stops and removes every instance; model data is kept unless `--purge`.
 - GPU memory is shared between instances. How the share is set (explicit `--gpu-memory-utilization` per model, or computed from the VRAM and the model size given by llmfit) is an open question; until settled, a script may refuse a second model with a clear message (exit 4).
@@ -229,13 +229,32 @@ Running `install` again must converge, never break:
 | Same version, same parameters | No change, exit 0, log `already installed` |
 | Same version, different parameters | Re-render configuration, restart only if the rendered files changed, update state |
 | Different `--version` | Upgrade in place; user data (models, databases) kept |
-| Previous run failed halfway | Resume: every step checks before acting |
+| Previous run failed halfway | Resume: every step checks before acting; the pending manifest is kept and completed, not restarted |
 
 A configuration file is rewritten only if its rendered content differs from what is on disk, so a restart is never triggered needlessly.
 
 ### `uninstall`
 
-Stops and disables the service, removes the files recorded in the state (`files` list), removes the component state, and removes it from the defaults. Data directories (models, databases) are kept unless `--purge`. Uninstalling a component another one depends on (`requires` in the state) fails with exit 4 unless `--force`.
+Stops and disables the service, removes the files recorded in the state (`files` list) **and in the pending manifest**, removes the component state and the manifest, and removes it from the defaults. A component with a manifest but no state (failed install) is cleaned the same way and exits 0; "not installed" (exit 4) means neither a state nor a manifest exists. Paths already absent are ignored. Data directories (models, databases) are kept unless `--purge`. Uninstalling a component another one depends on (`requires` in the state) fails with exit 4 unless `--force`.
+
+## Locking
+
+Two kinds of lock (`flock`), for two different jobs. Mixing them in one lock would hold it for minutes (a vLLM model start, a LibreChat image pull) and make every other script time out.
+
+| Lock | File | Protects | Held for | If busy |
+| --- | --- | --- | --- | --- |
+| **State lock** | `/var/lib/easy-cs-ai/.lock` | Read-modify-write of state files, `defaults_set` (see [state format](spec-state-format.md#writing-rules)) | A few seconds at most | Waits up to 60 s, then exit 1 |
+| **Component lock** | `/var/lib/easy-cs-ai/locks/<type>-<name>.lock` | Every action that changes that component: `install`, `uninstall`, `add-model`, `remove-model`, `add-upstream`, `remove-upstream`, `add-endpoint`, `remove-endpoint` | The whole action, including downloads and health waits | **Fails at once**, exit 4: `another action is running on <name> (<action>, pid <n>)`. `--lock-timeout <seconds>` (env `EASY_CS_AI_<COMPONENT>_LOCK_TIMEOUT`) waits instead |
+
+Rules:
+
+1. **Order**: component lock first, then state lock, never the reverse. A script holds at most one component lock, so no deadlock is possible.
+2. **Never held over slow work**: the state lock is taken only inside the `state_*` / `defaults_*` helpers of `lib/common.sh`, for the duration of one read-modify-write. Scripts never call `with_state_lock` around code that itself calls those helpers.
+3. **Not reentrant**: `flock` is not. `with_state_lock` and `with_component_lock` export `EASY_CS_AI_LOCK_HELD` (list of held locks); taking a lock already in the list is a bug and ends with `die 1` and a clear message, instead of a silent hang.
+4. **Descriptors**: a child process inherits the open lock descriptor and would keep the lock after the script ends. Long-running commands are started with the descriptor closed (`9>&-`).
+5. **Readers take no lock**: `status`, `describe` and the read-only actions rely on atomic writes (`mv`). A reader that finds several defaults for one type re-reads once before failing (see [state format](spec-state-format.md#defaults)).
+6. **Crash safety**: `flock` is released when the process dies. Lock files are never removed, an unlocked leftover file is harmless; the `pid` shown when busy is informative only (written in the file after the lock is taken).
+7. **Orchestration** (CLI `add`, `remove`, `uninstall --all`) holds no lock itself: each script takes its own component lock, and the CLI's own state writes go through the `state_*` helpers (see [spec: CLI](spec-cli.md#steps)).
 
 ## Paths and testability
 
@@ -255,9 +274,10 @@ Provides at least:
 - logging: `log_info`, `log_warn`, `log_error`, `log_debug`, `log_event` (journal, see [Action journal](#action-journal)), and `die <exit-code> <message>`;
 - `require_root`, `require_platform`, `require_component <name>`;
 - `parse_common_options`, `set_option_default`, `read_secret`;
-- `with_lock`;
+- `with_state_lock`, `with_component_lock <type> <name>` (see [Locking](#locking));
 - `render_template <template> <destination> <mode> <owner>` (envsubst, atomic, returns 0 when changed and 10 when identical);
 - `apt_install`, `ensure_docker`, `systemd_enable_now`, `wait_for_http <url> <timeout>`;
+- `track_file <path>`, `track_unit <unit>`, `track_data_dir <path>`: record in the pending manifest **before** creating the file, enabling the unit or creating the data directory (see [state format](spec-state-format.md#pending-manifest)); `render_template` and `systemd_enable_now` call them themselves, so scripts rarely do;
 - `state_read <component>`, `state_write <component> <json>`, `state_remove <component>`, `defaults_get <type>`, `defaults_set <type> <name>` (see [state format](spec-state-format.md)).
 
 Every function is covered by `bats` tests; `shellcheck` runs on the library and on every script.
@@ -267,7 +287,7 @@ Every function is covered by `bats` tests; `shellcheck` runs on the library and 
 - Implements the four mandatory actions and the type-specific ones.
 - `describe` output is valid against the schema above.
 - `shellcheck` clean; `bats` tests for options, secrets handling, idempotence and state in `EASY_CS_AI_ROOT` mode.
-- Integration test: `install` twice on a fresh Debian and Ubuntu LTS VM (or system container with systemd, see [Platform](#platform)), `status` healthy, `uninstall` leaves the system as found (except shared packages).
+- Integration test: `install` twice on a fresh Debian and Ubuntu LTS VM (or system container with systemd, see [Platform](#platform)), `status` healthy, `uninstall` leaves the system as found (except shared packages). Also: an `install` killed after Configure (simulated failure at each phase), then `uninstall`, leaves the system as found.
 - Documented in its component finding under [search](../search/README.md) when it differs from the general behaviour.
 
 ## Open questions

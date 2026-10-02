@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed
+**Status:** accepted
 
 ## Purpose
 
@@ -22,7 +22,7 @@ Out of scope: the interface of the generators behind `generate` (to be specified
   templates/
 ```
 
-- The dispatcher sets `EASY_CS_AI_LIB` to `/usr/lib/easy-cs-ai/lib` and runs the scripts from there. It sources `lib/common.sh` itself for `log_*`, `die`, `with_lock` and the state helpers.
+- The dispatcher sets `EASY_CS_AI_LIB` to `/usr/lib/easy-cs-ai/lib` and runs the scripts from there. It sources `lib/common.sh` itself for `log_*`, `die`, the lock helpers (`with_state_lock`, `with_component_lock`) and the state helpers.
 - The tarball has the same tree under any directory; the dispatcher finds it relative to its own location, or through `EASY_CS_AI_HOME` when set.
 - `EASY_CS_AI_ROOT`, `EASY_CS_AI_STATE_DIR` and `EASY_CS_AI_CONFIG_DIR` are honoured and passed through, so the CLI is testable with `bats` like the scripts.
 
@@ -100,6 +100,7 @@ ollama        engine          0.5.7     yes      yes      yes      llama3.2:3b
 
 - `--json` prints one array of objects instead: the state fields shown above merged with the script's `status` JSON, and `models` as an array of names. Sorted by type, then name.
 - A component whose state file cannot be read (unknown higher `schema_version`, invalid JSON) is shown with `VERSION` and flags as `?`, and an `ERROR` line on stderr names the file. It is never hidden.
+- A pending manifest without state (failed install) is not listed as a component: one `WARN` line on stderr names it and the `uninstall` command that cleans it. It does not change the exit code.
 - Nothing installed prints the header and a hint (`easy-cs-ai install engine ollama`) on stderr.
 - **Exit code**: 0 when every component is healthy (or nothing is installed), 6 when at least one is installed but not healthy, 1 when a state file is unreadable.
 
@@ -153,12 +154,12 @@ easy-cs-ai uninstall --all [--purge] [--force]
 
 | Command line | Effect |
 | --- | --- |
-| `uninstall engine ollama` | Uninstalls Ollama (exit 4 if it is not installed, as in the contract) |
+| `uninstall engine ollama` | Uninstalls Ollama, or cleans the leftovers of a failed install (exit 4 if there is neither a state nor a pending manifest, as in the contract) |
 | `uninstall engine --all` | Uninstalls every installed engine; none installed → nothing to do, exit 0 |
 | `uninstall --all` | Uninstalls **every installed component**, of every type |
 | `uninstall engine` or `uninstall` | Usage error (exit 2) suggesting the `--all` form |
 
-- The components are the `components/*.json` of the state. Anything running on the machine but absent from the state is not touched (the state only covers what the tool installed).
+- The components are the `components/*.json` of the state, plus the `pending/*.json` manifests of failed installs (see [pending manifest](spec-state-format.md#pending-manifest)), cleaned last since nothing can depend on them. Anything running on the machine but absent from the state is not touched (the state only covers what the tool installed).
 - The order puts dependents before what they need (from the `requires` in the state files), so no `--force` is required. Among components with no relation between them, the **reverse of the install order** applies: chat interface, engine, proxy, provisioning. The engine therefore goes before the proxy, and its models are unwired while the proxy and the chat interface can still be reached (see the clean-up below).
 - The run stops at the first failure and returns its exit code; running it again resumes with what is left. `--purge` and `--force` apply to every component of the run; without `--purge`, data (models, databases) is kept, as for a single `uninstall`.
 - `--dry-run` prints the list of components that would be removed, in order.
@@ -204,7 +205,7 @@ easy-cs-ai add <model> [--engine <name>] [--chat-interface <name>] [--no-chat-in
 - **Step 3**: `<upstream>` is `<engine>-<model slug>` (lowercase, characters outside `[a-z0-9.-]` replaced by `-`), so models of two engines never collide. `<url>` is the model's internal URL: the engine `endpoint.url`, or, for an engine with one instance per model, `http://127.0.0.1:<port>` from the model's entry.
 - **Step 4**: `<name>` is the same slug. `<url>` is the one the script printed in step 3 (HTTPS through the proxy), or the engine's `openai_base_url` when the engine is `protected`.
 - **Step 5** is the one place where the CLI writes a component's state: `exposed_via` and `linked_to` describe a relation between components, which no single script knows. It uses the `lib/common.sh` state helpers (lock, atomic write, `jq empty`), following the [writing rules](spec-state-format.md#writing-rules), and preserves unknown fields.
-- The CLI does **not** hold the global lock across the steps (the scripts take it themselves and it is not reentrant). Two concurrent `add` of different models are fine; two of the same model converge thanks to the idempotence of the steps.
+- The CLI holds **no lock** across the steps: each script takes its own component lock for its action, and the state helpers take the state lock for the write only (see [Locking](spec-script-contract.md#locking)). A step that finds its component busy fails with exit 4 and triggers the rollback as any failure. Two concurrent `add` of different models are fine; two of the same model converge thanks to the idempotence of the steps.
 
 ### Idempotence and resume
 
@@ -304,7 +305,7 @@ This spec relies on four points that are specified in the [script contract](spec
 - Every command and every row of the dispatch and exit-code tables covered by `bats` tests in `EASY_CS_AI_ROOT` mode, using fake component scripts (success, each exit code, slow, interrupted).
 - `add` tested for each rollback row with a fake failing step, and for resume; `remove` tested for each failing step and resume.
 - `install` tested with and without `--defaults` (missing requirement, type only, default stack, re-run).
-- `uninstall --all` and `remove --all` tested for order (dependents first), resume, a type-scoped run (`uninstall <type> --all`), nothing to remove, and the usage errors (`--all` with a name, `--defaults` on `uninstall` or `remove`).
+- `uninstall --all` and `remove --all` tested for order (dependents first), resume, a type-scoped run (`uninstall <type> --all`), nothing to remove, leftovers of a failed install (pending manifest only), and the usage errors (`--all` with a name, `--defaults` on `uninstall` or `remove`).
 - `shellcheck` clean; `--help` text consistent with this spec.
 - Integration test on a fresh VM: `install engine ollama`, `add llama3.2:3b`, `status` healthy, `uninstall`. Round trip for repeated tests: `install --defaults`, `add`, `remove --all`, `uninstall --all`, then the system is back as found (except shared packages).
 

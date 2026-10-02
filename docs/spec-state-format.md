@@ -18,7 +18,10 @@ Principles:
 
 ```text
 /var/lib/easy-cs-ai/
-  .lock                       flock target, empty
+  .lock                       state lock, flock target, empty
+  locks/                      one component lock file per component, see the script contract
+  pending/
+    ollama.json               install in progress or failed, see Pending manifest
   components/
     ollama.json               one file per installed component, carries its own `default` flag
     nginx.json
@@ -34,10 +37,10 @@ Principles:
 
 ## Writing rules
 
-1. Take the global lock (`/var/lib/easy-cs-ai/.lock`) around every read-modify-write.
+1. Take the **state lock** (`/var/lib/easy-cs-ai/.lock`) around every read-modify-write. The `state_*` and `defaults_*` helpers take it themselves, so callers never hold it (it is not reentrant); it is held for the write only, never across an install or a health wait. See [Locking](spec-script-contract.md#locking) in the contract.
 2. Write to a temporary file in the same directory, then `mv` over the target (atomic on one filesystem).
 3. Validate with `jq empty` before the `mv`; a failure leaves the previous file untouched.
-4. State is written only after a verified install (see the install phases in the contract). A failed install never leaves a component file behind; a re-run converges thanks to idempotence.
+4. State is written only after a verified install (see the install phases in the contract). A failed install never leaves a component file behind; a re-run converges thanks to idempotence. What a failed install did create is tracked in the [pending manifest](#pending-manifest), not in the component file.
 5. Readers ignore unknown fields; writers preserve the fields they do not know. Both allow newer scripts to add fields without breaking older ones.
 
 ## Defaults
@@ -48,7 +51,7 @@ The default component of a type is **explicit**: it is the one whose file has `"
 - The first component installed for a type becomes its default (so a single-component setup needs no extra step). Any later one is not, and never takes the default silently. `install … --default` makes it the default.
 - `uninstall` of the default: if exactly one component of that type remains, it is promoted; otherwise the type has **no default** and `add` requires `--engine` / `--chat-interface` explicitly, with an error naming the candidates. Nothing is guessed.
 - `add` reads the defaults of `engine` and `chat-interface` here when `--engine` / `--chat-interface` are not given.
-- Changing the default touches two files (set the new flag, clear the old one), which is not atomic. The writer sets the new flag first, then clears the others, under the global lock. A reader finding several defaults for one type stops with an error naming the files (exit 1); re-running `install <type> <name> --default` repairs it, since it sets the flag on the target and clears all the others.
+- Changing the default touches two files (set the new flag, clear the old one), which is not atomic. The writer sets the new flag first, then clears the others, under the state lock. Readers take no lock: one finding several defaults for one type re-reads once (a change may be in progress), then stops with an error naming the files (exit 1); re-running `install <type> <name> --default` repairs it, since it sets the flag on the target and clears all the others.
 
 ## `components/<name>.json`
 
@@ -110,6 +113,32 @@ The default component of a type is **explicit**: it is the one whose file has `"
 - **`chat-interface`**: `endpoints`, array of `{ "name", "url" }` declared in its configuration (for LibreChat, the entries of `librechat.yaml`), and `url` of the web site.
 - **`provisioning`**: none beyond the common fields.
 
+## Pending manifest
+
+`components/<name>.json` is written only after a verified install, but `uninstall` removes what the state lists in `files`, `data_dirs` and `service`. A script that fails halfway would therefore leave files that nothing knows about. The **pending manifest** closes that gap without weakening the rule that the component file means "installed and verified".
+
+`pending/<name>.json`:
+
+```json
+{
+  "schema_version": 1,
+  "name": "ollama",
+  "type": "engine",
+  "started_at": "2026-10-02T09:10:02Z",
+  "files": ["/usr/local/bin/ollama"],
+  "units": ["ollama.service"],
+  "data_dirs": ["/usr/share/ollama/.ollama"]
+}
+```
+
+- **Write-ahead**: the path, unit or directory is added to the manifest *before* it is created (`track_file`, `track_unit`, `track_data_dir`, see the [contract](spec-script-contract.md#libcommonsh)). A crash between the two leaves an entry for something that does not exist, which is harmless; the opposite would leave an orphan.
+- Written under the component lock only, since only the holder of that lock touches it; no state lock is needed. Same atomic write (temp file, `jq empty`, `mv`) as the state.
+- Created at the start of `install` (or reused if it exists: a re-run completes it). It records only what this project creates, never shared system packages.
+- On a successful *Record*, `files`, `data_dirs` and `service.unit` of the component file are the union of what the manifest and the script list, then the manifest is deleted. A failed upgrade leaves the old component file untouched, plus a manifest of what the upgrade added.
+- `uninstall` acts on the union of the component file and the manifest, then deletes both (see the [contract](spec-script-contract.md#uninstall)).
+- `status` ignores it: a component with only a manifest is "not installed" (exit 4). The CLI mentions leftovers in `status` on stderr (`WARN ollama: failed install pending, run: easy-cs-ai uninstall engine ollama`) and `uninstall --all` includes them (see [spec: CLI](spec-cli.md#uninstall)).
+- Paths follow the same convention as `files` (logical absolute paths, `EASY_CS_AI_ROOT` applied when used).
+
 ## What `status` combines
 
 `easy-cs-ai status` lists every `components/*.json` and, for each, calls `<script> status` (live probe). The output merges both:
@@ -127,7 +156,7 @@ A component with a state file but a failing probe is shown as installed and not 
 
 - `schema_version` is an integer, bumped only for **breaking** changes (renamed or removed field, changed meaning). Adding an optional field is not a bump.
 - A reader meeting a higher `schema_version` than it knows stops with a clear message (exit 1) rather than guessing.
-- Migrations are done by the CLI (`easy-cs-ai` package upgrade step), one function per version step, applied under the lock, writing a backup `components/<name>.json.bak-v<old>` first.
+- Migrations are done by the CLI (`easy-cs-ai` package upgrade step), one function per version step, applied under the state lock, writing a backup `components/<name>.json.bak-v<old>` first.
 
 ## Not stored
 
