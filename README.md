@@ -4,6 +4,8 @@ This project is a toolbox that wraps the best open-source AI tools available out
 
 > **Status: early planning.** Nothing is implemented yet — this README describes the intended design and roadmap, not a working tool. See [Roadmap](#roadmap) for what's built vs. planned.
 
+<!-- TODO: once development starts, add a short "Built on" line here crediting the AI tools actually integrated (Ollama, LibreChat, nginx…), with links. Visible but understated: this project only aggregates them. -->
+
 ## Features
 
 Install AI models locally and access them through a web API with an API key.
