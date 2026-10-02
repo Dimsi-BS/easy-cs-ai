@@ -4,4 +4,4 @@
 
 This directory contains the install-and-configure scripts layer.
 
-See also: [generators](../generators/README.md) for the script generator producing parameterless versions of these scripts.
+See also: [spec: script contract](../docs/spec-script-contract.md), the rules every script follows, and [package](../package/README.md), the layer that chains them (`apply`).

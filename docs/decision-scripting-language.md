@@ -6,11 +6,11 @@
 
 ## Context
 
-The project provisions AI components (inference engines, reverse proxy, chat interface) on Linux servers and VMs, through install scripts, a CLI and generators. The VMs are sized as tightly as possible to save money, so the tooling must stay light and must not require a heavy runtime. Ubuntu/Debian is the primary target, but wider Linux support is desirable.
+The project provisions AI components (inference engines, reverse proxy, chat interface) on Linux servers and VMs, through install scripts, a CLI and a VM script generator. The VMs are sized as tightly as possible to save money, so the tooling must stay light and must not require a heavy runtime. Ubuntu/Debian is the primary target, but wider Linux support is desirable.
 
 ## Decision
 
-- **Bash** for the install scripts, the CLI dispatcher, the generators and the VM post-install scripts.
+- **Bash** for the install scripts, the CLI dispatcher, the VM script generator and the VM post-install scripts.
 - **`jq`** for JSON (e.g. the output of `llmfit`), and **`yq`** only if a structured YAML file must be edited in place.
 - No "full" programming language for now.
 

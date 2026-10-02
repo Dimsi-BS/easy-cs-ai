@@ -10,10 +10,8 @@ Overview of the commands exposed by the `easy-cs-ai` CLI (see [packaging](decisi
     - chat-interface
 - `<component-type> <component-name> <action> …`: mirrors the component's commands (e.g. `engine ollama list-models`). A component is always addressed with its type, which keeps the general commands (`status`, `install`, `add`…) clearly apart from the component ones
 - `add <model-name> [--engine <engine-name>] [--chat-interface <interface-name>]`: uses llmfit to check if the model can be installed, adds the model to the inference engine, wraps it with HTTPS and API Key if not included in the inference engine and links it to the chat interface. Defaults to the currently installed inference engine and the currently installed chat web interface.
-- `generate <script-type> [parameters…]`: calls a [script generator](../generators/README.md) to produce a parameterless script with fixed parameters:
-  - script-type:
-    - install-script: layer 1 install-and-configure script, via the install scripts generator
-    - vm-script: layer 3 VM post-install script, via the VM script generator
+- `generate [--config-only] [parameters…]`: calls the [generator](../vm_script/README.md), interactive or replaying a configuration with `--answers-file`. It produces the layer 3 VM post-install script, which downloads the package from a pinned source, embeds a configuration and runs `apply`. With `--config-only`, it writes only the [configuration file](spec-config.md) at the end of the session
+- `apply <file|-> [--prune]`: interprets a [configuration file](spec-config.md) (components, options, models) and makes the machine match it: installs what is listed in dependency order, then adds the models. Converges and is safe to re-run. Nothing is removed unless `--prune` is given
 
 - `uninstall <component-type> <component-name>`: uninstalls a component. `uninstall --all` or `uninstall <component-type> --all` uninstalls everything that is installed (of a type, or all), which wipes a test environment in one command
 - `remove <model-name> [--engine <engine-name>]`: the reverse of `add`, unlinks the model from the chat interface and the proxy, then removes it from the inference engine. `remove --all` removes every model (of the given engine, or of all)

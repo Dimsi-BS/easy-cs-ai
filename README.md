@@ -28,12 +28,11 @@ graph TD
     end
     subgraph L2["Layer 2: Package / CLI"]
         PKG["easy-cs-ai CLI\n(tarball / deb / rpm)"] --> IS
-        PKG --> Extra["Extra commands:\nstatus / install / add model / generate"]
-        Extra -.generate install-script.-> ISGen
-        Extra -.generate vm-script.-> VMGen
+        PKG --> Extra["Extra commands:\nstatus / install / add model / apply / generate"]
+        Extra -.generate.-> VMGen
     end
     subgraph L1["Layer 1: Install Scripts"]
-        ISGen["Script Generator"] -.generates.-> IS["Install Scripts"]
+        IS["Install Scripts"]
         IS --> Engine
         IS --> Provisioning
         IS --> Proxy
@@ -50,8 +49,7 @@ Each layer wraps the previous one and can be used on its own: install scripts al
 
 - [install_scripts](install_scripts/README.md) — Layer 1: install-and-configure scripts
 - [package](package/README.md) — Layer 2: package and CLI
-- [vm_script](vm_script/README.md) — Layer 3: VM post-install
-- [generators](generators/README.md) — script generators shared by the layers above
+- [vm_script](vm_script/README.md) — Layer 3: VM post-install script generator
 - [search](search/README.md) — findings on candidate components and tools
 - [docs](docs/README.md) — design decisions and write-ups
 - [tests](tests/README.md) — tests validating scripts, package and VM provisioning
@@ -89,9 +87,7 @@ The project is organized by layers of increasing complexity. The previous layer 
 
 ### Install Scripts
 
-Each component has an install script with some parameters to install and configure the component in one go.
-
-A script generator helps you to generate parameterless install-and-configure scripts with fixed parameters.
+Each component has an install script with some parameters to install and configure the component in one go. The scripts work on their own, without the CLI. There is no generator at this layer: chaining components and fixing their parameters is the job of the [configuration file](docs/spec-config.md) and `easy-cs-ai apply` (layer 2), see [docs/decision-vm-generator](docs/decision-vm-generator.md).
 
 ### Package / CLI
 
@@ -102,13 +98,14 @@ Extra commands :
 - `status`, listing what is currently installed and running
 - `install`, installing a new component
 - `add`, adding a new model in an inference engine, wrapping it with the reverse proxy if needed and adding it to the chat interface website
-- `generate`, producing parameterless scripts with fixed parameters: `generate install-script` calls the layer 1 script generator and `generate vm-script` calls the layer 3 (VM post-install) script generator
+- `apply`, interpreting a [configuration file](docs/spec-config.md) (components, options, models) to make the machine match it
+- `generate`, the interactive generator of the layer 3 (VM post-install) script; `generate --config-only` writes the configuration file only
 
 See [docs/cli-commands](docs/cli-commands.md) for the full command reference and [docs/decision-packaging](docs/decision-packaging.md) for the packaging choices.
 
 ### Post-install script for VMs
 
-Same as the install scripts but with the package/CLI. One script with some parameters to install and configure the package in one go and a generator script to generate some parameterless install-and-configure scripts with fixed parameters.
+A generator, run interactively by an administrator, produces the VM post-install script. The generated script is small and self-contained: it downloads the package from a pinned source (version and checksum fixed in the script, a mirror URL for restricted networks), embeds the configuration and hands it to `easy-cs-ai apply`. The package is downloaded rather than embedded because VM user-data is size-limited, see [docs/decision-vm-generator](docs/decision-vm-generator.md).
 
 ### Apache CloudStack integration
 
@@ -128,11 +125,11 @@ Planned work, in dependency order:
 | Install scripts | llmfit install script            | Not started |
 | Install scripts | Reverse proxy (HTTPS + API key)  | Not started |
 | Install scripts | LibreChat install script         | Not started |
-| Install scripts | Script generator                 | Not started |
 | Package / CLI   | CLI dispatcher + tarball/deb/rpm | Not started |
 | Package / CLI   | `status` command                 | Not started |
 | Package / CLI   | `install` command                | Not started |
 | Package / CLI   | `add` model command              | Not started |
+| Package / CLI   | `apply` command                  | Not started |
 | Package / CLI   | `generate` command               | Not started |
 | VM post-install | Post-install script              | Not started |
-| VM post-install | Script generator                 | Not started |
+| VM post-install | Script generator (`generate`)    | Not started |

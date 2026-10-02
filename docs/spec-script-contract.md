@@ -6,7 +6,7 @@
 
 ## Purpose
 
-Every layer 1 script (Ollama, vLLM, nginx, llmfit, LibreChat, AnythingLLM…) obeys the same contract. The layer 2 CLI is then a plain dispatcher, the generators know what to fix, and a component can be swapped for another of the same type by changing one parameter (see [integration order](decision-integration-order.md), rule 3).
+Every layer 1 script (Ollama, vLLM, nginx, llmfit, LibreChat, AnythingLLM…) obeys the same contract. The layer 2 CLI is then a plain dispatcher, the [configuration](spec-config.md) can name any component and option, and a component can be swapped for another of the same type by changing one parameter (see [integration order](decision-integration-order.md), rule 3).
 
 This contract builds on the conventions of [scripting language](decision-scripting-language.md) and [packaging](decision-packaging.md); it does not repeat them. The state written by the scripts is specified in [state format](spec-state-format.md).
 
@@ -25,7 +25,7 @@ install_scripts/
 
 - Component **type** is one of `engine`, `chat-interface`, `proxy`, `provisioning`. The first two are the `<component-type>` values of `easy-cs-ai install` (see [CLI commands](cli-commands.md)).
 - The script name is the component name used on the CLI (`install engine ollama` runs `engine/ollama.sh install`).
-- A script must work **standalone** (without the CLI) and must be **inlinable** by the [generators](../generators/README.md): the only external code it needs is `lib/common.sh`, so the generator can concatenate library + script + fixed parameter values into one file. No script may source anything else or locate files relative to itself except through `EASY_CS_AI_LIB`.
+- A script must work **standalone** (without the CLI): the only external code it needs is `lib/common.sh`. No script may source anything else or locate files relative to itself except through `EASY_CS_AI_LIB`. There is no generator at layer 1 (see [decision: VM script generator](decision-vm-generator.md)), so scripts do not have to be concatenable into one file.
 
 ## Invocation
 
@@ -33,7 +33,7 @@ install_scripts/
 <component>.sh <action> [options]
 ```
 
-Scripts **never prompt**. A missing mandatory parameter is a usage error (exit 2). This is what makes them usable from cloud-init and the generators.
+Scripts **never prompt**. A missing mandatory parameter is a usage error (exit 2). This is what makes them usable from cloud-init and from the CLI.
 
 ### Mandatory actions
 
@@ -67,8 +67,8 @@ These are the "component commands" mirrored by `easy-cs-ai <type> <name> <action
 ## Parameters
 
 - Options use `--kebab-case value`. Every option also has an environment variable `EASY_CS_AI_<COMPONENT>_<OPTION>` in upper snake case (`--port` for Ollama → `EASY_CS_AI_OLLAMA_PORT`).
-- Precedence: command line > environment > built-in default. A generated script replaces the built-in defaults by fixed values; nothing else changes.
-- Parsing lives in one function of the script (`parse_args`), so the generator has a single place to inject fixed values.
+- Precedence: command line > environment > built-in default.
+- Parsing lives in one function of the script (`parse_args`), so options are handled in one place.
 - Common options, accepted by every action unless it makes no sense: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`.
 - `install` also accepts `--default`: make this component the default of its type (see [state format](spec-state-format.md#defaults)). The CLI forwards it as it is, so a generated standalone script behaves the same.
 - `--dry-run` prints what would be done (packages, files, units) on stderr, changes nothing, and exits 0 if the real run would pass preflight.
@@ -142,7 +142,7 @@ easy-cs-ai: ollama install end exit=0 duration=48s
 }
 ```
 
-`describe` is the single source for `--help` text, CLI completion, and the parameter list the generators expose.
+`describe` is the single source for `--help` text, CLI completion, and the parameter list that `apply` and the generator validate against.
 
 - `requires` is a list of component **names or types**. A type (e.g. `"proxy"`) means "any installed component of that type"; for the check it is satisfied by any one, and the CLI uses the rank 1 component of the type when it installs the missing requirement with `--defaults` (see [spec: CLI](spec-cli.md#dependencies)).
 - `native` is optional: `command` is the component's own program, run as is by the CLI for actions that match no contract action (see [spec: CLI](spec-cli.md#native-tool-commands)); `env` maps variables to export to templates over the recorded `params` (`{bind}`, `{port}`…), so the program reaches the instance the project installed. For a Docker Compose component, `command` is `docker compose -f {compose_file}` (from the state `service`). Omitted when the component has nothing to run natively.

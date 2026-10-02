@@ -14,7 +14,7 @@ Layer 2 was initially planned as a snap package. What is actually needed is a si
 - Distributed as:
   - a **tarball** (works anywhere with `bash` and `curl`);
   - **`.deb` and `.rpm` packages**, both built in CI from one definition with [`nfpm`](https://nfpm.goreleaser.com/).
-- The VM post-install layer downloads the package (or tarball), installs it, then runs `easy-cs-ai install …`.
+- The VM post-install layer downloads the package (or tarball) from a pinned, checksummed and configurable source, installs it, then runs `easy-cs-ai apply` on a configuration embedded in the script (see [spec: config](spec-config.md) and [decision: VM script generator](decision-vm-generator.md)), or `easy-cs-ai install --defaults`. The package is not embedded in the script, VM user-data being size-limited.
 - The layer 1 scripts remain usable on their own, without the CLI.
 - Installed state lives in `/var/lib/easy-cs-ai/`, which feeds `status` and the defaults of `add`.
 

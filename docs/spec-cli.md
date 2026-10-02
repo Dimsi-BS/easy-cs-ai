@@ -10,7 +10,7 @@ The `easy-cs-ai` CLI is the layer 2 entry point. It is a thin `git`-style dispat
 
 It builds on the [script contract](spec-script-contract.md) (actions, `describe`, exit codes) and the [state format](spec-state-format.md); it does not repeat them. [CLI commands](cli-commands.md) stays the short overview.
 
-Out of scope: the interface of the generators behind `generate` (to be specified with them, see [generators](../generators/README.md)).
+Out of scope: the interface of the generator behind `generate`, see [spec: VM script generator](spec-vm-generator.md).
 
 ## Installed layout
 
@@ -42,12 +42,13 @@ easy-cs-ai [global options] <command> [arguments…]
 | `add <model> [--engine <name>] [--chat-interface <name>]` | Add a model to an engine and wire it |
 | `remove <model> [--engine <name>]` | Unwire a model and remove it from its engine |
 | `remove --all [--engine <name>]` | Remove every model (of one engine, or of all) |
-| `generate <script-type> [parameters…]` | Produce a parameterless script |
+| `apply <file\|-> [--prune]` | Make the machine match a configuration file |
+| `generate [--config-only] [parameters…]` | Produce the parameterless VM post-install script, or only its configuration file |
 | `<type> <name> <action> [arguments…]` | Component command, forwarded to the script |
 
 - `<type>` is one of `engine`, `chat-interface`, `proxy`, `provisioning` (the contract types). `install` accepts all four, since `proxy` and `provisioning` are required by other commands (see [Dependencies](#dependencies)).
 - **Global options**, accepted before the command: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`. After the command they are forwarded as they are, since scripts accept the same ones.
-- **General commands and component commands are kept apart.** A component is always addressed by its type followed by its name (`engine ollama`), never by its name alone. The first word of the command line is therefore either a general command (`status`, `install`, `uninstall`, `add`, `remove`, `generate`, `help`, `version`) or a component type (`engine`, `chat-interface`, `proxy`, `provisioning`): these two sets are the reserved words, so a component name can never clash with a general command.
+- **General commands and component commands are kept apart.** A component is always addressed by its type followed by its name (`engine ollama`), never by its name alone. The first word of the command line is therefore either a general command (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`, `help`, `version`) or a component type (`engine`, `chat-interface`, `proxy`, `provisioning`): these two sets are the reserved words, so a component name can never clash with a general command.
 - Like the scripts, the CLI **never prompts**. Unknown commands, unknown types, unknown component names and missing arguments are usage errors (exit 2) with a message listing the valid values.
 
 ### Dispatch
@@ -87,7 +88,7 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 
 ### Privileges
 
-`install`, `uninstall`, `add` and the changing component actions require root. The CLI checks it first and fails with exit 4 and a message suggesting `sudo`; it never re-executes itself through `sudo`. `status`, `--help`, `describe` and the read-only actions run unprivileged (the state is world-readable, see [state format](spec-state-format.md#layout)).
+`install`, `uninstall`, `add`, `remove`, `apply` (except with `--dry-run`) and the changing component actions require root. The CLI checks it first and fails with exit 4 and a message suggesting `sudo`; it never re-executes itself through `sudo`. `status`, `--help`, `describe` and the read-only actions run unprivileged (the state is world-readable, see [state format](spec-state-format.md#layout)).
 
 ## `status`
 
@@ -292,9 +293,17 @@ The CLI uses the **script contract codes** with the same meaning, and passes the
 - **stdout**: only machine-readable output (`status --json`, forwarded script JSON), except the `status` table, which is the result of the command. With `--json`, tables and plans are replaced by JSON.
 - Secrets are never printed, as for the scripts (`proxy nginx show-key` is the explicit exception, forwarded).
 
+## `apply`
+
+```text
+easy-cs-ai apply <file|-> [--prune] [--dry-run]
+```
+
+Reads a [configuration file](spec-config.md) and runs the equivalent of `install` for each listed component (in `requires` order), then `add` for each listed model, with the same rollback as `add`. It converges, installs nothing the file does not name, and removes nothing unless `--prune` is given. Exit codes are those of the steps it runs, see [spec: config](spec-config.md#apply) for the semantics, failure and resume.
+
 ## `generate`
 
-`generate <script-type> [parameters…]` hands over to the matching generator (`install-script` or `vm-script`) with the remaining arguments, forwarding its streams and exit code. Parameters accepted by the generated script come from `describe`; the rest is specified with the [generators](../generators/README.md).
+`generate [--config-only] [parameters…]` hands over to the generator with the remaining arguments, forwarding its streams and exit code. The options and the questions come from `describe`; the rest is in [spec: VM script generator](spec-vm-generator.md). The generator is interactive, the one exception to the rule that the CLI never prompts: `generate` hands over to it without adding any prompt of its own. The generator produces the layer 3 script only: there is none for layer 1, the CLI chains components with `apply`.
 
 ## Contract additions
 
@@ -306,6 +315,7 @@ This spec relies on four points that are specified in the [script contract](spec
 - `add` tested for each rollback row with a fake failing step, and for resume; `remove` tested for each failing step and resume.
 - `install` tested with and without `--defaults` (missing requirement, type only, default stack, re-run).
 - `uninstall --all` and `remove --all` tested for order (dependents first), resume, a type-scoped run (`uninstall <type> --all`), nothing to remove, leftovers of a failed install (pending manifest only), and the usage errors (`--all` with a name, `--defaults` on `uninstall` or `remove`).
+- `apply`: see the definition of done of [spec: config](spec-config.md#definition-of-done).
 - `shellcheck` clean; `--help` text consistent with this spec.
 - Integration test on a fresh VM: `install engine ollama`, `add llama3.2:3b`, `status` healthy, `uninstall`. Round trip for repeated tests: `install --defaults`, `add`, `remove --all`, `uninstall --all`, then the system is back as found (except shared packages).
 
