@@ -14,6 +14,9 @@
 - Catalog must stay up to date; project is young and fast-moving (pin a version).
 - Non-interactive use is supported: `llmfit recommend --json`. Install via `curl ... | sh`, brew, `uv tool`, Docker or GitHub release binaries.
 
+## Health check
+- No service: installation is a binary. The check is `llmfit --version` followed by one `llmfit recommend --json` run, which must output valid JSON (hardware detection is local and the tool does not need the network for it). Estimated timeout: **60 s** for the command.
+
 ## Sources
 - [llmfit on docs.rs](https://docs.rs/llmfit)
 - [llmfit guide](https://www.hongkiat.com/blog/llmfit-local-llm-guide/)

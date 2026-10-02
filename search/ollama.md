@@ -18,6 +18,11 @@
 - Streaming responses must not be buffered by the proxy (see nginx notes).
 - Must be reachable from the LibreChat host ([LibreChat](librechat.md)).
 
+## Health check
+- `GET /api/version` answers `{"version": …}` as soon as the server listens; no model is loaded at startup, so readiness is fast (seconds). Estimated timeout for the install script: **60 s** (to confirm in integration tests).
+- `systemctl is-active` is not enough: the process can be up without answering on the expected host/port.
+- Model loading is a separate matter: `OLLAMA_LOAD_TIMEOUT` (default 5 min) is a *stall* detector for loads, and a model pull can take much longer. Neither belongs to the install health check; `add-model` has its own, size-dependent wait.
+
 ## Sources
 - [Red Hat: Ollama or vLLM](https://developers.redhat.com/articles/2025/07/08/ollama-or-vllm-how-choose-right-llm-serving-tool-your-use-case)
 - [Ollama vs vLLM enterprise comparison](https://petronellatech.com/blog/ollama-vs-vllm-enterprise-ai-inference-comparison-2026)

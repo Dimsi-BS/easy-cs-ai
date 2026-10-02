@@ -18,6 +18,11 @@
   3. promote [AnythingLLM](anythingllm.md) to rank 1 (no MongoDB, embedded LanceDB, but document-oriented rather than a generic chat UI).
 - Models are declared in `librechat.yaml`, so the CLI `add` command must edit that file and restart.
 
+## Health check
+- `GET /health` returns 200 `OK` (liveness); `/livez` and `/readyz` also exist in the server source (`api/server/index.js`). `/readyz` is the better readiness signal for the install script, but its exact semantics (database connection) must be checked on a running instance.
+- The official `docker-compose.yml` defines **no** `healthcheck`, so the script must add its own (or poll the endpoint itself), and order MongoDB (or FerretDB + PostgreSQL) before the API.
+- The stack has several containers (api, MongoDB, optional Meilisearch, vector DB, RAG API). Image pull is part of *Install*, not of the health wait. Estimated timeout: **300 s**, to be recalibrated with the FerretDB test.
+
 ## Sources
 - [Replacing MongoDB with FerretDB in LibreChat](https://blog.ferretdb.io/replacing-mongodb-with-ferretdb-librechat/)
 - [LibreChat discussion #3985](https://github.com/danny-avila/LibreChat/discussions/3985)

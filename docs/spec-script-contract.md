@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed
+**Status:** accepted
 
 ## Purpose
 
@@ -55,6 +55,8 @@ Components of one type expose the same actions, so switching is one parameter:
 | `chat-interface` | `add-endpoint <name> <url>`, `remove-endpoint <name>` |
 | `provisioning` | `recommend` (JSON on stdout) |
 
+An engine either serves all its models from **one process** (Ollama), or runs **one instance per model** (vLLM, which serves a single model per process). The `engine` actions are the same in both cases, see [Engines with one instance per model](#engines-with-one-instance-per-model).
+
 These are the "component commands" mirrored by `easy-cs-ai <component-name> …`. `easy-cs-ai add` orchestrates them: `provisioning recommend` check → `engine add-model` → `proxy add-upstream` if needed → `chat-interface add-endpoint`.
 
 ## Parameters
@@ -69,7 +71,11 @@ These are the "component commands" mirrored by `easy-cs-ai <component-name> …`
 ### Secrets
 
 - Never on the command line (see conventions). Accepted channels: `--<name>-file <path>` (file mode must be `0600` or stricter, else exit 2), the environment variable, or `-` to read stdin.
-- If a secret is needed and none is given, the script **generates** one (`/dev/urandom`, at least 32 random bytes, base64url) and stores it in `/etc/easy-cs-ai/secrets/<component>.<name>` with mode `0600`, owner root. Generated secrets are never printed by `install`; they are read back with the dedicated action (`proxy show-key`).
+- If a secret is needed and none is given, the script **generates** one (`/dev/urandom`, at least 32 random bytes, base64url) and stores it in `/etc/easy-cs-ai/secrets/<component>.<name>` with mode `0600`, owner root. `install` **never prints a secret**, on a TTY or not: the scripts mostly run unattended (cloud-init in a CloudStack VM, where nobody sees a TTY and the output ends up in `/var/log/cloud-init-output.log`).
+- Retrieval channels for a generated secret:
+  - the dedicated action, over SSH (`proxy show-key`);
+  - to be decided with the CloudStack integration, not designed yet: `--credentials-file <path>`, writing the generated secrets to a file (mode `0600`, owner root) at a location chosen by the caller, so an external tool can fetch them without going through the logs.
+- When the secret is known in advance (fleet provisioning), the caller passes it through the channels above. Note that on CloudStack the user-data is stored in the CloudStack database, returned by its API and readable from the VM through the metadata service: a secret placed there is not confidential, which the VM post-install layer must document.
 - Secrets never appear in logs, `--dry-run` output, `describe`, `status` or the state files.
 
 ## Output
@@ -77,6 +83,21 @@ These are the "component commands" mirrored by `easy-cs-ai <component-name> …`
 - **stderr**: logs, one line each, `[LEVEL] message` with LEVEL in `INFO`, `WARN`, `ERROR`, plus `DEBUG` with `--verbose`.
 - **stdout**: reserved for machine-readable output (JSON of `status`, `describe`, `list-models`, `recommend`, or a secret printed on explicit request). Nothing else may write to stdout, including the commands the script runs (redirect them to stderr).
 - Dates are ISO 8601 UTC.
+- **System journal**: besides stderr, every action that changes the system (`install`, `uninstall`, `add-model`, `remove-model`) writes an event to the journal through `logger -t easy-cs-ai`, see [Action journal](#action-journal).
+
+### Action journal
+
+For support and debugging, each changing action logs two lines, one when it starts and one when it ends, e.g.:
+
+```text
+easy-cs-ai: ollama install start version=0.5.7 params=port=11434,bind=127.0.0.1
+easy-cs-ai: ollama install end exit=0 duration=48s
+```
+
+- Content: component, action, version, **non-secret** parameters (same set as `params` in the state), exit code, duration. Never a secret (same rule as for logs).
+- Read with `journalctl -t easy-cs-ai`. Retention and rotation are journald's business; nothing is stored in the [state directory](spec-state-format.md), which stays "declared, not observed".
+- Written by one function of `lib/common.sh`, `log_event`, called by the common code around each action so scripts do not repeat it. It is skipped in `EASY_CS_AI_ROOT` mode (replaced by stderr logging like service control).
+- Read-only actions (`status`, `describe`, `list-models`, `recommend`, `show-key`) are not journaled.
 
 ### `describe`
 
@@ -90,6 +111,7 @@ These are the "component commands" mirrored by `easy-cs-ai <component-name> …`
   "requires": [],
   "provides": ["openai-api"],
   "platforms": ["debian", "ubuntu"],
+  "health_timeout": 60,
   "options": [
     { "name": "port", "env": "EASY_CS_AI_OLLAMA_PORT", "default": "11434", "secret": false, "description": "…" }
   ],
@@ -125,13 +147,52 @@ Anything else is reserved. The CLI maps these codes to its own messages.
 
 Phases, in order. A failure in any phase stops the script with the matching exit code; the state is written only at the end of a fully verified install.
 
-1. **Preflight**: root, supported platform, `requires` satisfied (the script **checks** other components, it never installs them), free disk/RAM when it matters, port not taken by another process. No side effect.
+1. **Preflight**: root, supported platform, `systemd` running as init (see [Platform](#platform)), `requires` satisfied (the script **checks** other components, it never installs them), free disk/RAM when it matters, port not taken by another process. No side effect.
 2. **Acquire**: take the global lock (`flock` on `/var/lib/easy-cs-ai/.lock`, waits up to 60 s, then exit 1). Download with checksum verification; versions are **pinned** in the script, `--version` overrides.
 3. **Install**: system packages through `apt-get` (non-interactive, `DEBIAN_FRONTEND=noninteractive`), binaries to `/opt` or `/usr/local`, Docker installed by the script when the component needs it and absent.
 4. **Configure**: generate whole files from templates or drop-ins (see conventions). Written atomically (temp file in the same directory, then `mv`), with explicit owner and mode.
-5. **Start**: enable and start the service (`systemd` unit, or `docker compose` managed by a unit).
-6. **Verify**: poll the component's health endpoint, up to a documented timeout (default 120 s). Failure → exit 6.
-7. **Record**: write the component state, update the defaults (see [state format](spec-state-format.md)).
+5. **Start**: enable and start the service (a `systemd` unit, which for a Docker-based component runs `docker compose`).
+6. **Verify**: poll the component's health endpoint every 2 s, up to the health timeout. Failure → exit 6. See [Health check](#health-check).
+7. **Record**: write the component state, including its `default` flag: true for the first component of its type, or when `--default` is given (see [state format](spec-state-format.md#defaults)).
+
+### Health check
+
+- Each script has a **default health timeout**, declared in `describe` as `health_timeout` (seconds), and overridable with `--health-timeout <seconds>` (env `EASY_CS_AI_<COMPONENT>_HEALTH_TIMEOUT`). `lib/common.sh` provides one `wait_for_http` used by all scripts, so this is the only mechanism.
+- **Fail fast**: if the service unit enters `failed` (or the container exits) while polling, stop at once with exit 6, without waiting for the timeout.
+- On failure, log the last probe result and the last lines of the service log (`journalctl` / `docker compose logs`) on stderr, never secrets.
+- The check proves the component answers; it does **not** include model pulls or loads, which are the business of `add-model` (size-dependent, with its own wait).
+- Starting values, estimated from the component findings and **to be confirmed by the integration tests** (measured on a minimal VM, then set with margin, roughly 3× the observed time):
+
+| Component | Probe | Default timeout |
+| --- | --- | --- |
+| nginx | request through the proxy: 401 without key, success with key | 30 s |
+| llmfit | `llmfit recommend --json` outputs valid JSON (a command, not a service) | 60 s |
+| Ollama | `GET /api/version` | 60 s |
+| AnythingLLM | `GET /api/ping` | 120 s |
+| LibreChat | `GET /health` (`/readyz` to check) | 300 s |
+| vLLM | `GET /health`, depends on the model | 600 s |
+
+### Engines with one instance per model
+
+vLLM cannot start without a model, so for such an engine the phases differ:
+
+- `install` runs Preflight, Acquire, Install and Configure only (software, CUDA check, a systemd template unit such as `vllm@.service`). **Start and Verify are skipped**, since nothing can run yet. The state is recorded with an empty `models` list: "installed, no model" is a valid state.
+- `add-model <name>` creates one **instance** for the model (its own unit, port and options), starts it, runs the Verify phase with the engine's health timeout (600 s for vLLM, `--health-timeout` overrides), then records the model with its `unit` and `port` in the state. On failure the instance is removed and the state left untouched (exit 6).
+- `remove-model` stops and removes the instance. `list-models` reads the instances from the state.
+- The port of an instance is allocated by the script from a base port (`--base-port`, vLLM default 8001), first free one upward, under the global lock, and recorded in the state.
+- `status` probes every declared instance. The engine is `healthy` when **all** its instances answer, and an engine with no instance is healthy ("ready to receive a model"). The JSON gains a `models` array of `{ "name", "running", "healthy" }`.
+- `uninstall` stops and removes every instance; model data is kept unless `--purge`.
+- GPU memory is shared between instances. How the share is set (explicit `--gpu-memory-utilization` per model, or computed from the VRAM and the model size given by llmfit) is an open question; until settled, a script may refuse a second model with a clear message (exit 4).
+
+Engines with a single process (Ollama) keep the standard phases and have no `unit` or `port` per model.
+
+### Platform
+
+- **`systemd` is mandatory.** The target is new Debian/Ubuntu VMs built from controlled templates, where it is the default init; the contract relies on it (unit state probes, drop-ins, template units such as `vllm@.service`, fail-fast on a `failed` unit, `journalctl` diagnostics), as do the third-party installers (Ollama, Docker).
+- The preflight checks that systemd is the running init (`/run/systemd/system` exists). If not, exit 3 with a message naming the missing prerequisite.
+- No `sysvinit` fallback and no "run in a container" mode: the scripts install onto the host (see [packaging](decision-packaging.md)), and a second init path would double the test matrix for no target.
+- Service operations stay isolated in a few functions of `lib/common.sh` (`systemd_enable_now` and the like), so a fallback could be added there later without touching the scripts. Revisit only if a distribution without systemd is actually requested.
+- Consequence for tests: a plain Docker container has no systemd, so integration tests run on **VMs**, or on system containers that embed systemd (Incus/LXD, or a privileged Docker container with a systemd image). The `bats` unit tests are unaffected, since `EASY_CS_AI_ROOT` mode replaces service control by logging.
 
 ### Idempotence
 
@@ -159,13 +220,13 @@ Stops and disables the service, removes the files recorded in the state (`files`
 | `EASY_CS_AI_CONFIG_DIR` | `/etc/easy-cs-ai` | Generated configuration and secrets |
 | `EASY_CS_AI_LIB` | directory of the script `/../lib` | Location of `common.sh` |
 
-With `EASY_CS_AI_ROOT` set, the script skips package installation and service control (they are replaced by logging), so unit tests exercise argument parsing, templating, state writing and idempotence. Real installs are covered by the integration tests in fresh containers or VMs (see [tests](../tests/README.md)).
+With `EASY_CS_AI_ROOT` set, the script skips package installation and service control (they are replaced by logging), so unit tests exercise argument parsing, templating, state writing and idempotence. Real installs are covered by the integration tests in fresh VMs or systemd-enabled system containers (see [tests](../tests/README.md)).
 
 ## `lib/common.sh`
 
 Provides at least:
 
-- logging: `log_info`, `log_warn`, `log_error`, `log_debug`, and `die <exit-code> <message>`;
+- logging: `log_info`, `log_warn`, `log_error`, `log_debug`, `log_event` (journal, see [Action journal](#action-journal)), and `die <exit-code> <message>`;
 - `require_root`, `require_platform`, `require_component <name>`;
 - `parse_common_options`, `set_option_default`, `read_secret`;
 - `with_lock`;
@@ -180,11 +241,12 @@ Every function is covered by `bats` tests; `shellcheck` runs on the library and 
 - Implements the four mandatory actions and the type-specific ones.
 - `describe` output is valid against the schema above.
 - `shellcheck` clean; `bats` tests for options, secrets handling, idempotence and state in `EASY_CS_AI_ROOT` mode.
-- Integration test: `install` twice on a fresh Debian and Ubuntu LTS container or VM, `status` healthy, `uninstall` leaves the system as found (except shared packages).
+- Integration test: `install` twice on a fresh Debian and Ubuntu LTS VM (or system container with systemd, see [Platform](#platform)), `status` healthy, `uninstall` leaves the system as found (except shared packages).
 - Documented in its component finding under [search](../search/README.md) when it differs from the general behaviour.
 
 ## Open questions
 
-- Whether `install` should print the generated API key once on a TTY (convenient) in addition to `show-key` (safer for logs).
-- Per-component health check timeouts, to be set when each script is written.
-- Whether `systemd` is mandatory or a `sysvinit`/container fallback is wanted (assumed mandatory for now).
+- Whether a `--credentials-file` option is wanted to hand generated secrets to an external tool (see [Secrets](#secrets)), to be settled with the CloudStack integration.
+- Confirm or adjust the health timeouts (see [Health check](#health-check)) with measurements from the integration tests.
+- Persistence of the journal (see [Action journal](#action-journal)): on some images it does not survive a reboot unless `/var/log/journal` exists. To check on the CloudStack templates; if needed, the first install creates that directory, or events also go to a file rotated by `logrotate`.
+- GPU memory sharing between vLLM instances (see [Engines with one instance per model](#engines-with-one-instance-per-model)), and the actual behaviour with several instances on one GPU, to be tested.

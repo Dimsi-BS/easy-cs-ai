@@ -14,6 +14,9 @@
 - Required for LLM streaming: `proxy_buffering off`, `proxy_http_version 1.1`, and read timeouts raised (~600s) because the 60s default cuts long generations.
 - Certificates: Let's Encrypt needs a public domain; otherwise a self-signed cert is needed (decision pending).
 
+## Health check
+- nginx starts in well under a second. The meaningful check is functional, not just "port open": validate with `nginx -t` before the reload, then request through the proxy and expect **401 without key** and **success with key**, which proves TLS and auth work. Estimated timeout: **30 s**.
+
 ## Sources
 - [Ollama behind a reverse proxy (Caddy/Nginx)](https://www.glukhov.org/llm-hosting/ollama/ollama-behind-reverse-proxy/)
 - [Reverse proxy Ollama with Nginx](https://azdigi.com/blog/kien-thuc-vps/reverse-proxy-ollama-with-nginx-access-ai-via-custom-domain-with-https/?lang=en)

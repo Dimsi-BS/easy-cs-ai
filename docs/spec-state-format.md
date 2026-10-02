@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed
+**Status:** accepted
 
 ## Purpose
 
@@ -19,9 +19,8 @@ Principles:
 ```text
 /var/lib/easy-cs-ai/
   .lock                       flock target, empty
-  defaults.json               default component per type
   components/
-    ollama.json               one file per installed component
+    ollama.json               one file per installed component, carries its own `default` flag
     nginx.json
     librechat.json
 /etc/easy-cs-ai/
@@ -41,20 +40,15 @@ Principles:
 4. State is written only after a verified install (see the install phases in the contract). A failed install never leaves a component file behind; a re-run converges thanks to idempotence.
 5. Readers ignore unknown fields; writers preserve the fields they do not know. Both allow newer scripts to add fields without breaking older ones.
 
-## `defaults.json`
+## Defaults
 
-```json
-{
-  "schema_version": 1,
-  "engine": "ollama",
-  "chat-interface": "librechat",
-  "proxy": "nginx"
-}
-```
+The default component of a type is **explicit**: it is the one whose file has `"default": true`. There is no separate defaults file, so a default cannot point to a component that no longer exists.
 
-- Keys are component types, values are component names; a type with nothing installed has no key.
-- The first component installed for a type becomes its default. `install … --default` forces it; `uninstall` of the default clears the key (or promotes the only remaining component of that type).
-- `add` reads `engine` and `chat-interface` from here when `--engine` / `--chat-interface` are not given.
+- At most one component per type is the default.
+- The first component installed for a type becomes its default (so a single-component setup needs no extra step). Any later one is not, and never takes the default silently. `install … --default` makes it the default.
+- `uninstall` of the default: if exactly one component of that type remains, it is promoted; otherwise the type has **no default** and `add` requires `--engine` / `--chat-interface` explicitly, with an error naming the candidates. Nothing is guessed.
+- `add` reads the defaults of `engine` and `chat-interface` here when `--engine` / `--chat-interface` are not given.
+- Changing the default touches two files (set the new flag, clear the old one), which is not atomic. The writer sets the new flag first, then clears the others, under the global lock. A reader finding several defaults for one type stops with an error naming the files (exit 1); re-running `install <type> <name> --default` repairs it, since it sets the flag on the target and clears all the others.
 
 ## `components/<name>.json`
 
@@ -63,6 +57,7 @@ Principles:
   "schema_version": 1,
   "name": "ollama",
   "type": "engine",
+  "default": true,
   "version": "0.5.7",
   "script_version": "0.1.0",
   "installed_at": "2026-10-02T09:12:44Z",
@@ -73,7 +68,7 @@ Principles:
     "openai_base_url": "http://127.0.0.1:11434/v1",
     "protected": false
   },
-  "service": { "manager": "systemd", "unit": "ollama.service" },
+  "service": { "unit": "ollama.service" },
   "requires": [],
   "files": ["/usr/local/bin/ollama", "/etc/systemd/system/ollama.service.d/easy-cs-ai.conf"],
   "data_dirs": ["/usr/share/ollama/.ollama"],
@@ -95,12 +90,13 @@ Principles:
 | --- | --- | --- |
 | `schema_version` | integer | Format version of this file, see below |
 | `name`, `type` | string | Component name and type (`engine`, `chat-interface`, `proxy`, `provisioning`), same as in `describe` |
+| `default` | boolean | `true` when this is the default component of its type, see [Defaults](#defaults) |
 | `version` | string | Installed component version (the pinned or `--version` one) |
 | `script_version` | string | Version of the install script that wrote the state |
 | `installed_at`, `updated_at` | string | ISO 8601 UTC; `updated_at` changes on any rewrite that changes content |
 | `params` | object | Resolved **non-secret** parameters, so a re-install or a generated script reproduces the setup |
 | `endpoint` | object, optional | How other components reach this one. `protected` is `true` when it already enforces HTTPS and API key itself (so `add` does not wrap it with the proxy) |
-| `service` | object | `manager` is `systemd` or `docker-compose`, plus the unit name or compose path |
+| `service` | object | `unit` is the systemd unit that runs the component (systemd is mandatory, see the [script contract](spec-script-contract.md#platform)). `compose_file`, optional, is the path of the Compose file the unit runs, for Docker-based components (LibreChat, AnythingLLM). Absent for an engine with one instance per model (see below) |
 | `requires` | array of names | Components that must stay installed; `uninstall` of any of them is refused without `--force` |
 | `files` | array of paths | Everything the script created outside data directories; removed by `uninstall` |
 | `data_dirs` | array of paths | User data, kept by `uninstall` unless `--purge` |
@@ -109,7 +105,7 @@ Principles:
 
 ### Type-specific fields
 
-- **`engine`**: `models`, each with `name`, `added_at`, `exposed_via` (name of the `proxy` component, or `null` when the engine is `protected` or the model is not exposed) and `linked_to` (names of `chat-interface` components). The model list is the single source: `status` and `add` read it here, the chat interface and proxy hold no copy.
+- **`engine`**: `models`, each with `name`, `added_at`, `exposed_via` (name of the `proxy` component, or `null` when the engine is `protected` or the model is not exposed) and `linked_to` (names of `chat-interface` components). The model list is the single source: `status` and `add` read it here, the chat interface and proxy hold no copy. For an engine running **one instance per model** (vLLM, see the [script contract](spec-script-contract.md#engines-with-one-instance-per-model)), each model also has `unit` (its systemd unit, e.g. `vllm@llama3-8b.service`) and `port`, the instance being an internal detail of the engine, not a separate component. `models` may be empty (installed, no model yet), and the component-level `service` and `endpoint` are then absent for such an engine: each model carries its own.
 - **`proxy`**: `upstreams`, array of `{ "name", "url" }` with the engine models they front, and `listen` (`{ "address", "port", "tls": "letsencrypt" | "self-signed" | "provided" }`; the strategy is still an open design decision, see [nginx](../search/nginx.md)).
 - **`chat-interface`**: `endpoints`, array of `{ "name", "url" }` declared in its configuration (for LibreChat, the entries of `librechat.yaml`), and `url` of the web site.
 - **`provisioning`**: none beyond the common fields.
@@ -137,10 +133,8 @@ A component with a state file but a failing probe is shown as installed and not 
 
 - Secret values, and anything derivable by a probe (running, healthy, resource usage).
 - Cloud/VM provisioning information; that belongs to layer 3 and CloudStack, not designed yet.
-- Logs and metrics ("is the model being used?" is a CloudStack idea, out of scope here).
+- Logs and metrics ("is the model being used?" is a CloudStack idea, out of scope here). The history of actions is not kept here either: the scripts write it to the system journal, see the [Action journal](spec-script-contract.md#action-journal) of the contract.
 
 ## Open questions
 
-- Whether `defaults.json` should be derived on the fly from the component files plus an explicit `default: true` flag (one fewer file, but ties the default to the file of the component).
-- Whether an append-only `history.log` of installs and changes is wanted for support and audit.
-- Multiple instances of the same component (two Ollama on two ports) are **not** supported by this format; `name` is unique. Revisit if a use case appears.
+- Multiple instances of the same *component* (two Ollama on two ports) are **not** supported by this format; `name` is unique. The only instances are the per-model ones of an engine like vLLM, kept inside `models`. Revisit if a use case appears.
