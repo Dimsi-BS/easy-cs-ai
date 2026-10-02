@@ -1,8 +1,8 @@
 # All-in-one zero-conf local AI
 
-This project is toolbox which wraps the best open-source AI tools available out there.
+This project is a toolbox that wraps the best open-source AI tools available out there.
 
-> **Status: early planning.** No code has been written yet — this README describes the intended design and roadmap, not a working tool. See [Roadmap](#roadmap) for what's built vs. planned.
+> **Status: early planning.** Nothing is implemented yet — this README describes the intended design and roadmap, not a working tool. See [Roadmap](#roadmap) for what's built vs. planned.
 
 ## Features
 
@@ -14,7 +14,7 @@ Generate customized install scripts for your local server or your VMs (Virtual M
 
 ## Requirements
 
-Targeting Ubuntu/Debian with `snapd`, primarily for provisioning fleets of VMs. Other Linux distributions with snap support may work but aren't a design target yet.
+Targeting Ubuntu/Debian, primarily for provisioning fleets of VMs sized with just the necessary resources. Other Linux distributions (`.rpm`, or the tarball with `bash` and `curl`) may work but are not a design target yet. Scripts are written in bash, see [docs/decision-scripting-language](docs/decision-scripting-language.md). Other design choices are listed in [docs](docs/README.md).
 
 ## Architecture
 
@@ -24,11 +24,11 @@ How the layers and components fit together:
 graph TD
     subgraph L3["Layer 3: VM Post-install"]
         VMGen["VM Script Generator"] -.generates.-> VM["VM Post-install Script"]
-        VM --> SNAP
+        VM --> PKG
     end
-    subgraph L2["Layer 2: Snap Package"]
-        SNAP["Snap Package"] --> IS
-        SNAP --> Extra["Extra commands:\nstatus / install / add model"]
+    subgraph L2["Layer 2: Package / CLI"]
+        PKG["easy-cs-ai CLI\n(tarball / deb / rpm)"] --> IS
+        PKG --> Extra["Extra commands:\nstatus / install / add model"]
     end
     subgraph L1["Layer 1: Install Scripts"]
         ISGen["Script Generator"] -.generates.-> IS["Install Scripts"]
@@ -45,12 +45,12 @@ graph TD
     llmfit --> vLLM
 ```
 
-Each layer wraps the previous one and can be used on its own: install scripts alone for a single server, the snap package for a self-contained bundle, or the VM post-install layer for provisioning fleets of VMs.
+Each layer wraps the previous one and can be used on its own: install scripts alone for a single server, the package/CLI for a self-contained bundle, or the VM post-install layer for provisioning fleets of VMs.
 
 ## Project Layout
 
 - [install_scripts](install_scripts/README.md) — Layer 1: install-and-configure scripts
-- [snap_package](snap_package/README.md) — Layer 2: snap packaging
+- [package](package/README.md) — Layer 2: package and CLI
 - [vm_script](vm_script/README.md) — Layer 3: VM post-install
 - [generators](generators/README.md) — script generators shared by the layers above
 - [search](search/README.md) — findings on candidate components and tools
@@ -91,43 +91,44 @@ Each component has an install script with some parameters to install and configu
 
 A script generator helps you to generate parameterless install-and-configure scripts with fixed parameters.
 
-### Snap Package
+### Package / CLI
 
-The snap package is wrapping everything in one package. Each install-and-configure script is reachable from the snap commands and each component's commands are mirrored by the snap. It also includes the HTTPS and API Key wrapping.
+The `easy-cs-ai` CLI wraps everything in one package (tarball, `.deb` or `.rpm`). Each install-and-configure script is reachable from the CLI commands and each component's commands are mirrored by the CLI. It also includes the HTTPS and API Key wrapping.
 
 Extra commands :
 
 - `status`, listing what is currently installed and running
 - `install`, installing a new component
-- `add`, adding a new model in an inference engine, wrap it with the reverse proxy if needed and add it in the chat interface website
+- `add`, adding a new model in an inference engine, wrapping it with the reverse proxy if needed and adding it to the chat interface website
 
-See [docs/snap-commands](docs/snap-commands.md) for the full command reference.
+See [docs/cli-commands](docs/cli-commands.md) for the full command reference and [docs/decision-packaging](docs/decision-packaging.md) for the packaging choices.
 
 ### Post-install script for VMs
 
-Same as the install scripts but with the snap. One script with some parameters to install and configure the snap in one go and a generator script to generate some parameterless install-and-configure scripts with fixed parameters.
+Same as the install scripts but with the package/CLI. One script with some parameters to install and configure the package in one go and a generator script to generate some parameterless install-and-configure scripts with fixed parameters.
 
 ### Apache CloudStack integration
 
-TODO
-- init VM, properly provisionned
-- show AI model requests (Is it used ?)
+Not designed yet. Ideas to explore:
+
+- initialize a VM with a proper provisioning
+- show the AI model requests (is the model being used?)
 
 ## Roadmap
 
-Nothing is implemented yet — this is the first commit. Planned work, in dependency order:
+Planned work, in dependency order:
 
-| Layer           | Item                            | Status      |
-| --------------- | ------------------------------- | ----------- |
-| Install scripts | Ollama install script           | Not started |
-| Install scripts | vLLM install script             | Not started |
-| Install scripts | llmfit install script           | Not started |
-| Install scripts | Reverse proxy (HTTPS + API key) | Not started |
-| Install scripts | LibreChat install script        | Not started |
-| Install scripts | Script generator                | Not started |
-| Snap package    | Core snap wrapping the above    | Not started |
-| Snap package    | `status` command                | Not started |
-| Snap package    | `install` command               | Not started |
-| Snap package    | `add` model command             | Not started |
-| VM post-install | Post-install script             | Not started |
-| VM post-install | Script generator                | Not started |
+| Layer           | Item                             | Status      |
+| --------------- | -------------------------------- | ----------- |
+| Install scripts | Ollama install script            | Not started |
+| Install scripts | vLLM install script              | Not started |
+| Install scripts | llmfit install script            | Not started |
+| Install scripts | Reverse proxy (HTTPS + API key)  | Not started |
+| Install scripts | LibreChat install script         | Not started |
+| Install scripts | Script generator                 | Not started |
+| Package / CLI   | CLI dispatcher + tarball/deb/rpm | Not started |
+| Package / CLI   | `status` command                 | Not started |
+| Package / CLI   | `install` command                | Not started |
+| Package / CLI   | `add` model command              | Not started |
+| VM post-install | Post-install script              | Not started |
+| VM post-install | Script generator                 | Not started |

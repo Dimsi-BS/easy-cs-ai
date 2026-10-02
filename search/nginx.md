@@ -6,7 +6,7 @@
 
 ## Benefits
 - Single place for TLS, authentication, timeouts, rate limits and logs.
-- Ubiquitous, packaged on Ubuntu/Debian, easy to bundle in a snap.
+- Ubiquitous, packaged on Ubuntu/Debian, easy to install from the distribution packages.
 - `auth_request` can delegate auth to a small service when per-key logic is needed.
 
 ## Weaknesses / must-know

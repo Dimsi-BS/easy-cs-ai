@@ -4,4 +4,4 @@
 
 This directory contains the VM script layer.
 
-See also: [generators](../generators/README.md) for the script generator producing parameterless versions of these scripts, and [snap_package](../snap_package/README.md), the layer this script provisions.
+See also: [generators](../generators/README.md) for the script generator producing parameterless versions of these scripts, and [package](../package/README.md), the layer this script provisions.

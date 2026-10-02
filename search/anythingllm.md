@@ -12,7 +12,7 @@
 
 ## Weaknesses / must-know
 - Document/workspace oriented rather than a pure multi-provider chat UI; fewer provider-switching features than LibreChat.
-- Developer API (also at `/api/docs` on each instance) can configure everything the snap `add` command needs: `POST /v1/system/update-env` (LLM provider settings), workspace create/update, and admin user management (`/v1/admin/users`). Model-specific env keys should still be tested on a running instance.
+- Developer API (also at `/api/docs` on each instance) can configure everything the CLI `add` command needs: `POST /v1/system/update-env` (LLM provider settings), workspace create/update, and admin user management (`/v1/admin/users`). Model-specific env keys should still be tested on a running instance.
 
 ## Sources
 - [AnythingLLM overview](https://dev.co/ai/frameworks/anything-llm)

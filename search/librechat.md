@@ -11,7 +11,7 @@
 ## Weaknesses / must-know
 - Heavy stack: Docker + Docker Compose; MongoDB is **required** (`MONGO_URI`). Meilisearch is optional (search disabled by default, needs `MEILI_MASTER_KEY` if enabled); PGVector + RAG API are optional.
 - MongoDB Community is SSPL, not OSI open source: this conflicts with the "open-source" rule. FerretDB (Apache 2.0, MongoDB-wire-compatible over PostgreSQL) is a candidate replacement, and the FerretDB maintainers confirmed in a LibreChat discussion that it works, with a published guide (`MONGO_URI=mongodb://user:pass@ferretdb:27017/LibreChat`; needs only FerretDB + PostgreSQL). Still to be tested in our own setup.
-- Models are declared in `librechat.yaml`, so the snap `add` command must edit that file and restart.
+- Models are declared in `librechat.yaml`, so the CLI `add` command must edit that file and restart.
 
 ## Sources
 - [Replacing MongoDB with FerretDB in LibreChat](https://blog.ferretdb.io/replacing-mongodb-with-ferretdb-librechat/)
