@@ -138,3 +138,129 @@ wait_for_http() {
         sleep "$interval"
     done
 }
+
+# --- Options (spec-script-contract.md, "Parameters") ------------------------
+# Precedence: command line > environment > built-in default. Every option has
+# an environment variable EASY_CS_AI_<COMPONENT>_<OPTION> (upper snake case).
+# A script parses its command line first (set_option for each value it reads),
+# then fills what is still missing with set_option_default.
+
+# option_var <component> <option>: print the variable name for an option.
+option_var() {
+    local name="EASY_CS_AI_${1}_${2}"
+    name="${name^^}"
+    printf '%s\n' "${name//-/_}"
+}
+
+# set_option <component> <option> <value>: value given on the command line.
+# It overrides the environment.
+set_option() {
+    local var
+    var="$(option_var "$1" "$2")"
+    printf -v "$var" '%s' "$3"
+    export "${var?}"
+}
+
+# set_option_default <component> <option> <default>: use the default only when
+# neither the command line nor the environment gave a value.
+set_option_default() {
+    local var
+    var="$(option_var "$1" "$2")"
+    if [[ -z "${!var:-}" ]]; then
+        set_option "$1" "$2" "$3"
+    fi
+}
+
+# get_option <component> <option>: print the current value.
+get_option() {
+    local var
+    var="$(option_var "$1" "$2")"
+    printf '%s\n' "${!var:-}"
+}
+
+# Result of the command line, not settings: kept in private shell variables,
+# never exported and never read from the environment, and read through the
+# functions below. Only --verbose is a setting that must reach child scripts,
+# so it is exported as EASY_CS_AI_VERBOSE.
+_OPT_HELP=0
+_OPT_VERSION=0
+_OPT_DRY_RUN=0
+_OPT_JSON=0
+
+wants_help() { [[ "$_OPT_HELP" == "1" ]]; }
+wants_version() { [[ "$_OPT_VERSION" == "1" ]]; }
+is_dry_run() { [[ "$_OPT_DRY_RUN" == "1" ]]; }
+wants_json() { [[ "$_OPT_JSON" == "1" ]]; }
+
+# parse_common_options <args…>: consume the options shared by every script
+# (--help, --version, --verbose, --dry-run, --json), to be read with
+# wants_help, wants_version, is_dry_run and wants_json (--verbose turns on
+# log_debug for this script and the ones it starts). Everything else is left,
+# in order, in the array COMMON_REST for the script's own parse_args. Unknown
+# options are not an error here: the script rejects them (exit 2) once it has
+# parsed its own, see reject_unknown_options.
+COMMON_REST=()
+parse_common_options() {
+    COMMON_REST=()
+    _OPT_HELP=0 _OPT_VERSION=0 _OPT_DRY_RUN=0 _OPT_JSON=0
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --help) _OPT_HELP=1 ;;
+            --version) _OPT_VERSION=1 ;;
+            --verbose) export EASY_CS_AI_VERBOSE=1 ;;
+            --dry-run) _OPT_DRY_RUN=1 ;;
+            --json) _OPT_JSON=1 ;;
+            *) COMMON_REST+=("$arg") ;;
+        esac
+    done
+}
+
+# reject_unknown_options <args…>: usage error (exit 2) for any leftover option.
+reject_unknown_options() {
+    local arg
+    for arg in "$@"; do
+        if [[ "$arg" == -* && "$arg" != "-" ]]; then
+            die "$EXIT_USAGE" "unknown option: $arg"
+        fi
+    done
+}
+
+# --- Secrets (spec-script-contract.md, "Secrets") ---------------------------
+# A secret is never taken from the command line. Accepted channels: a file
+# (--<name>-file, mode 0600 or stricter), the environment (see get_option), or
+# stdin. These helpers print the secret on stdout for the caller to capture;
+# they never log it.
+
+# read_secret <file|->: print the secret held in a file (mode 0600 or
+# stricter, else exit 2) or read from stdin when the source is "-".
+read_secret() {
+    local source="${1:-}" value=""
+    if [[ -z "$source" ]]; then
+        die "$EXIT_USAGE" "read_secret: no source given"
+    fi
+    if [[ "$source" == "-" ]]; then
+        IFS= read -r value || true
+    else
+        if [[ ! -f "$source" ]]; then
+            die "$EXIT_USAGE" "secret file not found: $source"
+        fi
+        local mode
+        mode="$(stat -c '%a' "$source")"
+        if ((8#$mode & 8#077)); then
+            die "$EXIT_USAGE" "secret file $source has mode $mode, 600 or stricter required"
+        fi
+        IFS= read -r value <"$source" || true
+    fi
+    if [[ -z "$value" ]]; then
+        die "$EXIT_USAGE" "secret is empty"
+    fi
+    printf '%s\n' "$value"
+}
+
+# generate_secret: print a random secret, 32 bytes from /dev/urandom,
+# base64url without padding.
+generate_secret() {
+    head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n'
+    printf '\n'
+}
