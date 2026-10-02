@@ -11,6 +11,11 @@
 ## Weaknesses / must-know
 - Heavy stack: Docker + Docker Compose; MongoDB is **required** (`MONGO_URI`). Meilisearch is optional (search disabled by default, needs `MEILI_MASTER_KEY` if enabled); PGVector + RAG API are optional.
 - MongoDB Community is SSPL, not OSI open source: this conflicts with the "open-source" rule. FerretDB (Apache 2.0, MongoDB-wire-compatible over PostgreSQL) is a candidate replacement, and the FerretDB maintainers confirmed in a LibreChat discussion that it works, with a published guide (`MONGO_URI=mongodb://user:pass@ferretdb:27017/LibreChat`; needs only FerretDB + PostgreSQL). Still to be tested in our own setup.
+- SSPL in short: since 2018 MongoDB is under the Server Side Public License, an AGPL-like licence with an extra clause. Anyone offering the software as a service to third parties must publish, under SSPL, all the code needed to run that service (management, automation, monitoring...). The OSI refused to recognise it as open source because this restricts a usage. For purely internal use on a VM the practical risk is low (the clause targets managed-service resellers), but it appears as soon as the project is distributed or used to serve customers; a legal review would then be needed (this summary is not legal advice).
+- Options if the FerretDB test fails or is not enough:
+  1. FerretDB + PostgreSQL (preferred, adds PostgreSQL to the stack);
+  2. accept MongoDB and document the exception to the "open-source" rule (simplest install, weakest on licensing);
+  3. promote [AnythingLLM](anythingllm.md) to rank 1 (no MongoDB, embedded LanceDB, but document-oriented rather than a generic chat UI).
 - Models are declared in `librechat.yaml`, so the CLI `add` command must edit that file and restart.
 
 ## Sources

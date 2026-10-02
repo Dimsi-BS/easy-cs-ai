@@ -61,10 +61,10 @@ Each layer wraps the previous one and can be used on its own: install scripts al
 
 ### AI Inference Engines
 
-Several AI inference engines are supported:
+Several AI inference engines are supported, in integration order (see [docs/decision-integration-order](docs/decision-integration-order.md)):
 
-- Ollama
-- vLLM
+1. Ollama
+2. vLLM
 
 ### Authentication
 
@@ -78,7 +78,10 @@ Some inference engines do not provide authentication nor HTTPS so a reverse prox
 
 ### Chat Interface Websites
 
-- LibreChat
+In integration order, see [docs/decision-integration-order](docs/decision-integration-order.md):
+
+1. LibreChat
+2. AnythingLLM
 
 ## Layers
 

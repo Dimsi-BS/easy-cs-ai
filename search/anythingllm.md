@@ -11,6 +11,8 @@
 - Default vector database is LanceDB (embedded); PGVector, Qdrant, Chroma, Milvus etc. are optional. No MongoDB dependency found. (Relational storage engine not confirmed.)
 
 ## Weaknesses / must-know
+- Only the Docker version fits the project (web server on the VM, reached through a browser, default port 3001). The desktop app is single-user and local, so it is not retained.
+- Multi-user mode is not enabled by default: the install script must enable it (this creates the admin account and turns on roles).
 - Document/workspace oriented rather than a pure multi-provider chat UI; fewer provider-switching features than LibreChat.
 - Developer API (also at `/api/docs` on each instance) can configure everything the CLI `add` command needs: `POST /v1/system/update-env` (LLM provider settings), workspace create/update, and admin user management (`/v1/admin/users`). Model-specific env keys should still be tested on a running instance.
 

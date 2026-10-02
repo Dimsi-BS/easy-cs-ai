@@ -9,3 +9,4 @@ This directory contains design decisions and write-ups about the project, comple
 - [CLI commands](cli-commands.md) — the planned `easy-cs-ai` command reference
 - [Decision: scripting language](decision-scripting-language.md) — bash (+ `jq`), conventions and when to revisit
 - [Decision: packaging and entry point](decision-packaging.md) — single CLI distributed as tarball, `.deb` and `.rpm`; snap dropped
+- [Decision: integration order](decision-integration-order.md) — ranking of alternative components per function (inference engine, chat interface)
