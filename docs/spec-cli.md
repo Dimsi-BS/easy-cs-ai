@@ -1,0 +1,315 @@
+# Spec: CLI
+
+[← Back to docs](README.md)
+
+**Status:** proposed
+
+## Purpose
+
+The `easy-cs-ai` CLI is the layer 2 entry point. It is a thin `git`-style dispatcher over the layer 1 scripts (see [packaging](decision-packaging.md)), plus three commands that do their own work: `status`, `add` and `uninstall`, which combine several scripts. This spec fixes how a command line is resolved, what each command does step by step, how failures are reported and what is undone on error.
+
+It builds on the [script contract](spec-script-contract.md) (actions, `describe`, exit codes) and the [state format](spec-state-format.md); it does not repeat them. [CLI commands](cli-commands.md) stays the short overview.
+
+Out of scope: the interface of the generators behind `generate` (to be specified with them, see [generators](../generators/README.md)).
+
+## Installed layout
+
+```text
+/usr/bin/easy-cs-ai                     the dispatcher
+/usr/lib/easy-cs-ai/
+  lib/common.sh
+  engine/ollama.sh  proxy/nginx.sh  …   the layer 1 tree, as in the contract
+  templates/
+```
+
+- The dispatcher sets `EASY_CS_AI_LIB` to `/usr/lib/easy-cs-ai/lib` and runs the scripts from there. It sources `lib/common.sh` itself for `log_*`, `die`, `with_lock` and the state helpers.
+- The tarball has the same tree under any directory; the dispatcher finds it relative to its own location, or through `EASY_CS_AI_HOME` when set.
+- `EASY_CS_AI_ROOT`, `EASY_CS_AI_STATE_DIR` and `EASY_CS_AI_CONFIG_DIR` are honoured and passed through, so the CLI is testable with `bats` like the scripts.
+
+## Command line
+
+```text
+easy-cs-ai [global options] <command> [arguments…]
+```
+
+| Command | Effect |
+| --- | --- |
+| `status` | List installed components with their live status |
+| `install <type> <name> [options…]` | Install a component |
+| `install [<type>] --defaults` | Install the default choices (a whole stack, or the default component of a type) |
+| `uninstall <type> <name> [options…]` | Uninstall a component |
+| `uninstall --all` or `uninstall <type> --all` | Uninstall everything that is installed (of a type, or all), without naming components |
+| `add <model> [--engine <name>] [--chat-interface <name>]` | Add a model to an engine and wire it |
+| `remove <model> [--engine <name>]` | Unwire a model and remove it from its engine |
+| `remove --all [--engine <name>]` | Remove every model (of one engine, or of all) |
+| `generate <script-type> [parameters…]` | Produce a parameterless script |
+| `<type> <name> <action> [arguments…]` | Component command, forwarded to the script |
+
+- `<type>` is one of `engine`, `chat-interface`, `proxy`, `provisioning` (the contract types). `install` accepts all four, since `proxy` and `provisioning` are required by other commands (see [Dependencies](#dependencies)).
+- **Global options**, accepted before the command: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`. After the command they are forwarded as they are, since scripts accept the same ones.
+- **General commands and component commands are kept apart.** A component is always addressed by its type followed by its name (`engine ollama`), never by its name alone. The first word of the command line is therefore either a general command (`status`, `install`, `uninstall`, `add`, `remove`, `generate`, `help`, `version`) or a component type (`engine`, `chat-interface`, `proxy`, `provisioning`): these two sets are the reserved words, so a component name can never clash with a general command.
+- Like the scripts, the CLI **never prompts**. Unknown commands, unknown types, unknown component names and missing arguments are usage errors (exit 2) with a message listing the valid values.
+
+### Dispatch
+
+The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<name>.sh`), never against a hardcoded list, so a new component needs no CLI change.
+
+| Command line | Resolved to |
+| --- | --- |
+| `install engine ollama --port 11435` | `engine/ollama.sh install --port 11435` |
+| `uninstall engine ollama --purge` | `engine/ollama.sh uninstall --purge` |
+| `engine ollama list-models` | `engine/ollama.sh list-models` |
+| `proxy nginx show-key` | `proxy/nginx.sh show-key` |
+| `engine` | lists the engines shipped and, for each, whether it is installed (no script call except `describe`) |
+
+- `install` and `uninstall` add the CLI-level steps described below (dependencies, `--default`); everything else after the component name is forwarded untouched. The script is the judge of its own options (unknown option → exit 2 from the script).
+- A component command forwards stdout, stderr and exit code as they are. Type-specific actions that change the component's own models or endpoints (`engine ollama add-model`, `chat-interface librechat add-endpoint`) are available this way for expert use, but do **not** do the wiring that `add` does.
+- `easy-cs-ai <type> <name> --help` shows the script's help, generated from its `describe`.
+
+### Native tool commands
+
+**Principle: what a tool already does is executed by the tool, never reimplemented.** The CLI and the scripts only add what the project's conventions require around the call (root check, lock, state, journal, JSON on stdout, exit codes).
+
+- Any action after `<type> <name>` that is **not** one of the contract actions (`install`, `uninstall`, `status`, `describe` and the type-specific ones) is run **as is by the component's own program**, declared in `describe` as `native.command` (`ollama`, `nginx`, `llmfit`…):
+
+  | Command line | Executed |
+  | --- | --- |
+  | `engine ollama run llama3.2:3b` | `ollama run llama3.2:3b` |
+  | `engine ollama ps` | `ollama ps` |
+  | `proxy nginx -t` | `nginx -t` |
+  | `provisioning llmfit recommend --json` | `llmfit recommend --json` |
+
+  Arguments, streams, TTY and exit code are the tool's own (it is `exec`'d, nothing is parsed or filtered). The CLI does not check root here: the tool decides.
+- The CLI only prepares the environment so that the tool talks to the instance the project installed: it exports the variables listed in `describe.native.env` (e.g. `OLLAMA_HOST`), built from the `params` recorded in the state.
+- The contract actions win when a name is shared. `--` before the action forces the native tool: `engine ollama -- status`.
+- Components without a program of their own (Docker Compose-based chat interfaces) declare `native.command` as `docker compose -f <compose_file>` (from the state `service`), so `chat-interface librechat logs -f` is `docker compose -f … logs -f`. A component with nothing to run natively leaves `native` out, and an unknown action is then a usage error.
+- The type-specific actions of the contract are themselves **thin wrappers** over native commands (`list-models` runs `ollama list`, `remove-model` runs `ollama rm`, `provisioning recommend` runs `llmfit recommend --json`). They exist only to add the convention-mandated parts: JSON on stdout, state update, journal, a size-aware wait. See the [contract](spec-script-contract.md#wrapping-native-tools).
+
+### Privileges
+
+`install`, `uninstall`, `add` and the changing component actions require root. The CLI checks it first and fails with exit 4 and a message suggesting `sudo`; it never re-executes itself through `sudo`. `status`, `--help`, `describe` and the read-only actions run unprivileged (the state is world-readable, see [state format](spec-state-format.md#layout)).
+
+## `status`
+
+Reads every `components/*.json`, then calls `<script> status` for each (live probe, in order, each limited to 15 s: a timeout is reported as not healthy). Output as in [state format](spec-state-format.md#what-status-combines):
+
+```text
+COMPONENT     TYPE            VERSION   DEFAULT  RUNNING  HEALTHY  MODELS
+ollama        engine          0.5.7     yes      yes      yes      llama3.2:3b
+```
+
+- `--json` prints one array of objects instead: the state fields shown above merged with the script's `status` JSON, and `models` as an array of names. Sorted by type, then name.
+- A component whose state file cannot be read (unknown higher `schema_version`, invalid JSON) is shown with `VERSION` and flags as `?`, and an `ERROR` line on stderr names the file. It is never hidden.
+- Nothing installed prints the header and a hint (`easy-cs-ai install engine ollama`) on stderr.
+- **Exit code**: 0 when every component is healthy (or nothing is installed), 6 when at least one is installed but not healthy, 1 when a state file is unreadable.
+
+## `install`
+
+```text
+easy-cs-ai install <type> <name> [--defaults] [--default] [script options…]
+easy-cs-ai install <type> --defaults
+easy-cs-ai install --defaults
+```
+
+**The CLI never picks a component on its own.** Every choice it would otherwise guess (which component, which dependency) is made only when `--defaults` is given. `--defaults` is a CLI option, not forwarded to the scripts; it is about *which components* are installed, whereas the options of a given component fall back on the script's own built-in defaults as usual. Not to be confused with `--default`, which makes a component the default of its type (see [Defaults](spec-state-format.md#defaults)) and is forwarded to the script.
+
+| Command line | Effect |
+| --- | --- |
+| `install engine ollama` | Installs Ollama; a missing requirement fails (see [Dependencies](#dependencies)) |
+| `install engine ollama --defaults` | Same, and installs the missing requirements with their defaults |
+| `install engine --defaults` | Installs the rank 1 engine (see [integration order](decision-integration-order.md)) |
+| `install --defaults` | Installs the **default stack**: the rank 1 component of every type that is not installed yet |
+| `install engine` or `install` | Usage error (exit 2) suggesting the `--defaults` form |
+
+Steps for one component:
+
+1. Check root and resolve the script (usage error otherwise).
+2. [Resolve dependencies](#dependencies).
+3. Run `<script> install` with the remaining options, stdout and stderr passed through.
+4. If `--default` was given, the script itself sets the flag; it is forwarded as a script option, so a generated standalone script behaves the same.
+
+The exit code is the script's, except when a dependency failed (that step's code, with a message naming it).
+
+**Default stack** (`install --defaults`): for each type (`provisioning`, `proxy`, `engine`, `chat-interface`), if no component of the type is installed, install the rank 1 one, in an order that satisfies `requires` (computed from `describe`, not hardcoded). Types already installed are left alone, so the command converges and is safe to re-run. It follows the integration order, so a change of rank 1 changes the stack without touching the CLI. This is the one-line form for the VM post-install layer.
+
+### Dependencies
+
+The scripts only *check* `requires`, they never install another component (see the contract). Resolving is the CLI's job:
+
+- Requirements are read from `<script> describe` (`requires`, a list of component **names or types**).
+- A missing requirement **fails with exit 4** and a message giving the exact command to run (`nginx is required by librechat: easy-cs-ai install proxy nginx`).
+- With `--defaults`, a missing requirement is installed first with its default options, announced on stderr (`[INFO] installing nginx (required by librechat)`). If the requirement is a type, the rank 1 component of that type is chosen.
+- `--dry-run` prints the whole chain and installs nothing.
+
+## `uninstall`
+
+```text
+easy-cs-ai uninstall <type> <name> [--purge] [--force]
+easy-cs-ai uninstall <type> --all [--purge] [--force]
+easy-cs-ai uninstall --all [--purge] [--force]
+```
+
+`--all` designates **everything that is installed**, so that a test environment is wiped with one command and no component is named. It has nothing to do with `--defaults` (which is only about installing default choices): it removes whatever is there, including a component that is not rank 1 (e.g. vLLM).
+
+| Command line | Effect |
+| --- | --- |
+| `uninstall engine ollama` | Uninstalls Ollama (exit 4 if it is not installed, as in the contract) |
+| `uninstall engine --all` | Uninstalls every installed engine; none installed → nothing to do, exit 0 |
+| `uninstall --all` | Uninstalls **every installed component**, of every type |
+| `uninstall engine` or `uninstall` | Usage error (exit 2) suggesting the `--all` form |
+
+- The components are the `components/*.json` of the state. Anything running on the machine but absent from the state is not touched (the state only covers what the tool installed).
+- The order puts dependents before what they need (from the `requires` in the state files), so no `--force` is required. Among components with no relation between them, the **reverse of the install order** applies: chat interface, engine, proxy, provisioning. The engine therefore goes before the proxy, and its models are unwired while the proxy and the chat interface can still be reached (see the clean-up below).
+- The run stops at the first failure and returns its exit code; running it again resumes with what is left. `--purge` and `--force` apply to every component of the run; without `--purge`, data (models, databases) is kept, as for a single `uninstall`.
+- `--dry-run` prints the list of components that would be removed, in order.
+- Because this is destructive, `--all` is refused on a command line that names a component: `uninstall engine ollama --all` is a usage error (exit 2). `--defaults` is not accepted by `uninstall` at all (usage error).
+
+For one component, the CLI checks root, then runs `<script> uninstall` with the options. Refusal when another component `requires` this one (exit 4) is the script's; the CLI adds the list of those components to the message by scanning `requires` in the state files. The CLI does **not** cascade: dependents are never removed implicitly.
+
+After the script succeeds, the CLI cleans the wiring left in other components:
+
+- engine removed: nothing else to do for the models it served beyond the next point;
+- for each model of the removed engine recorded with `exposed_via` / `linked_to`, run `proxy remove-upstream` and `chat-interface remove-endpoint` (best effort: a failure is a `WARN` and does not change the exit code, since the engine is already gone);
+- proxy or chat interface removed: clear the matching `exposed_via` / `linked_to` entries in the engine models.
+
+Defaults are handled by the script (promotion or none, see state format).
+
+## `add`
+
+```text
+easy-cs-ai add <model> [--engine <name>] [--chat-interface <name>] [--no-chat-interface] [--defaults] [--force] [--dry-run]
+```
+
+`add` is an orchestration of component actions. Every change goes through a script action, so scripts stay the only writers of their own state (one exception, step 5).
+
+### Resolution (no side effect)
+
+1. **Engine**: `--engine`, else the component of type `engine` with `"default": true`. No engine installed → exit 4 (`install an engine first`); several and no default → exit 4 listing the candidates; an unknown name → exit 4.
+2. **Chat interface**: `--chat-interface`, else the default one. If none is installed and the option was not given, this step is skipped with an `INFO` (an engine alone, reached by API, is a valid setup); `--no-chat-interface` skips it explicitly. A named but missing chat interface → exit 4.
+3. **Needs a proxy?** Read the engine's `endpoint.protected`. If `false` the model must be wrapped by the proxy.
+4. **Missing components**: the step 1 and 3 components (llmfit, the proxy) that are not installed make the command fail with exit 4 and the command to run, unless `--defaults` is given, in which case they are installed with their defaults (see [Dependencies](#dependencies)). Nothing is installed implicitly.
+5. Print the plan (`--dry-run` stops here, exit 0).
+
+### Steps
+
+| # | Step | Action | Skipped when |
+| --- | --- | --- | --- |
+| 1 | Check the model fits | `provisioning check <model>` | `--force` |
+| 2 | Add to the engine | `engine add-model <model>` | model already in the engine |
+| 3 | Expose through the proxy | `proxy add-upstream <upstream> <url>` | engine is `protected`, or already exposed |
+| 4 | Link to the chat interface | `chat-interface add-endpoint <name> <url>` | no chat interface, or already linked |
+| 5 | Record the wiring | update `models[].exposed_via` / `linked_to` in the engine state | nothing changed in 3 and 4 |
+
+- **Step 1**: a negative verdict stops the command with exit 4 and the reason from llmfit; `--force` bypasses the check, with a `WARN`.
+- **Step 3**: `<upstream>` is `<engine>-<model slug>` (lowercase, characters outside `[a-z0-9.-]` replaced by `-`), so models of two engines never collide. `<url>` is the model's internal URL: the engine `endpoint.url`, or, for an engine with one instance per model, `http://127.0.0.1:<port>` from the model's entry.
+- **Step 4**: `<name>` is the same slug. `<url>` is the one the script printed in step 3 (HTTPS through the proxy), or the engine's `openai_base_url` when the engine is `protected`.
+- **Step 5** is the one place where the CLI writes a component's state: `exposed_via` and `linked_to` describe a relation between components, which no single script knows. It uses the `lib/common.sh` state helpers (lock, atomic write, `jq empty`), following the [writing rules](spec-state-format.md#writing-rules), and preserves unknown fields.
+- The CLI does **not** hold the global lock across the steps (the scripts take it themselves and it is not reentrant). Two concurrent `add` of different models are fine; two of the same model converge thanks to the idempotence of the steps.
+
+### Idempotence and resume
+
+`add` is re-runnable. Each step first checks the engine state (model present, `exposed_via`, `linked_to`) and does only what is missing. A `add` that failed at step 4 is completed by running it again; one that is complete exits 0 with `already added`.
+
+### Rollback
+
+On a failure at step *N*, the steps **done by this run** are undone in reverse order:
+
+| Failed step | Undone, in this order |
+| --- | --- |
+| 5 | `chat-interface remove-endpoint`, `proxy remove-upstream`, `engine remove-model` |
+| 4 | `proxy remove-upstream`, `engine remove-model` |
+| 3 | `engine remove-model` |
+| 2 | nothing (the script cleans after itself, see the contract) |
+| 1 | nothing |
+
+- What existed before the run is never undone (a model that was already in the engine stays, so a failed re-run cannot damage a working setup).
+- Components installed through `--defaults` (llmfit, nginx) are **kept**: they are shared, harmless, and a retry reuses them.
+- The failure is reported with the failing step's exit code. If the rollback itself fails, the leftovers are listed on stderr (`[ERROR] could not undo: proxy upstream ollama-llama3.2-3b`) and the exit code is **7**.
+- Step 2 of a large model can be interrupted (Ctrl-C, SIGTERM): the CLI traps the signal, lets the running script finish its own cleanup, then rolls back as for a failure (exit 130 / 143, standard shell convention).
+
+### Journal
+
+`add` and `remove` write `<command> start model=… engine=… chat_interface=…` and `<command> end exit=… duration=…` through `log_event`, around the lines of each script (see [Action journal](spec-script-contract.md#action-journal)).
+
+## `remove`
+
+```text
+easy-cs-ai remove <model> [--engine <name>] [--dry-run]
+easy-cs-ai remove --all [--engine <name>] [--dry-run]
+```
+
+The reverse of `add`: it unwires the model, then deletes it from its engine. Mostly meant to repeat install tests quickly, without reinstalling the engine.
+
+`remove --all` removes **every model** of the engine given by `--engine`, or of every engine when the option is absent, so a test environment goes back to "components installed, no model" in one command. It runs the steps below for each model in turn (engines in state order, models in `models` order). It is refused when a model name is also given (usage error, exit 2), and `--defaults` is not accepted. It stops at the first failing model and returns its exit code; running it again resumes with the models left. Nothing to remove → exit 0.
+
+### Resolution (no side effect)
+
+1. Check root.
+2. **Engine** (single model): `--engine`, else the engine whose state lists `<model>` in `models`. Not found anywhere → exit 4 (`model not found`, listing the known models). Held by several engines → exit 4 listing them, to be disambiguated with `--engine`. The default engine is **not** used: a model is searched where it is.
+3. Print the plan (`--dry-run` stops here, exit 0).
+
+### Steps
+
+Reverse order of `add`, so that nothing ever points to a model that no longer exists:
+
+| # | Step | Action | Skipped when |
+| --- | --- | --- | --- |
+| 1 | Unlink from each chat interface in `linked_to` | `chat-interface remove-endpoint <name>` | `linked_to` is empty |
+| 2 | Remove from the proxy | `proxy remove-upstream <upstream>` | `exposed_via` is `null` |
+| 3 | Remove from the engine | `engine remove-model <model>` | — |
+
+- After steps 1 and 2 the CLI clears the matching `linked_to` / `exposed_via` in the engine state (same state helpers as `add` step 5), so a failure further on leaves a state that matches reality. Step 3 removes the whole `models` entry.
+- A component named in `linked_to` / `exposed_via` that is no longer installed is skipped with a `WARN` (nothing to unwire).
+- Data: the model files are deleted by the engine's own command (`ollama rm`). The proxy, the chat interface and the components installed with `--defaults` are never touched.
+
+### Failure and resume
+
+There is **no rollback**: undoing a removal would mean pulling the model again, which is long and may not be possible offline. The command stops at the first failing step and returns its exit code. Because the order unwires first, the model is then at worst *still present but no longer reachable*, a consistent state. Running `remove` again resumes: each step does only what is left, and the last one exits 0 once the model is gone (a model absent everywhere is then the exit 4 of the resolution, as for any unknown model).
+
+## Exit codes
+
+The CLI uses the **script contract codes** with the same meaning, and passes the script's code through when it runs one script; for composite commands it is the code of the failing step.
+
+| Code | Meaning in the CLI |
+| --- | --- |
+| 0 | Success, including "nothing to do" |
+| 1 | Unexpected error, unreadable state |
+| 2 | Usage error: unknown command, type or component, missing argument, bad option |
+| 3 | Unsupported platform |
+| 4 | Precondition not met: not root, nothing to act on (no engine, model does not fit, unknown default), component required by another |
+| 5 | Network or download failure |
+| 6 | Verification failed, or `status` found an unhealthy component |
+| 7 | **CLI only**: the command failed and its rollback is incomplete, see stderr for what is left |
+| 130, 143 | Interrupted by SIGINT / SIGTERM |
+
+- The CLI adds a human message to each code (first line on stderr, `[ERROR] <what failed> (exit <code>: <meaning>)`) and ends with a hint when there is one. The scripts' own log lines are not filtered.
+- Code 7 is reserved by this spec; the contract says "anything else is reserved", so no script may use it.
+
+## Output
+
+- **stderr**: logs, same `[LEVEL] message` format as the scripts, whose stderr is passed through. `--verbose` is forwarded.
+- **stdout**: only machine-readable output (`status --json`, forwarded script JSON), except the `status` table, which is the result of the command. With `--json`, tables and plans are replaced by JSON.
+- Secrets are never printed, as for the scripts (`proxy nginx show-key` is the explicit exception, forwarded).
+
+## `generate`
+
+`generate <script-type> [parameters…]` hands over to the matching generator (`install-script` or `vm-script`) with the remaining arguments, forwarding its streams and exit code. Parameters accepted by the generated script come from `describe`; the rest is specified with the [generators](../generators/README.md).
+
+## Contract additions
+
+This spec relies on four points that are specified in the [script contract](spec-script-contract.md): `provisioning check <model>` and the `url` printed by `proxy add-upstream` / `chat-interface add-endpoint` (see [Type-specific actions](spec-script-contract.md#type-specific-actions)), `requires` naming a type and the `native` object of `describe` (see [`describe`](spec-script-contract.md#describe)), and `--default` as an option of `install` (see [Parameters](spec-script-contract.md#parameters)).
+
+## Definition of done
+
+- Every command and every row of the dispatch and exit-code tables covered by `bats` tests in `EASY_CS_AI_ROOT` mode, using fake component scripts (success, each exit code, slow, interrupted).
+- `add` tested for each rollback row with a fake failing step, and for resume; `remove` tested for each failing step and resume.
+- `install` tested with and without `--defaults` (missing requirement, type only, default stack, re-run).
+- `uninstall --all` and `remove --all` tested for order (dependents first), resume, a type-scoped run (`uninstall <type> --all`), nothing to remove, and the usage errors (`--all` with a name, `--defaults` on `uninstall` or `remove`).
+- `shellcheck` clean; `--help` text consistent with this spec.
+- Integration test on a fresh VM: `install engine ollama`, `add llama3.2:3b`, `status` healthy, `uninstall`. Round trip for repeated tests: `install --defaults`, `add`, `remove --all`, `uninstall --all`, then the system is back as found (except shared packages).
+
+## Open questions
+
+- Whether `status` should probe in parallel once the number of components grows (sequential and bounded by 15 s per component today).
+- Shell completion (bash/zsh) built from `describe`: wanted, not specified.
+- The default stack follows rank 1, so until the [LibreChat/MongoDB question](decision-integration-order.md#consequences) is settled, `install --defaults` would install LibreChat and its database requirement.

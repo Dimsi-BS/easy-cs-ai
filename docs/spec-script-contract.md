@@ -53,11 +53,16 @@ Components of one type expose the same actions, so switching is one parameter:
 | `engine` | `add-model <name>`, `remove-model <name>`, `list-models` |
 | `proxy` | `add-upstream <name> <url>`, `remove-upstream <name>`, `show-key` |
 | `chat-interface` | `add-endpoint <name> <url>`, `remove-endpoint <name>` |
-| `provisioning` | `recommend` (JSON on stdout) |
+| `provisioning` | `recommend` (JSON on stdout), `check <model>` (JSON on stdout) |
+
+Output of the actions that return something other than the standard `status` / `describe` / `list-models`:
+
+- `proxy add-upstream` and `chat-interface add-endpoint` print `{ "url": "…" }` on stdout: the URL under which the model is now reachable (through HTTPS for the proxy; for the chat interface, the URL of the declared endpoint). The CLI uses it to wire the next component, instead of rebuilding URLs from the proxy state, which records no path per upstream. Idempotent: calling again with the same arguments prints the same URL.
+- `provisioning check <model>` prints `{ "fits": true|false, "reason": "…" }` and exits 0 in both cases; a failure to evaluate (llmfit error, unknown model name) is exit 1. It is a thin wrapper, see [Wrapping native tools](#wrapping-native-tools): the verdict is read from llmfit's own output with `jq`, the fit computation is never redone by the project.
 
 An engine either serves all its models from **one process** (Ollama), or runs **one instance per model** (vLLM, which serves a single model per process). The `engine` actions are the same in both cases, see [Engines with one instance per model](#engines-with-one-instance-per-model).
 
-These are the "component commands" mirrored by `easy-cs-ai <component-name> …`. `easy-cs-ai add` orchestrates them: `provisioning recommend` check → `engine add-model` → `proxy add-upstream` if needed → `chat-interface add-endpoint`.
+These are the "component commands" mirrored by `easy-cs-ai <type> <name> <action> …` (e.g. `easy-cs-ai engine ollama list-models`). `easy-cs-ai add` orchestrates them: `provisioning check` → `engine add-model` → `proxy add-upstream` if needed → `chat-interface add-endpoint`.
 
 ## Parameters
 
@@ -65,8 +70,25 @@ These are the "component commands" mirrored by `easy-cs-ai <component-name> …`
 - Precedence: command line > environment > built-in default. A generated script replaces the built-in defaults by fixed values; nothing else changes.
 - Parsing lives in one function of the script (`parse_args`), so the generator has a single place to inject fixed values.
 - Common options, accepted by every action unless it makes no sense: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`.
+- `install` also accepts `--default`: make this component the default of its type (see [state format](spec-state-format.md#defaults)). The CLI forwards it as it is, so a generated standalone script behaves the same.
 - `--dry-run` prints what would be done (packages, files, units) on stderr, changes nothing, and exits 0 if the real run would pass preflight.
 - Unknown options are a usage error (exit 2), never ignored.
+
+### Wrapping native tools
+
+**What a tool already does, the tool does.** A script never reimplements a feature of the component it installs (pulling a model, listing models, validating a configuration, hardware detection…): it calls the tool's own command and adds only what the conventions of this contract require.
+
+| Action | Native command it wraps | What the wrapper adds |
+| --- | --- | --- |
+| `engine list-models` (Ollama) | `ollama list` | JSON on stdout |
+| `engine add-model` (Ollama) | `ollama pull` | size-aware wait, state, journal |
+| `engine remove-model` (Ollama) | `ollama rm` | state, journal |
+| `provisioning recommend` | `llmfit recommend --json` | exit codes, no state |
+| `provisioning check <model>` | llmfit's own output (`llmfit recommend --json`, or a per-model llmfit command if it has one, to confirm in the [findings](../search/llmfit.md)) | `fits` / `reason` JSON read with `jq` |
+| `proxy` configuration check | `nginx -t` before every reload | exit code 6 on failure |
+
+- When the tool's output is already in the required form, it is passed through untouched. Parsing is limited to `jq` over the tool's JSON.
+- Native commands that match no contract action are reachable as they are through the CLI, see [spec: CLI](spec-cli.md#native-tool-commands). `describe` declares the program (`native.command`) and the variables to export (`native.env`).
 
 ### Secrets
 
@@ -81,7 +103,7 @@ These are the "component commands" mirrored by `easy-cs-ai <component-name> …`
 ## Output
 
 - **stderr**: logs, one line each, `[LEVEL] message` with LEVEL in `INFO`, `WARN`, `ERROR`, plus `DEBUG` with `--verbose`.
-- **stdout**: reserved for machine-readable output (JSON of `status`, `describe`, `list-models`, `recommend`, or a secret printed on explicit request). Nothing else may write to stdout, including the commands the script runs (redirect them to stderr).
+- **stdout**: reserved for machine-readable output (JSON of `status`, `describe`, `list-models`, `recommend`, `check`, the `url` of `add-upstream` and `add-endpoint`, or a secret printed on explicit request). Nothing else may write to stdout, including the commands the script runs (redirect them to stderr).
 - Dates are ISO 8601 UTC.
 - **System journal**: besides stderr, every action that changes the system (`install`, `uninstall`, `add-model`, `remove-model`) writes an event to the journal through `logger -t easy-cs-ai`, see [Action journal](#action-journal).
 
@@ -97,7 +119,7 @@ easy-cs-ai: ollama install end exit=0 duration=48s
 - Content: component, action, version, **non-secret** parameters (same set as `params` in the state), exit code, duration. Never a secret (same rule as for logs).
 - Read with `journalctl -t easy-cs-ai`. Retention and rotation are journald's business; nothing is stored in the [state directory](spec-state-format.md), which stays "declared, not observed".
 - Written by one function of `lib/common.sh`, `log_event`, called by the common code around each action so scripts do not repeat it. It is skipped in `EASY_CS_AI_ROOT` mode (replaced by stderr logging like service control).
-- Read-only actions (`status`, `describe`, `list-models`, `recommend`, `show-key`) are not journaled.
+- Read-only actions (`status`, `describe`, `list-models`, `recommend`, `check`, `show-key`) are not journaled.
 
 ### `describe`
 
@@ -112,6 +134,7 @@ easy-cs-ai: ollama install end exit=0 duration=48s
   "provides": ["openai-api"],
   "platforms": ["debian", "ubuntu"],
   "health_timeout": 60,
+  "native": { "command": "ollama", "env": { "OLLAMA_HOST": "{bind}:{port}" } },
   "options": [
     { "name": "port", "env": "EASY_CS_AI_OLLAMA_PORT", "default": "11434", "secret": false, "description": "…" }
   ],
@@ -120,6 +143,9 @@ easy-cs-ai: ollama install end exit=0 duration=48s
 ```
 
 `describe` is the single source for `--help` text, CLI completion, and the parameter list the generators expose.
+
+- `requires` is a list of component **names or types**. A type (e.g. `"proxy"`) means "any installed component of that type"; for the check it is satisfied by any one, and the CLI uses the rank 1 component of the type when it installs the missing requirement with `--defaults` (see [spec: CLI](spec-cli.md#dependencies)).
+- `native` is optional: `command` is the component's own program, run as is by the CLI for actions that match no contract action (see [spec: CLI](spec-cli.md#native-tool-commands)); `env` maps variables to export to templates over the recorded `params` (`{bind}`, `{port}`…), so the program reaches the instance the project installed. For a Docker Compose component, `command` is `docker compose -f {compose_file}` (from the state `service`). Omitted when the component has nothing to run natively.
 
 ### `status`
 
