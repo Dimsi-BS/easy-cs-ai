@@ -251,7 +251,7 @@ Rules:
 1. **Order**: component lock first, then state lock, never the reverse. A script holds at most one component lock, so no deadlock is possible.
 2. **Never held over slow work**: the state lock is taken only inside the `state_*` / `defaults_*` helpers of `lib/common.sh`, for the duration of one read-modify-write. Scripts never call `with_state_lock` around code that itself calls those helpers.
 3. **Not reentrant**: `flock` is not. `with_state_lock` and `with_component_lock` export `EASY_CS_AI_LOCK_HELD` (list of held locks); taking a lock already in the list is a bug and ends with `die 1` and a clear message, instead of a silent hang.
-4. **Descriptors**: a child process inherits the open lock descriptor and would keep the lock after the script ends. Long-running commands are started with the descriptor closed (`9>&-`).
+4. **Descriptors**: a child process inherits the open lock descriptor and would keep the lock after the script ends. `with_state_lock` (descriptor 9) and `with_component_lock` (descriptor 8) therefore run their command with both descriptors closed (`8>&- 9>&-`), the lock staying held by the calling shell until the command returns. Scripts must not use descriptors 8 and 9 for anything else.
 5. **Readers take no lock**: `status`, `describe` and the read-only actions rely on atomic writes (`mv`). A reader that finds several defaults for one type re-reads once before failing (see [state format](spec-state-format.md#defaults)).
 6. **Crash safety**: `flock` is released when the process dies. Lock files are never removed, an unlocked leftover file is harmless; the `pid` shown when busy is informative only (written in the file after the lock is taken).
 7. **Orchestration** (CLI `add`, `remove`, `uninstall --all`) holds no lock itself: each script takes its own component lock, and the CLI's own state writes go through the `state_*` helpers (see [spec: CLI](spec-cli.md#steps)).
@@ -271,14 +271,18 @@ With `EASY_CS_AI_ROOT` set, the script skips package installation and service co
 
 Provides at least:
 
-- logging: `log_info`, `log_warn`, `log_error`, `log_debug`, `log_event` (journal, see [Action journal](#action-journal)), and `die <exit-code> <message>`;
-- `require_root`, `require_platform`, `require_component <name>`;
-- `parse_common_options`, `set_option_default`, `read_secret`;
-- `with_state_lock`, `with_component_lock <type> <name>` (see [Locking](#locking));
+- logging: `log_info`, `log_warn`, `log_error`, `log_debug` (on with `--verbose`, which exports `EASY_CS_AI_VERBOSE` so child scripts inherit it), `log_event <message…>` (journal, see [Action journal](#action-journal); in `EASY_CS_AI_ROOT` mode it writes an `[INFO] (journal, test mode) …` line on stderr instead), and `die <exit-code> <message>`;
+- exit code constants `EXIT_OK`, `EXIT_ERROR`, `EXIT_USAGE`, `EXIT_UNSUPPORTED`, `EXIT_PRECONDITION`, `EXIT_NETWORK`, `EXIT_VERIFY` (see [Exit codes](#exit-codes));
+- paths: `is_test_root`, `root_path <absolute-path>` (applies `EASY_CS_AI_ROOT`), `state_dir`, `config_dir` (see [Paths and testability](#paths-and-testability)). `EASY_CS_AI_STATE_DIR` and `EASY_CS_AI_CONFIG_DIR` are logical paths, the prefix is applied to them;
+- `require_root` (skipped in `EASY_CS_AI_ROOT` mode), `require_platform`, `require_component <name>`;
+- options: `parse_common_options <args…>` consumes `--help`, `--version`, `--verbose`, `--dry-run` and `--json`, read back with `wants_help`, `wants_version`, `is_dry_run` and `wants_json` (private variables, not environment settings), and leaves the other arguments in the array `COMMON_REST`; `set_option <component> <option> <value>` (value from the command line), `set_option_default <component> <option> <default>`, `get_option <component> <option>` (precedence: command line, then environment, then default); `reject_unknown_options <args…>` (exit 2);
+- secrets: `read_secret <file|->` (file of mode `0600` or stricter, else exit 2, or stdin), `generate_secret` (32 random bytes, base64url);
+- `with_state_lock <command…>` (waits 60 s), `with_state_lock_timeout <seconds> <command…>`, `with_component_lock <type> <name> <action> <command…>`; the lock descriptors 8 and 9 are reserved (see [Locking](#locking));
 - `render_template <template> <destination> <mode> <owner>` (envsubst, atomic, returns 0 when changed and 10 when identical);
-- `apt_install`, `ensure_docker`, `systemd_enable_now`, `wait_for_http <url> <timeout>`;
+- `apt_install`, `ensure_docker`, `systemd_enable_now`;
+- `wait_for_http <url> <timeout> [<unit> [<interval>]]`: polls every `interval` seconds (default 2), returns 0, or 6 on timeout or as soon as `unit` is failed (`""` to skip that check), and never dies itself (see [Health check](#health-check));
 - `track_file <path>`, `track_unit <unit>`, `track_data_dir <path>`: record in the pending manifest **before** creating the file, enabling the unit or creating the data directory (see [state format](spec-state-format.md#pending-manifest)); `render_template` and `systemd_enable_now` call them themselves, so scripts rarely do;
-- `state_read <component>`, `state_write <component> <json>`, `state_remove <component>`, `defaults_get <type>`, `defaults_set <type> <name>` (see [state format](spec-state-format.md)).
+- `state_read <component>`, `state_write <component> <json>`, `state_remove <component>`, `state_list [<type>]`, `defaults_get <type>`, `defaults_set <type> <name>` (see [state format](spec-state-format.md#helpers)). They need `jq` (exit 4 without it).
 
 Every function is covered by `bats` tests; `shellcheck` runs on the library and on every script.
 

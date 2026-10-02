@@ -53,6 +53,19 @@ The default component of a type is **explicit**: it is the one whose file has `"
 - `add` reads the defaults of `engine` and `chat-interface` here when `--engine` / `--chat-interface` are not given.
 - Changing the default touches two files (set the new flag, clear the old one), which is not atomic. The writer sets the new flag first, then clears the others, under the state lock. Readers take no lock: one finding several defaults for one type re-reads once (a change may be in progress), then stops with an error naming the files (exit 1); re-running `install <type> <name> --default` repairs it, since it sets the flag on the target and clears all the others.
 
+## Helpers
+
+`lib/common.sh` is the only code that reads and writes these files (see the [contract](spec-script-contract.md#libcommonsh)). Component names are lowercase letters, digits and dashes (exit 2 otherwise), so a name is never a path.
+
+| Helper | Behaviour |
+| --- | --- |
+| `state_write <name> <json>` | Under the state lock, merges the JSON over the existing file (top-level fields the writer does not know are kept, the new value wins otherwise). `name` must match and `type` must be one of the four types (exit 1 otherwise). `schema_version` is added when missing, `installed_at` is kept from the first write, and `updated_at` changes only when the content does: writing the same content again does not touch the file. When `default` is absent, the component is the default if none of its type is, which implements "the first component of a type becomes its default". `"default": true` sets the flag first, then clears the others |
+| `state_read <name>` | Prints the file, no lock. Returns 1 with no output when the component has no state. Exit 1 when the file is damaged or its `schema_version` is higher than the library knows |
+| `state_list [<type>]` | Names of the components that have a state, sorted |
+| `state_remove <name>` | Under the state lock, deletes the file (nothing to do if absent). If it was the default and exactly one component of its type remains, that one is promoted; otherwise the type is left without default |
+| `defaults_get <type>` | Prints the default, no lock. Returns 1 with no output when there is none. Several defaults are read again once after one second, then it is an error (exit 1) naming the components and the repair command |
+| `defaults_set <type> <name>` | Under the state lock, sets the new flag, then clears the others. Exit 4 if the component is not installed or is of another type |
+
 ## `components/<name>.json`
 
 ```json
