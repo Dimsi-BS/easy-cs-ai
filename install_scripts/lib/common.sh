@@ -631,3 +631,218 @@ defaults_set() {
     _state_check_name "$2"
     with_state_lock _defaults_set_unlocked "$1" "$2"
 }
+
+# --- Platform and component preconditions ------------------------------------
+
+# require_platform: exit 3 unless running on Debian/Ubuntu (or derived), on
+# x86_64 or aarch64, with systemd as init (spec-script-contract.md,
+# "Platform"). Skipped in test mode.
+require_platform() {
+    if is_test_root; then
+        log_debug "test mode: platform check skipped"
+        return 0
+    fi
+    local id="" id_like=""
+    # shellcheck disable=SC1091
+    if [[ -r /etc/os-release ]]; then
+        id="$(. /etc/os-release && printf '%s' "${ID:-}")"
+        id_like="$(. /etc/os-release && printf '%s' "${ID_LIKE:-}")"
+    fi
+    case " $id $id_like " in
+    *" debian "* | *" ubuntu "*) ;;
+    *) die "$EXIT_UNSUPPORTED" "unsupported distribution '${id:-unknown}': Debian or Ubuntu expected" ;;
+    esac
+    case "$(uname -m)" in
+    x86_64 | aarch64) ;;
+    *) die "$EXIT_UNSUPPORTED" "unsupported architecture '$(uname -m)': x86_64 or aarch64 expected" ;;
+    esac
+    if [[ ! -d /run/systemd/system ]]; then
+        die "$EXIT_UNSUPPORTED" "systemd is required as the running init, it is not"
+    fi
+}
+
+# require_component <name>: exit 4 unless the component is installed (has a
+# state). Scripts check their requirements, they never install them.
+require_component() {
+    if [[ $# -ne 1 ]]; then
+        die "$EXIT_USAGE" "require_component: usage: require_component <name>"
+    fi
+    if ! state_read "$1" >/dev/null; then
+        die "$EXIT_PRECONDITION" "required component $1 is not installed"
+    fi
+}
+
+# --- Pending manifest (spec-state-format.md, "Pending manifest") -------------
+# Records, before creating them, the files, units and data directories an
+# install creates, so a failed install can always be cleaned by uninstall.
+# Only the holder of the component lock touches it: no state lock needed.
+
+_PENDING_NAME=""
+_PENDING_TYPE=""
+
+_pending_file() {
+    _state_check_name "$1"
+    local dir
+    dir="$(state_dir)" || exit "$?"
+    printf '%s/pending/%s.json\n' "$dir" "$1"
+}
+
+# _pending_store <json>: atomic write (temp file, jq empty, mv), mode 0644.
+_pending_store() {
+    local file dir tmp
+    file="$(_pending_file "$_PENDING_NAME")" || exit "$?"
+    dir="${file%/*}"
+    mkdir -p "$dir"
+    tmp="$(mktemp "$dir/.${_PENDING_NAME}.XXXXXX")"
+    printf '%s\n' "$1" >"$tmp"
+    if ! jq empty "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        die "$EXIT_ERROR" "refusing to write invalid JSON for the pending manifest of $_PENDING_NAME"
+    fi
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$file"
+}
+
+# pending_begin <type> <name>: select the component the track_* functions
+# record for, and create its manifest unless one exists (a re-run completes it).
+pending_begin() {
+    _require_jq
+    if [[ $# -ne 2 ]]; then
+        die "$EXIT_USAGE" "pending_begin: usage: pending_begin <type> <name>"
+    fi
+    _state_check_name "$2"
+    _PENDING_TYPE="$1"
+    _PENDING_NAME="$2"
+    local file
+    file="$(_pending_file "$2")" || exit "$?"
+    if [[ -f "$file" ]]; then
+        return 0
+    fi
+    _pending_store "$(jq -n --arg n "$2" --arg t "$1" --arg d "$(_state_now)" \
+        '{schema_version: 1, name: $n, type: $t, started_at: $d, files: [], units: [], data_dirs: []}')"
+}
+
+# pending_read <name>: print the manifest, return 1 with no output when none.
+pending_read() {
+    local file
+    file="$(_pending_file "${1:-}")" || exit "$?"
+    [[ -f "$file" ]] || return 1
+    cat "$file"
+}
+
+# pending_remove <name>: delete the manifest (nothing to do if absent).
+pending_remove() {
+    local file
+    file="$(_pending_file "${1:-}")" || exit "$?"
+    rm -f "$file"
+}
+
+# _pending_add <key> <value>: add a value to one list, once.
+_pending_add() {
+    if [[ -z "$_PENDING_NAME" ]]; then
+        die "$EXIT_ERROR" "track_*: no install in progress, call pending_begin first"
+    fi
+    local file
+    file="$(_pending_file "$_PENDING_NAME")" || exit "$?"
+    _pending_store "$(jq --arg k "$1" --arg v "$2" 'if (.[$k] | index($v)) then . else .[$k] += [$v] end' "$file")"
+}
+
+# track_file / track_unit / track_data_dir <value>: record before creating.
+# Paths are logical (EASY_CS_AI_ROOT is not applied).
+track_file() { _pending_add files "${1:?track_file: path expected}"; }
+track_unit() { _pending_add units "${1:?track_unit: unit expected}"; }
+track_data_dir() { _pending_add data_dirs "${1:?track_data_dir: path expected}"; }
+
+# --- Files, packages and services ---------------------------------------------
+
+# render_template <template> <destination> <mode> <owner>: render a template
+# with envsubst (variables from the environment) into the logical absolute
+# <destination>, atomically, with explicit mode and owner (<user>[:<group>]).
+# Returns 0 when the file changed, 10 when it is identical (nothing written),
+# so callers restart a service only when needed. Tracks the file in the
+# pending manifest when an install is in progress.
+render_template() {
+    if [[ $# -ne 4 ]]; then
+        die "$EXIT_USAGE" "render_template: usage: render_template <template> <destination> <mode> <owner>"
+    fi
+    local template="$1" dest mode="$3" owner="$4" tmp
+    [[ -r "$template" ]] || die "$EXIT_ERROR" "template not found: $template"
+    dest="$(root_path "$2")" || exit "$?"
+    if [[ -n "$_PENDING_NAME" ]]; then
+        track_file "$2"
+    fi
+    mkdir -p "${dest%/*}"
+    tmp="$(mktemp "${dest%/*}/.${dest##*/}.XXXXXX")"
+    if ! envsubst <"$template" >"$tmp"; then
+        rm -f "$tmp"
+        die "$EXIT_ERROR" "could not render template $template"
+    fi
+    if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
+        rm -f "$tmp"
+        return 10
+    fi
+    chmod "$mode" "$tmp"
+    if ! is_test_root; then
+        chown "$owner" "$tmp"
+    fi
+    mv -f "$tmp" "$dest"
+}
+
+# apt_install <package…>: install packages non-interactively, skipping the
+# ones already present. In test mode it only logs.
+apt_install() {
+    if [[ $# -eq 0 ]]; then
+        die "$EXIT_USAGE" "apt_install: usage: apt_install <package…>"
+    fi
+    if is_test_root; then
+        log_info "(test mode) would install packages: $*"
+        return 0
+    fi
+    local missing=() package
+    for package in "$@"; do
+        dpkg -s "$package" >/dev/null 2>&1 || missing+=("$package")
+    done
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        return 0
+    fi
+    log_info "installing packages: ${missing[*]}"
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || die "$EXIT_NETWORK" "apt-get update failed"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing[@]}" >&2 ||
+        die "$EXIT_NETWORK" "apt-get install failed: ${missing[*]}"
+}
+
+# _systemctl <args…>: run systemctl, or only log in test mode.
+_systemctl() {
+    if is_test_root; then
+        log_info "(test mode) systemctl $*"
+        return 0
+    fi
+    systemctl "$@" >&2
+}
+
+# systemd_enable_now <unit>: track, reload, enable and start a unit.
+systemd_enable_now() {
+    local unit="${1:?systemd_enable_now: unit expected}"
+    if [[ -n "$_PENDING_NAME" ]]; then
+        track_unit "$unit"
+    fi
+    _systemctl daemon-reload
+    _systemctl enable --now "$unit"
+}
+
+# systemd_restart <unit>: reload unit files and restart.
+systemd_restart() {
+    _systemctl daemon-reload
+    _systemctl restart "${1:?systemd_restart: unit expected}"
+}
+
+# systemd_disable_now <unit>: stop and disable; an unknown unit is not an error.
+systemd_disable_now() {
+    local unit="${1:?systemd_disable_now: unit expected}"
+    if is_test_root; then
+        log_info "(test mode) systemctl disable --now $unit"
+        return 0
+    fi
+    systemctl disable --now "$unit" >&2 || log_debug "could not disable $unit (not installed?)"
+    return 0
+}
