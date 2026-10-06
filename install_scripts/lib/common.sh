@@ -643,10 +643,9 @@ require_platform() {
         return 0
     fi
     local id="" id_like=""
-    # shellcheck disable=SC1091
     if [[ -r /etc/os-release ]]; then
-        id="$(. /etc/os-release && printf '%s' "${ID:-}")"
-        id_like="$(. /etc/os-release && printf '%s' "${ID_LIKE:-}")"
+        id="$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"')"
+        id_like="$(sed -n 's/^ID_LIKE=//p' /etc/os-release | tr -d '"')"
     fi
     case " $id $id_like " in
     *" debian "* | *" ubuntu "*) ;;

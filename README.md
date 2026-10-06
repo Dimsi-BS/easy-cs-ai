@@ -2,9 +2,9 @@
 
 This project is a toolbox that wraps the best open-source AI tools available out there.
 
-> **Status: early planning.** Nothing is implemented yet — this README describes the intended design and roadmap, not a working tool. See [Roadmap](#roadmap) for what's built vs. planned.
+> **Status: early development.** Most of this README describes the intended design. Only the shared library and the Ollama install script exist so far, and they are not yet tested on a real VM. See [Roadmap](#roadmap) for what's built vs. planned.
 
-<!-- TODO: once development starts, add a short "Built on" line here crediting the AI tools actually integrated (Ollama, LibreChat, nginx…), with links. Visible but understated: this project only aggregates them. -->
+Built on [Ollama](https://ollama.com). This project only wraps existing open-source tools; more are credited here as they are integrated.
 
 ## Features
 
@@ -122,7 +122,7 @@ Planned work, in dependency order:
 
 | Layer           | Item                             | Status      |
 | --------------- | -------------------------------- | ----------- |
-| Install scripts | Ollama install script            | Not started |
+| Install scripts | Ollama install script            | Written, unit-tested, not yet tested on a VM |
 | Install scripts | vLLM install script              | Not started |
 | Install scripts | llmfit install script            | Not started |
 | Install scripts | Reverse proxy (HTTPS + API key)  | Not started |
