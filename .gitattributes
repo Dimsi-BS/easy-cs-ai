@@ -5,3 +5,4 @@
 *.service text eol=lf
 .shellcheckrc text eol=lf
 package/bin/* text eol=lf
+*.tpl text eol=lf

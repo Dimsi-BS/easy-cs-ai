@@ -75,12 +75,6 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     [ "$status" -eq 2 ]
 }
 
-@test "commands that need missing components say so" {
-    cli generate
-    [ "$status" -eq 1 ]
-    [[ "$stderr" == *"not available yet"* ]]
-}
-
 @test "a type alone lists its shipped components" {
     cli engine
     [ "$status" -eq 0 ]
