@@ -19,6 +19,13 @@ Layer 2 was initially planned as a snap package. What is actually needed is a si
 - Package files are named `easy-cs-ai_<version>_all.deb`, `easy-cs-ai-<version>-1.noarch.rpm` and `easy-cs-ai-<version>.tar.gz`, each published with a `<file>.sha256` (see [spec: VM script generator](spec-vm-generator.md#package-source)).
 - Installed state lives in `/var/lib/easy-cs-ai/`, which feeds `status` and the defaults of `add`.
 
+## Implementation
+
+- `package/build.sh` stages the tree (`bin/easy-cs-ai`, `lib/easy-cs-ai/…` with the scripts, templates, `ranks.conf` and `vm_script/`, without the READMEs) and builds a reproducible tarball with its `.sha256`. The version is the `CLI_VERSION` of the dispatcher; the script refuses another one, so a tag, the CLI and the package names cannot drift apart.
+- `package/nfpm.yaml` installs that same tree under `/usr` for the `.deb` and the `.rpm`, so the three formats ship identical files, and declares the dependencies the scripts need beyond the base system (`jq`, `util-linux` for `flock`, `gettext-base` / `gettext` for `envsubst`).
+- `.github/workflows/release.yml` runs on a `v*` tag: lint and tests, tarball, `nfpm`, one `.sha256` per file, then a GitHub release. The tarball and the staging are covered by `bats` tests; `nfpm.yaml` and the workflow have **not been run yet** (no tag was pushed, `nfpm` is not installed on the development machine), so the first release is the first test of both.
+- No maintainer scripts (`postinst`…): installing the package only drops files, nothing is enabled or started, the components are installed by `easy-cs-ai install`.
+
 ## Why
 
 - A snap running our scripts would need **classic confinement** (the scripts run `apt`, create system services and edit `/etc`), which requires manual approval from the Snap Store, or an out-of-store install that is impractical for VM fleets.

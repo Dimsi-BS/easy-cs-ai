@@ -127,7 +127,7 @@ Planned work, in dependency order:
 | Install scripts | llmfit install script            | Not started |
 | Install scripts | Reverse proxy (HTTPS + API key)  | Not started |
 | Install scripts | LibreChat install script         | Not started |
-| Package / CLI   | CLI dispatcher + tarball/deb/rpm | Dispatcher written and unit-tested; packaging not started |
+| Package / CLI   | CLI dispatcher + tarball/deb/rpm | Dispatcher and tarball written and unit-tested; `.deb`/`.rpm` definition and release workflow written, not run yet |
 | Package / CLI   | `status` command                 | Written, unit-tested |
 | Package / CLI   | `install` command                | Written, unit-tested |
 | Package / CLI   | `add` / `remove` model commands  | Written, unit-tested with fake components |
