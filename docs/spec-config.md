@@ -64,8 +64,8 @@ Whether a literal secret may appear in the file is an [open question](#open-ques
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `name` | yes | Model name, as the engine knows it |
-| `engine` | no | Engine name. Default: the only engine in `components`, else the one with `default: true`, else a validation error |
-| `chat_interface` | no | Chat interface name, or `null` for none. Default: like `engine`, and none if the file lists no chat interface |
+| `engine` | no | Engine name, listed in `components` or already installed. Default: the only engine in `components`, else the one with `default: true`, else a validation error |
+| `chat_interface` | no | Chat interface name (listed in `components` or already installed), or `null` for none. Default: like `engine`, and none if the file lists no chat interface |
 | `force` | no | `true` skips the llmfit fit check, as `add --force` does |
 
 ### Validation

@@ -103,7 +103,7 @@ COMPONENT     TYPE            VERSION   DEFAULT  RUNNING  HEALTHY  MODELS
 ollama        engine          0.5.7     yes      yes      yes      llama3.2:3b
 ```
 
-- `--json` prints one array of objects instead: the state fields shown above merged with the script's `status` JSON, and `models` as an array of names. Sorted by type, then name.
+- `--json` prints one array of objects instead: `name`, `type`, `version`, `default`, `models` (an array of names) from the state, and `running`, `healthy` from the script's `status` JSON. Sorted by type, then name. Other fields are not repeated: the state files are readable by anyone.
 - A component whose state file cannot be read (unknown higher `schema_version`, invalid JSON) is shown with `VERSION` and flags as `?`, and an `ERROR` line on stderr names the file. It is never hidden.
 - A pending manifest without state (failed install) is not listed as a component: one `WARN` line on stderr names it and the `uninstall` command that cleans it. It does not change the exit code.
 - Nothing installed prints the header and a hint (`easy-cs-ai install engine ollama`) on stderr.
@@ -206,8 +206,8 @@ easy-cs-ai add <model> [--engine <name>] [--chat-interface <name>] [--no-chat-in
 | 4 | Link to the chat interface | `chat-interface add-endpoint <name> <url>` | no chat interface, or already linked |
 | 5 | Record the wiring | update `models[].exposed_via` / `linked_to` in the engine state | nothing changed in 3 and 4 |
 
-- **Step 1**: a negative verdict stops the command with exit 4 and the reason from llmfit; `--force` bypasses the check, with a `WARN`.
-- **Step 3**: `<upstream>` is `<engine>-<model slug>` (lowercase, characters outside `[a-z0-9.-]` replaced by `-`), so models of two engines never collide. `<url>` is the model's internal URL: the engine `endpoint.url`, or, for an engine with one instance per model, `http://127.0.0.1:<port>` from the model's entry.
+- **Step 1**: a negative verdict stops the command with exit 4 and the reason from llmfit; `--force` bypasses the check, with a `WARN`. With `--force`, llmfit is not needed at all, so it is not counted among the missing components. The check is also skipped when the model is already in the engine.
+- **Step 3**: on a resume where the model is already exposed but still has to be linked, `proxy add-upstream` is called again, only to get the URL it prints (the action is idempotent); the step then counts as not done by this run, so a rollback never removes an upstream that existed. An engine that records no `endpoint` (one instance per model) is treated as not `protected`, so its models go through the proxy. `<upstream>` is `<engine>-<model slug>` (lowercase, characters outside `[a-z0-9.-]` replaced by `-`), so models of two engines never collide. `<url>` is the model's internal URL: the engine `endpoint.url`, or, for an engine with one instance per model, `http://127.0.0.1:<port>` from the model's entry.
 - **Step 4**: `<name>` is the same slug. `<url>` is the one the script printed in step 3 (HTTPS through the proxy), or the engine's `openai_base_url` when the engine is `protected`.
 - **Step 5** is the one place where the CLI writes a component's state: `exposed_via` and `linked_to` describe a relation between components, which no single script knows. It uses the `lib/common.sh` state helpers (lock, atomic write, `jq empty`), following the [writing rules](spec-state-format.md#writing-rules), and preserves unknown fields.
 - The CLI holds **no lock** across the steps: each script takes its own component lock for its action, and the state helpers take the state lock for the write only (see [Locking](spec-script-contract.md#locking)). A step that finds its component busy fails with exit 4 and triggers the rollback as any failure. Two concurrent `add` of different models are fine; two of the same model converge thanks to the idempotence of the steps.
