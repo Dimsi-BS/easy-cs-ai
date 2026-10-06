@@ -9,6 +9,7 @@ See also: [spec: script contract](../docs/spec-script-contract.md), the rules ev
 ## Contents
 
 - `lib/common.sh` — shared helpers (logging, options, locks, state, templates, service control)
+- `lib/cli-apply.sh` — `apply` of the CLI (validation of the configuration file, order, install, add, prune)
 - `lib/cli-models.sh` — `add` and `remove` of the CLI, sourced by `package/bin/easy-cs-ai`
 - `engine/ollama.sh` — Ollama; version and archive checksums pinned in the script
 - `ranks.conf` — integration order, rank 1 first per type, read by the CLI for `--defaults`

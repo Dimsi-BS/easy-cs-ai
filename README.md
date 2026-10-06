@@ -131,7 +131,7 @@ Planned work, in dependency order:
 | Package / CLI   | `status` command                 | Written, unit-tested |
 | Package / CLI   | `install` command                | Written, unit-tested |
 | Package / CLI   | `add` / `remove` model commands  | Written, unit-tested with fake components |
-| Package / CLI   | `apply` command                  | Not started |
+| Package / CLI   | `apply` command                  | Written, unit-tested with fake components |
 | Package / CLI   | `generate` command               | Not started |
 | VM post-install | Post-install script              | Not started |
 | VM post-install | Script generator (`generate`)    | Not started |

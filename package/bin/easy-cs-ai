@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # easy-cs-ai: dispatcher over the layer 1 install scripts, see docs/spec-cli.md.
 # Implemented: help, version, status, install, uninstall, add, remove (in
-# lib/cli-models.sh), component commands (contract actions and native tool
-# commands). apply and generate are not written yet.
+# lib/cli-models.sh), apply (lib/cli-apply.sh), component commands (contract
+# actions and native tool commands). generate is not written yet.
 set -euo pipefail
 
 readonly CLI_VERSION=0.1.0
@@ -33,6 +33,8 @@ export EASY_CS_AI_LIB="$HOME_DIR/lib"
 source "$EASY_CS_AI_LIB/common.sh"
 # shellcheck source=../../install_scripts/lib/cli-models.sh
 source "$EASY_CS_AI_LIB/cli-models.sh"
+# shellcheck source=../../install_scripts/lib/cli-apply.sh
+source "$EASY_CS_AI_LIB/cli-apply.sh"
 
 DRY=0
 GFLAGS=()
@@ -52,7 +54,8 @@ Commands:
   <type>                                   list the components of a type
   add <model> [--engine <n>] [--chat-interface <n>] [--no-chat-interface] [--defaults] [--force]
   remove <model> [--engine <n>]            remove --all [--engine <n>]
-  apply, generate                          not available yet
+  apply <file|-> [--prune]                 make the machine match a configuration file
+  generate                                 not available yet
   help, version
 
 Types: provisioning, proxy, engine, chat-interface
@@ -522,7 +525,8 @@ main() {
     uninstall) cmd_uninstall "$@" ;;
     add) cmd_add "$@" ;;
     remove) cmd_remove "$@" ;;
-    apply | generate) fail "$EXIT_ERROR" "$command is not available yet" ;;
+    apply) cmd_apply "$@" ;;
+    generate) fail "$EXIT_ERROR" "$command is not available yet" ;;
     *)
         if is_type "$command"; then
             cmd_component "$command" "$@"

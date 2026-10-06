@@ -118,6 +118,13 @@ easy-cs-ai apply <file|-> [--prune] [--dry-run]
 
 `apply` is the form used by the generated VM script. `install --defaults` stays for the quick, undescribed case.
 
+## Implementation notes
+
+- Validation is one `jq` program run over the file and the `describe` of every listed component, so the whole list of problems comes out at once, each with its JSON path. Not covered yet: a `file` secret whose path is checked at run time only (by the script, mode `0600` or stricter).
+- Options reach a script as `--<name> <value>` (booleans and numbers as their text); a secret `{ "file": … }` as `--<name>-file <path>`; a secret `{ "env": "VAR" }` through the script's own `EASY_CS_AI_<COMPONENT>_<OPTION>` variable, set from `VAR` (exit 2 when `VAR` is not set), so it never appears on a command line; `{ "generate": true }` passes nothing.
+- A requirement that is neither installed nor listed is checked before the first install, so nothing is installed by a run that cannot finish.
+- `--prune` removes the models of the engines listed in the file that the file does not name, then every installed component the file does not list, in `uninstall --all` order.
+
 ## Definition of done
 
 - `bats` tests in `EASY_CS_AI_ROOT` mode with fake components: each validation error with its JSON path, order from `requires`, missing requirement, re-run is a no-op, changed options reconfigure, defaults, model resolution (single engine, `default`, ambiguous), `force`, stdin input, `--dry-run`, failure at each step and resume, `--prune` (and its absence), the secret forms.
