@@ -2,7 +2,7 @@
 
 This project is a toolbox that wraps the best open-source AI tools available out there.
 
-> **Status: early development.** Most of this README describes the intended design. Only the shared library and the Ollama install script exist so far, and they are not yet tested on a real VM. See [Roadmap](#roadmap) for what's built vs. planned.
+> **Status: early development.** Most of this README describes the intended design. Only the shared library, the Ollama install script and the CLI dispatcher (`status`, `install`, `uninstall`) exist so far, and none has been tested on a real VM. See [Roadmap](#roadmap) for what's built vs. planned.
 
 Built on [Ollama](https://ollama.com). This project only wraps existing open-source tools; more are credited here as they are integrated.
 
@@ -127,9 +127,9 @@ Planned work, in dependency order:
 | Install scripts | llmfit install script            | Not started |
 | Install scripts | Reverse proxy (HTTPS + API key)  | Not started |
 | Install scripts | LibreChat install script         | Not started |
-| Package / CLI   | CLI dispatcher + tarball/deb/rpm | Not started |
-| Package / CLI   | `status` command                 | Not started |
-| Package / CLI   | `install` command                | Not started |
+| Package / CLI   | CLI dispatcher + tarball/deb/rpm | Dispatcher written and unit-tested; packaging not started |
+| Package / CLI   | `status` command                 | Written, unit-tested |
+| Package / CLI   | `install` command                | Written, unit-tested |
 | Package / CLI   | `add` model command              | Not started |
 | Package / CLI   | `apply` command                  | Not started |
 | Package / CLI   | `generate` command               | Not started |

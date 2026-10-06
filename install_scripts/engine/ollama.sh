@@ -456,7 +456,7 @@ do_add_model() {
     local model="$1"
     ollama_cli pull "$model" || die "$EXIT_NETWORK" "could not pull $model"
     state_write "$NAME" "$(state_read "$NAME" | jq --arg m "$model" --arg d "$(_state_now)" '{
-        models: ((.models // []) | if any(.name == $m) then . else . + [{ name: $m, added_at: $d, exposed_via: null, linked_to: [] }] end)
+        name: .name, type: .type, models: ((.models // []) | if any(.name == $m) then . else . + [{ name: $m, added_at: $d, exposed_via: null, linked_to: [] }] end)
       }')"
     log_info "model $model is available"
 }
@@ -475,7 +475,7 @@ cmd_add_model() {
 do_remove_model() {
     local model="$1"
     ollama_cli rm "$model" || die "$EXIT_PRECONDITION" "could not remove $model (not present?)"
-    state_write "$NAME" "$(state_read "$NAME" | jq --arg m "$model" '{ models: ((.models // []) | map(select(.name != $m))) }')"
+    state_write "$NAME" "$(state_read "$NAME" | jq --arg m "$model" '{ name: .name, type: .type, models: ((.models // []) | map(select(.name != $m))) }')"
     log_info "model $model is removed"
 }
 

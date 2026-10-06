@@ -1,0 +1,530 @@
+#!/usr/bin/env bash
+# easy-cs-ai: dispatcher over the layer 1 install scripts, see docs/spec-cli.md.
+# Implemented: help, version, status, install, uninstall, component commands
+# (contract actions and native tool commands). add, remove, apply and generate
+# need components that do not exist yet.
+set -euo pipefail
+
+readonly CLI_VERSION=0.1.0
+# Types in install order; uninstall --all goes the other way round.
+readonly TYPES=(provisioning proxy engine chat-interface)
+readonly CHANGING_ACTIONS=" install uninstall add-model remove-model add-upstream remove-upstream add-endpoint remove-endpoint "
+readonly CONTRACT_ACTIONS=" install uninstall status describe add-model remove-model list-models add-upstream remove-upstream show-key add-endpoint remove-endpoint recommend check "
+
+# --- Locating the tree ----------------------------------------------------------
+
+find_home() {
+    local here candidate
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for candidate in "${EASY_CS_AI_HOME:-}" "$here/../lib/easy-cs-ai" "$here/../../install_scripts" /usr/lib/easy-cs-ai; do
+        if [[ -n "$candidate" && -r "$candidate/lib/common.sh" ]]; then
+            (cd "$candidate" && pwd)
+            return 0
+        fi
+    done
+    printf '[ERROR] cannot find the easy-cs-ai scripts (set EASY_CS_AI_HOME)\n' >&2
+    exit 1
+}
+
+HOME_DIR="$(find_home)"
+readonly HOME_DIR
+export EASY_CS_AI_LIB="$HOME_DIR/lib"
+# shellcheck source=../../install_scripts/lib/common.sh
+source "$EASY_CS_AI_LIB/common.sh"
+
+DRY=0
+GFLAGS=()
+
+usage() {
+    cat <<'EOF'
+Usage: easy-cs-ai [--verbose] [--dry-run] [--json] <command> [arguments]
+
+Commands:
+  status                                   installed components with their live status
+  install <type> <name> [--defaults] [--default] [options]
+  install [<type>] --defaults              install the default choices
+  uninstall <type> <name> [--purge] [--force]
+  uninstall [<type>] --all [--purge] [--force]
+  <type> <name> <action> [arguments]       component command (engine ollama list-models)
+  <type> <name> -- <native command>        run the component's own program
+  <type>                                   list the components of a type
+  add, remove, apply, generate             not available yet
+  help, version
+
+Types: provisioning, proxy, engine, chat-interface
+EOF
+}
+
+# --- Helpers ----------------------------------------------------------------------
+
+# fail <code> <message> [<hint>]: "[ERROR] what (exit n: meaning)" then the hint.
+fail() {
+    local code="$1" message="$2" hint="${3:-}" meaning
+    case "$code" in
+    1) meaning="error" ;; 2) meaning="usage" ;; 3) meaning="unsupported platform" ;;
+    4) meaning="precondition not met" ;; 5) meaning="network" ;; 6) meaning="verification failed" ;;
+    *) meaning="failed" ;;
+    esac
+    log_error "$message (exit $code: $meaning)"
+    [[ -z "$hint" ]] || log_info "$hint"
+    exit "$code"
+}
+
+need_root() {
+    if is_test_root || ((EUID == 0)); then
+        return 0
+    fi
+    fail "$EXIT_PRECONDITION" "this command must run as root" "try: sudo easy-cs-ai $*"
+}
+
+is_type() {
+    local t
+    for t in "${TYPES[@]}"; do
+        [[ "$t" == "$1" ]] && return 0
+    done
+    return 1
+}
+
+script_path() { printf '%s/%s/%s.sh\n' "$HOME_DIR" "$1" "$2"; }
+
+component_names() {
+    local f
+    for f in "$HOME_DIR/$1"/*.sh; do
+        [[ -e "$f" ]] && basename "$f" .sh
+    done
+    return 0
+}
+
+# resolve_script <type> <name>: print the script path or fail with exit 2.
+resolve_script() {
+    local path
+    is_type "$1" || fail "$EXIT_USAGE" "unknown component type '$1'" "types: ${TYPES[*]}"
+    path="$(script_path "$1" "$2")"
+    if [[ ! -x "$path" && ! -f "$path" ]]; then
+        fail "$EXIT_USAGE" "unknown $1 '$2'" "available: $(component_names "$1" | tr '\n' ' ')"
+    fi
+    printf '%s\n' "$path"
+}
+
+# rank_lookup <type>: the rank 1 component of a type, empty when none.
+rank_lookup() { awk -v t="$1" '$1 == t { print $2; exit }' "$HOME_DIR/ranks.conf" 2>/dev/null || true; }
+
+# rank_one <type>: same, but a usage error when none.
+rank_one() {
+    local name
+    name="$(rank_lookup "$1")"
+    [[ -n "$name" ]] || fail "$EXIT_USAGE" "no default component known for type $1"
+    printf '%s\n' "$name"
+}
+
+# type_of <name>: the type of an installed or shipped component.
+type_of() {
+    local t json
+    if json="$(state_read "$1" 2>/dev/null)"; then
+        jq -r '.type' <<<"$json"
+        return 0
+    fi
+    for t in "${TYPES[@]}"; do
+        if [[ -e "$(script_path "$t" "$1")" ]]; then
+            printf '%s\n' "$t"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# is_installed <name-or-type>
+is_installed() {
+    state_read "$1" >/dev/null 2>&1 && return 0
+    is_type "$1" && [[ -n "$(state_list "$1")" ]]
+}
+
+# run_script <type> <name> <args…>: run a script, passing streams through.
+run_script() {
+    local path
+    path="$(resolve_script "$1" "$2")"
+    shift 2
+    bash "$path" "$@" "${GFLAGS[@]}"
+}
+
+# --- status -----------------------------------------------------------------------
+
+cmd_status() {
+    _require_jq
+    local name json rc=0 type status_json script rows=() unhealthy=0 unreadable=0
+    local names
+    names="$(state_list)"
+    for name in $names; do
+        if ! json="$(state_read "$name" 2>/dev/null)"; then
+            log_error "state of $name cannot be read ($(state_dir)/components/$name.json)"
+            unreadable=1
+            rows+=("$(jq -nc --arg n "$name" '{name: $n, type: null, version: "?", default: false, running: null, healthy: null, models: []}')")
+            continue
+        fi
+        type="$(jq -r '.type' <<<"$json")"
+        script="$(script_path "$type" "$name")"
+        status_json='{"running":false,"healthy":false}'
+        if [[ -f "$script" ]]; then
+            status_json="$(timeout 15 bash "$script" status 2>/dev/null)" || true
+            jq -e . >/dev/null 2>&1 <<<"$status_json" || status_json='{"running":false,"healthy":false}'
+        fi
+        [[ "$(jq -r '.healthy' <<<"$status_json")" == true ]] || unhealthy=1
+        rows+=("$(jq -nc --argjson s "$json" --argjson st "$status_json" '{
+            name: $s.name, type: $s.type, version: $s.version, default: ($s.default // false),
+            running: $st.running, healthy: $st.healthy, models: [($s.models // [])[].name]
+          }')")
+    done
+    local all='[]'
+    if ((${#rows[@]})); then
+        all="$(printf '%s\n' "${rows[@]}" | jq -sc 'sort_by(.type, .name)')"
+    fi
+    warn_pending
+    if ((_OPT_JSON)); then
+        printf '%s\n' "$all"
+    else
+        printf '%-14s%-16s%-10s%-9s%-9s%-9s%s\n' COMPONENT TYPE VERSION DEFAULT RUNNING HEALTHY MODELS
+        jq -r '.[] | [.name, .type // "?", .version // "?",
+            (if .default then "yes" else "no" end),
+            (if .running == null then "?" elif .running then "yes" else "no" end),
+            (if .healthy == null then "?" elif .healthy then "yes" else "no" end),
+            (if (.models | length) > 0 then (.models | join(",")) else "-" end)] | @tsv' <<<"$all" |
+            while IFS=$'\t' read -r c t v d r h m; do
+                printf '%-14s%-16s%-10s%-9s%-9s%-9s%s\n' "$c" "$t" "$v" "$d" "$r" "$h" "$m"
+            done
+    fi
+    if [[ -z "$names" ]]; then
+        log_info "nothing installed, try: easy-cs-ai install engine ollama"
+    fi
+    if ((unreadable)); then
+        rc=1
+    elif ((unhealthy)); then
+        rc=$EXIT_VERIFY
+    fi
+    return "$rc"
+}
+
+# warn_pending: a manifest without a state is a failed install to clean.
+warn_pending() {
+    local f name type
+    for f in "$(state_dir)"/pending/*.json; do
+        [[ -e "$f" ]] || continue
+        name="$(basename "$f" .json)"
+        if ! state_read "$name" >/dev/null 2>&1; then
+            type="$(jq -r '.type' "$f")"
+            log_warn "$name: failed install pending, run: easy-cs-ai uninstall $type $name"
+        fi
+    done
+}
+
+# --- install ----------------------------------------------------------------------
+
+# missing_requirements <type> <name>: requirements of a component not installed.
+missing_requirements() {
+    local req
+    while IFS= read -r req; do
+        [[ -z "$req" ]] || is_installed "$req" || printf '%s\n' "$req"
+    done < <(bash "$(resolve_script "$1" "$2")" describe | jq -r '.requires[]?')
+}
+
+# install_one <type> <name> <with-defaults> <args…>
+install_one() {
+    local type="$1" name="$2" defaults="$3" req rtype rname rc=0
+    shift 3
+    resolve_script "$type" "$name" >/dev/null
+    local depth="${_INSTALL_DEPTH:-0}"
+    ((depth < 8)) || fail "$EXIT_ERROR" "requirements of $name are circular"
+    while IFS= read -r req; do
+        [[ -n "$req" ]] || continue
+        if is_type "$req"; then
+            rtype="$req"
+            rname="$(rank_one "$req")"
+        else
+            rname="$req"
+            rtype="$(type_of "$req")" || fail "$EXIT_PRECONDITION" "$req is required by $name and unknown"
+        fi
+        if ((!defaults)); then
+            fail "$EXIT_PRECONDITION" "$rname is required by $name" "easy-cs-ai install $rtype $rname"
+        fi
+        log_info "installing $rname (required by $name)"
+        (_INSTALL_DEPTH=$((depth + 1)) install_one "$rtype" "$rname" 1) ||
+            fail "$?" "could not install $rname, required by $name"
+    done < <(missing_requirements "$type" "$name")
+    if ((DRY)); then
+        log_info "dry run: would install $type $name $*"
+        return 0
+    fi
+    run_script "$type" "$name" install "$@" || rc=$?
+    return "$rc"
+}
+
+cmd_install() {
+    local type="" name="" defaults=0 args=() arg
+    for arg in "$@"; do
+        case "$arg" in
+        --defaults) defaults=1 ;;
+        *)
+            if [[ -z "$type" && "$arg" != -* ]]; then
+                type="$arg"
+            elif [[ -z "$name" && -n "$type" && "$arg" != -* && ${#args[@]} -eq 0 ]]; then
+                name="$arg"
+            else
+                args+=("$arg")
+            fi
+            ;;
+        esac
+    done
+    if [[ -z "$type" && $defaults -eq 0 ]]; then
+        fail "$EXIT_USAGE" "install needs a component" "easy-cs-ai install <type> <name>, or easy-cs-ai install --defaults"
+    fi
+    if [[ -n "$type" ]]; then
+        is_type "$type" || fail "$EXIT_USAGE" "unknown component type '$type'" "types: ${TYPES[*]}"
+    fi
+    if [[ -n "$type" && -z "$name" && $defaults -eq 0 ]]; then
+        fail "$EXIT_USAGE" "install $type needs a component name" "easy-cs-ai install $type $(rank_one "$type"), or easy-cs-ai install $type --defaults"
+    fi
+    ((DRY)) || need_root install "$@"
+    if [[ -n "$name" ]]; then
+        install_one "$type" "$name" "$defaults" "${args[@]}"
+        return
+    fi
+    local t
+    local rank
+    for t in ${type:-"${TYPES[@]}"}; do
+        [[ -z "$(state_list "$t")" ]] || continue
+        rank="$(rank_lookup "$t")"
+        if [[ -z "$rank" ]]; then
+            [[ -n "$type" ]] && rank_one "$t"
+            continue
+        fi
+        if [[ -z "$type" && ! -f "$(script_path "$t" "$rank")" ]]; then
+            log_warn "no default $t installed: $rank has no install script yet"
+            continue
+        fi
+        install_one "$t" "$rank" 1 "${args[@]}"
+    done
+}
+
+# --- uninstall --------------------------------------------------------------------
+
+slug() { tr '[:upper:]' '[:lower:]' <<<"$1" | sed 's/[^a-z0-9.-]/-/g'; }
+
+# dependents <name>: installed components whose requires name it or its type.
+dependents() {
+    local other type
+    type="$(state_read "$1" 2>/dev/null | jq -r '.type' || true)"
+    for other in $(state_list); do
+        [[ "$other" == "$1" ]] && continue
+        if state_read "$other" | jq -e --arg n "$1" --arg t "$type" '(.requires // []) | any(. == $n or . == $t)' >/dev/null; then
+            printf '%s\n' "$other"
+        fi
+    done
+}
+
+# unwire_models <engine-models-json>: best effort clean-up after an engine is gone.
+unwire_models() {
+    local engine="$1" models="$2" model upstream chat
+    while IFS= read -r model; do
+        upstream="$engine-$(slug "$model")"
+        jq -r --arg m "$model" '.[] | select(.name == $m) | .exposed_via // empty' <<<"$models" | while read -r proxy; do
+            run_script proxy "$proxy" remove-upstream "$upstream" || log_warn "could not remove upstream $upstream from $proxy"
+        done
+        jq -r --arg m "$model" '.[] | select(.name == $m) | (.linked_to // [])[]' <<<"$models" | while read -r chat; do
+            run_script chat-interface "$chat" remove-endpoint "$upstream" || log_warn "could not remove endpoint $upstream from $chat"
+        done
+    done < <(jq -r '.[].name' <<<"$models")
+}
+
+# clear_wiring <proxy-or-chat-name>: forget it in the models of every engine.
+clear_wiring() {
+    local engine
+    for engine in $(state_list engine); do
+        state_write "$engine" "$(state_read "$engine" | jq --arg n "$1" '{ name: .name, type: .type, models: ((.models // []) | map(
+            (if .exposed_via == $n then .exposed_via = null else . end)
+            | .linked_to = ((.linked_to // []) | map(select(. != $n)))))}')"
+    done
+}
+
+uninstall_one() {
+    local type="$1" name="$2" models='[]' rc=0 list
+    shift 2
+    ((DRY)) || need_root uninstall "$type" "$name" "$@"
+    if [[ "$type" == engine ]]; then
+        models="$(state_read "$name" 2>/dev/null | jq -c '.models // []' || true)"
+        [[ -n "$models" ]] || models='[]'
+    fi
+    run_script "$type" "$name" uninstall "$@" || rc=$?
+    if ((rc == EXIT_PRECONDITION)); then
+        list="$(dependents "$name" | tr '\n' ' ')"
+        [[ -z "$list" ]] || log_info "required by: $list"
+    fi
+    ((rc == 0)) || return "$rc"
+    ((DRY)) && return 0
+    case "$type" in
+    engine) unwire_models "$name" "$models" ;;
+    proxy | chat-interface) clear_wiring "$name" ;;
+    esac
+}
+
+# uninstall_order <type-or-empty>: "type name" lines, dependents first, then
+# the reverse install order; failed installs (manifest only) come last.
+uninstall_order() {
+    local scope="$1" pool=() n t i other on pending_only=() f order=() rt picked progress
+    for t in chat-interface engine proxy provisioning; do
+        [[ -z "$scope" || "$scope" == "$t" ]] || continue
+        for n in $(state_list "$t"); do pool+=("$t $n"); done
+    done
+    while ((${#pool[@]})); do
+        picked=""
+        for i in "${!pool[@]}"; do
+            read -r t n <<<"${pool[$i]}"
+            progress=1
+            for other in "${pool[@]}"; do
+                read -r _ on <<<"$other"
+                [[ "$on" == "$n" ]] && continue
+                if state_read "$on" | jq -e --arg n "$n" --arg t "$t" '(.requires // []) | any(. == $n or . == $t)' >/dev/null; then
+                    progress=0
+                    break
+                fi
+            done
+            if ((progress)); then
+                picked="$i"
+                break
+            fi
+        done
+        picked="${picked:-0}"
+        order+=("${pool[$picked]}")
+        unset "pool[$picked]"
+        pool=("${pool[@]}")
+    done
+    for f in "$(state_dir)"/pending/*.json; do
+        [[ -e "$f" ]] || continue
+        n="$(basename "$f" .json)"
+        rt="$(jq -r '.type' "$f")"
+        [[ -z "$scope" || "$scope" == "$rt" ]] || continue
+        state_read "$n" >/dev/null 2>&1 || pending_only+=("$rt $n")
+    done
+    printf '%s\n' "${order[@]}" "${pending_only[@]}" | grep . || true
+}
+
+cmd_uninstall() {
+    local type="" name="" all=0 args=() arg
+    for arg in "$@"; do
+        case "$arg" in
+        --all) all=1 ;;
+        --defaults) fail "$EXIT_USAGE" "--defaults is not accepted by uninstall" ;;
+        --purge | --force) args+=("$arg") ;;
+        -*) args+=("$arg") ;;
+        *)
+            if [[ -z "$type" ]]; then type="$arg"; elif [[ -z "$name" ]]; then name="$arg"; else args+=("$arg"); fi
+            ;;
+        esac
+    done
+    [[ -z "$type" ]] || is_type "$type" || fail "$EXIT_USAGE" "unknown component type '$type'" "types: ${TYPES[*]}"
+    if ((all)); then
+        [[ -z "$name" ]] || fail "$EXIT_USAGE" "--all cannot be combined with a component name"
+        local t n list
+        list="$(uninstall_order "$type")"
+        if ((DRY)); then
+            [[ -z "$list" ]] || printf '%s\n' "$list" >&2
+            return 0
+        fi
+        while read -r t n; do
+            [[ -n "$n" ]] || continue
+            log_info "uninstalling $t $n"
+            uninstall_one "$t" "$n" "${args[@]}" || fail "$?" "could not uninstall $n"
+        done <<<"$list"
+        return 0
+    fi
+    if [[ -z "$name" ]]; then
+        fail "$EXIT_USAGE" "uninstall needs a component" "easy-cs-ai uninstall <type> <name>, or easy-cs-ai uninstall --all"
+    fi
+    uninstall_one "$type" "$name" "${args[@]}"
+}
+
+# --- component commands -----------------------------------------------------------
+
+cmd_native() {
+    local type="$1" name="$2" script desc state params env cmd
+    shift 2
+    script="$(resolve_script "$type" "$name")"
+    desc="$(bash "$script" describe)"
+    cmd="$(jq -r '.native.command // empty' <<<"$desc")"
+    [[ -n "$cmd" ]] || fail "$EXIT_USAGE" "$name has no program of its own, unknown action '$1'"
+    state="$(state_read "$name" 2>/dev/null)" || fail "$EXIT_PRECONDITION" "$name is not installed"
+    params="$(jq -c '(.params // {}) + { compose_file: (.service.compose_file // "") }' <<<"$state")"
+    while IFS= read -r env; do
+        [[ -z "$env" ]] || export "${env?}"
+    done < <(jq -r --argjson p "$params" '(.native.env // {}) | to_entries[]
+        | "\(.key)=" + (reduce ($p | to_entries[]) as $e (.value; gsub("\\{" + $e.key + "\\}"; $e.value | tostring)))' <<<"$desc")
+    cmd="$(jq -rn --arg c "$cmd" --argjson p "$params" 'reduce ($p | to_entries[]) as $e ($c; gsub("\\{" + $e.key + "\\}"; $e.value | tostring))')"
+    # shellcheck disable=SC2086
+    exec $cmd "$@"
+}
+
+cmd_component() {
+    local type="$1" name="${2:-}" action="${3:-}"
+    if [[ -z "$name" ]]; then
+        local n
+        for n in $(component_names "$type"); do
+            printf '%s\t%s\n' "$n" "$(is_installed "$n" && printf installed || printf 'not installed')"
+        done
+        return 0
+    fi
+    resolve_script "$type" "$name" >/dev/null
+    shift 2 || true
+    if [[ -z "$action" ]]; then
+        run_script "$type" "$name" --help
+        return
+    fi
+    if [[ "$action" == "--" ]]; then
+        shift
+        cmd_native "$type" "$name" "$@"
+    fi
+    if [[ "$CONTRACT_ACTIONS" == *" $action "* || "$action" == --* ]]; then
+        if [[ "$CHANGING_ACTIONS" == *" $action "* ]] && ((!DRY)); then
+            need_root "$type" "$name" "$action"
+        fi
+        run_script "$type" "$name" "$@"
+        return
+    fi
+    cmd_native "$type" "$name" "$@"
+}
+
+# --- main -------------------------------------------------------------------------
+
+main() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --verbose) export EASY_CS_AI_VERBOSE=1; GFLAGS+=(--verbose) ;;
+        --dry-run) DRY=1; GFLAGS+=(--dry-run) ;;
+        --json) _OPT_JSON=1; GFLAGS+=(--json) ;;
+        --help) usage; return 0 ;;
+        --version) printf '%s\n' "$CLI_VERSION"; return 0 ;;
+        *) break ;;
+        esac
+        shift
+    done
+    if [[ $# -eq 0 ]]; then
+        usage >&2
+        return "$EXIT_USAGE"
+    fi
+    local command="$1"
+    shift
+    case "$command" in
+    help) usage ;;
+    version) printf '%s\n' "$CLI_VERSION" ;;
+    status) cmd_status "$@" ;;
+    install) cmd_install "$@" ;;
+    uninstall) cmd_uninstall "$@" ;;
+    add | remove | apply | generate) fail "$EXIT_ERROR" "$command is not available yet" ;;
+    *)
+        if is_type "$command"; then
+            cmd_component "$command" "$@"
+        else
+            fail "$EXIT_USAGE" "unknown command '$command'" "run: easy-cs-ai help"
+        fi
+        ;;
+    esac
+}
+
+main "$@"

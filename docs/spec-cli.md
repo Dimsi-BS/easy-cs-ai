@@ -23,7 +23,7 @@ Out of scope: the interface of the generator behind `generate`, see [spec: VM sc
 ```
 
 - The dispatcher sets `EASY_CS_AI_LIB` to `/usr/lib/easy-cs-ai/lib` and runs the scripts from there. It sources `lib/common.sh` itself for `log_*`, `die`, the lock helpers (`with_state_lock`, `with_component_lock`) and the state helpers.
-- The tarball has the same tree under any directory; the dispatcher finds it relative to its own location, or through `EASY_CS_AI_HOME` when set.
+- The tarball has the same tree under any directory; the dispatcher finds it through `EASY_CS_AI_HOME` when set, else `../lib/easy-cs-ai` relative to itself, else `../../install_scripts` (the source tree: the dispatcher is `package/bin/easy-cs-ai`), else `/usr/lib/easy-cs-ai`.
 - `EASY_CS_AI_ROOT`, `EASY_CS_AI_STATE_DIR` and `EASY_CS_AI_CONFIG_DIR` are honoured and passed through, so the CLI is testable with `bats` like the scripts.
 
 ## Command line
@@ -90,6 +90,10 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 
 `install`, `uninstall`, `add`, `remove`, `apply` (except with `--dry-run`) and the changing component actions require root. The CLI checks it first and fails with exit 4 and a message suggesting `sudo`; it never re-executes itself through `sudo`. `status`, `--help`, `describe` and the read-only actions run unprivileged (the state is world-readable, see [state format](spec-state-format.md#layout)).
 
+## Implementation status
+
+Implemented: dispatch, `status`, `install` (dependencies, `--defaults`, default stack), `uninstall` (single, `--all`, wiring clean-up), component and native commands. `add`, `remove`, `apply` and `generate` answer "not available yet" (exit 1): they need the proxy, provisioning and chat interface components, and the generator.
+
 ## `status`
 
 Reads every `components/*.json`, then calls `<script> status` for each (live probe, in order, each limited to 15 s: a timeout is reported as not healthy). Output as in [state format](spec-state-format.md#what-status-combines):
@@ -132,7 +136,7 @@ Steps for one component:
 
 The exit code is the script's, except when a dependency failed (that step's code, with a message naming it).
 
-**Default stack** (`install --defaults`): for each type (`provisioning`, `proxy`, `engine`, `chat-interface`), if no component of the type is installed, install the rank 1 one, in an order that satisfies `requires` (computed from `describe`, not hardcoded). Types already installed are left alone, so the command converges and is safe to re-run. It follows the integration order, so a change of rank 1 changes the stack without touching the CLI. This is the one-line form for the VM post-install layer.
+**Default stack** (`install --defaults`): for each type (`provisioning`, `proxy`, `engine`, `chat-interface`), if no component of the type is installed, install the rank 1 one, in an order that satisfies `requires` (computed from `describe`, not hardcoded). Types already installed are left alone, so the command converges and is safe to re-run. It follows the integration order, so a change of rank 1 changes the stack without touching the CLI: the order is the file `ranks.conf` shipped next to the scripts (`<type> <name>` lines, rank 1 first within each type), not code. A type whose rank 1 has no install script yet (or that has no rank) is skipped with a `WARN`, so the command works while the catalogue is being built; naming the type explicitly (`install <type> --defaults`) fails instead. This is the one-line form for the VM post-install layer.
 
 ### Dependencies
 

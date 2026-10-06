@@ -263,3 +263,20 @@ ollama() { run --separate-stderr bash "$SCRIPT" "$@"; }
     ollama remove-model llama3.2:3b --dry-run
     [ "$status" -eq 0 ]
 }
+
+@test "add-model pulls with the native command and records the model; remove-model forgets it" {
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    printf '#!/usr/bin/env bash\necho "ollama $* host=$OLLAMA_HOST" >&2\n' >"$BATS_TEST_TMPDIR/bin/ollama"
+    chmod +x "$BATS_TEST_TMPDIR/bin/ollama"
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+    ollama install --port 11500
+    ollama add-model llama3.2:3b
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"ollama pull llama3.2:3b host=127.0.0.1:11500"* ]]
+    [ "$(jq -r '.models[0].name' "$STATE/components/ollama.json")" = "llama3.2:3b" ]
+    ollama add-model llama3.2:3b
+    [ "$(jq '.models | length' "$STATE/components/ollama.json")" -eq 1 ]
+    ollama remove-model llama3.2:3b
+    [ "$status" -eq 0 ]
+    [ "$(jq '.models | length' "$STATE/components/ollama.json")" -eq 0 ]
+}
