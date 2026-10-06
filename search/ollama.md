@@ -18,6 +18,11 @@
 - Streaming responses must not be buffered by the proxy (see nginx notes).
 - Must be reachable from the LibreChat host ([LibreChat](librechat.md)).
 
+## Install script notes
+- Installed from the release archive `ollama-linux-<arch>.tar.zst` (about 1.4 GB, GPU libraries included, needs `zstd`) unpacked under `/usr/local`, not through the upstream `install.sh`, so the version and sha256 are pinned by the project.
+- Runs as the `ollama` user from a full unit `/etc/systemd/system/ollama.service` rendered from a template (`OLLAMA_HOST` set from `--bind` and `--port`); models live in `/usr/share/ollama/.ollama`.
+- `uninstall` keeps the models and the user; `--purge` removes both.
+
 ## Health check
 - `GET /api/version` answers `{"version": …}` as soon as the server listens; no model is loaded at startup, so readiness is fast (seconds). Estimated timeout for the install script: **60 s** (to confirm in integration tests).
 - `systemctl is-active` is not enough: the process can be up without answering on the expected host/port.

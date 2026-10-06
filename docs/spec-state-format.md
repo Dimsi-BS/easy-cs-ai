@@ -86,7 +86,7 @@ The default component of a type is **explicit**: it is the one whose file has `"
   },
   "service": { "unit": "ollama.service" },
   "requires": [],
-  "files": ["/usr/local/bin/ollama", "/etc/systemd/system/ollama.service.d/easy-cs-ai.conf"],
+  "files": ["/usr/local/bin/ollama", "/usr/local/lib/ollama", "/etc/systemd/system/ollama.service"],
   "data_dirs": ["/usr/share/ollama/.ollama"],
   "secrets": [],
   "models": [

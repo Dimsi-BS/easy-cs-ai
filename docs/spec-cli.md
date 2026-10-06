@@ -84,7 +84,7 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 - The CLI only prepares the environment so that the tool talks to the instance the project installed: it exports the variables listed in `describe.native.env` (e.g. `OLLAMA_HOST`), built from the `params` recorded in the state.
 - The contract actions win when a name is shared. `--` before the action forces the native tool: `engine ollama -- status`.
 - Components without a program of their own (Docker Compose-based chat interfaces) declare `native.command` as `docker compose -f <compose_file>` (from the state `service`), so `chat-interface librechat logs -f` is `docker compose -f … logs -f`. A component with nothing to run natively leaves `native` out, and an unknown action is then a usage error.
-- The type-specific actions of the contract are themselves **thin wrappers** over native commands (`list-models` runs `ollama list`, `remove-model` runs `ollama rm`, `provisioning recommend` runs `llmfit recommend --json`). They exist only to add the convention-mandated parts: JSON on stdout, state update, journal, a size-aware wait. See the [contract](spec-script-contract.md#wrapping-native-tools).
+- The type-specific actions of the contract are themselves **thin wrappers** over native commands (`list-models` reads the engine's API, as `ollama list` is a table, `remove-model` runs `ollama rm`, `provisioning recommend` runs `llmfit recommend --json`). They exist only to add the convention-mandated parts: JSON on stdout, state update, journal, a size-aware wait. See the [contract](spec-script-contract.md#wrapping-native-tools).
 
 ### Privileges
 

@@ -70,6 +70,7 @@ These are the "component commands" mirrored by `easy-cs-ai <type> <name> <action
 - Precedence: command line > environment > built-in default.
 - Parsing lives in one function of the script (`parse_args`), so options are handled in one place.
 - Common options, accepted by every action unless it makes no sense: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`.
+- **`--version` has two meanings**: alone, it prints the script version (common flag); followed by a value (`--version 0.35.1`, or `--version=0.35.1`), it selects the component version to install. The component version can also come from `EASY_CS_AI_<COMPONENT>_VERSION`.
 - `install` also accepts `--default`: make this component the default of its type (see [state format](spec-state-format.md#defaults)). The CLI forwards it as it is, so a generated standalone script behaves the same.
 - `--dry-run` prints what would be done (packages, files, units) on stderr, changes nothing, and exits 0 if the real run would pass preflight.
 - Unknown options are a usage error (exit 2), never ignored.
@@ -80,7 +81,7 @@ These are the "component commands" mirrored by `easy-cs-ai <type> <name> <action
 
 | Action | Native command it wraps | What the wrapper adds |
 | --- | --- | --- |
-| `engine list-models` (Ollama) | `ollama list` | JSON on stdout |
+| `engine list-models` (Ollama) | the engine's own API (`GET /api/tags`; `ollama list` is a table for humans) | JSON on stdout, reduced to `name`, `size`, `modified_at` with `jq` |
 | `engine add-model` (Ollama) | `ollama pull` | size-aware wait, state, journal |
 | `engine remove-model` (Ollama) | `ollama rm` | state, journal |
 | `provisioning recommend` | `llmfit recommend --json` | exit codes, no state |
@@ -173,7 +174,7 @@ Anything else is reserved. The CLI maps these codes to its own messages.
 
 Phases, in order. A failure in any phase stops the script with the matching exit code; the state is written only at the end of a fully verified install. What the script creates along the way is recorded in the [pending manifest](spec-state-format.md#pending-manifest) **before** each creation, so a failed install can always be cleaned by `uninstall`, which does not rely on the state alone.
 
-1. **Preflight**: root, supported platform, `systemd` running as init (see [Platform](#platform)), `requires` satisfied (the script **checks** other components, it never installs them), free disk/RAM when it matters, port not taken by another process. No side effect.
+1. **Preflight**: root, supported platform, `systemd` running as init (see [Platform](#platform)), `requires` satisfied (the script **checks** other components, it never installs them), free disk/RAM when it matters (Ollama: 6 GB on `/usr/local` and 2 GB on `/var/tmp`, the archive weighs about 1.4 GB with its GPU libraries), port not taken by another process (unless the component's own unit is the one listening, on a re-run). No side effect.
 2. **Acquire**: take the component lock (see [Locking](#locking); busy → exit 4). Download with checksum verification; versions are **pinned** in the script, `--version` overrides.
 3. **Install**: system packages through `apt-get` (non-interactive, `DEBIAN_FRONTEND=noninteractive`), binaries to `/opt` or `/usr/local`, Docker installed by the script when the component needs it and absent.
 4. **Configure**: generate whole files from templates or drop-ins (see conventions). Written atomically (temp file in the same directory, then `mv`), with explicit owner and mode.
@@ -235,7 +236,7 @@ A configuration file is rewritten only if its rendered content differs from what
 
 ### `uninstall`
 
-Stops and disables the service, removes the files recorded in the state (`files` list) **and in the pending manifest**, removes the component state and the manifest, and removes it from the defaults. A component with a manifest but no state (failed install) is cleaned the same way and exits 0; "not installed" (exit 4) means neither a state nor a manifest exists. Paths already absent are ignored. Data directories (models, databases) are kept unless `--purge`. Uninstalling a component another one depends on (`requires` in the state) fails with exit 4 unless `--force`.
+Stops and disables the service, removes the files recorded in the state (`files` list) **and in the pending manifest**, removes the component state and the manifest, and removes it from the defaults. A component with a manifest but no state (failed install) is cleaned the same way and exits 0; "not installed" (exit 4) means neither a state nor a manifest exists. Paths already absent are ignored. Data directories (models, databases) are kept unless `--purge`, which also removes the system user the component created (e.g. `ollama`); without it the user stays, since it owns the kept data. Uninstalling a component another one depends on (`requires` in the state) fails with exit 4 unless `--force`.
 
 ## Locking
 
@@ -265,7 +266,7 @@ Rules:
 | `EASY_CS_AI_CONFIG_DIR` | `/etc/easy-cs-ai` | Generated configuration and secrets |
 | `EASY_CS_AI_LIB` | directory of the script `/../lib` | Location of `common.sh` |
 
-With `EASY_CS_AI_ROOT` set, the script skips package installation and service control (they are replaced by logging), so unit tests exercise argument parsing, templating, state writing and idempotence. Real installs are covered by the integration tests in fresh VMs or systemd-enabled system containers (see [tests](../tests/README.md)).
+With `EASY_CS_AI_ROOT` set, the script skips package installation, service control, user creation, downloads and the health check (they are replaced by logging; the platform and root checks are skipped too), so unit tests exercise argument parsing, templating, state writing and idempotence. Real installs are covered by the integration tests in fresh VMs or systemd-enabled system containers (see [tests](../tests/README.md)).
 
 ## `lib/common.sh`
 
@@ -279,7 +280,8 @@ Provides at least:
 - secrets: `read_secret <file|->` (file of mode `0600` or stricter, else exit 2, or stdin), `generate_secret` (32 random bytes, base64url);
 - `with_state_lock <command…>` (waits 60 s), `with_state_lock_timeout <seconds> <command…>`, `with_component_lock <type> <name> <action> <command…>`; the lock descriptors 8 and 9 are reserved (see [Locking](#locking));
 - `render_template <template> <destination> <mode> <owner>` (envsubst, atomic, returns 0 when changed and 10 when identical);
-- `apt_install`, `ensure_docker`, `systemd_enable_now`;
+- `apt_install` (skips installed packages), `ensure_docker` (not implemented yet: Docker and Compose package names differ between Debian and Ubuntu, to settle with the first Docker-based component), `systemd_enable_now`, `systemd_restart`, `systemd_disable_now`;
+- `pending_begin <type> <name>` (selects the component the `track_*` functions record for, creates the manifest or reuses it), `pending_read <name>`, `pending_remove <name>`;
 - `wait_for_http <url> <timeout> [<unit> [<interval>]]`: polls every `interval` seconds (default 2), returns 0, or 6 on timeout or as soon as `unit` is failed (`""` to skip that check), and never dies itself (see [Health check](#health-check));
 - `track_file <path>`, `track_unit <unit>`, `track_data_dir <path>`: record in the pending manifest **before** creating the file, enabling the unit or creating the data directory (see [state format](spec-state-format.md#pending-manifest)); `render_template` and `systemd_enable_now` call them themselves, so scripts rarely do;
 - `state_read <component>`, `state_write <component> <json>`, `state_remove <component>`, `state_list [<type>]`, `defaults_get <type>`, `defaults_set <type> <name>` (see [state format](spec-state-format.md#helpers)). They need `jq` (exit 4 without it).
