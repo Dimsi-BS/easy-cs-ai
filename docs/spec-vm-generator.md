@@ -62,7 +62,7 @@ Everything comes from the shipped scripts, nothing is hardcoded (same principle 
 | Options, defaults, which ones are secret | `describe.options` |
 | Platforms | `describe.platforms` |
 | Requirements and the order they impose | `describe.requires` |
-| Ranking of alternatives, used to pre-select | [integration order](decision-integration-order.md) |
+| Ranking of alternatives, used to pre-select | [integration order](decision-integration-order.md), as shipped in `ranks.conf` |
 
 The generator runs from the installed package (or tarball), so it knows the scripts of that version. The script it emits pins that same version.
 

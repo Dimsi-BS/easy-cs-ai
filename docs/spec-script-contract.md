@@ -58,7 +58,7 @@ Components of one type expose the same actions, so switching is one parameter:
 Output of the actions that return something other than the standard `status` / `describe` / `list-models`:
 
 - `proxy add-upstream` and `chat-interface add-endpoint` print `{ "url": "…" }` on stdout: the URL under which the model is now reachable (through HTTPS for the proxy; for the chat interface, the URL of the declared endpoint). The CLI uses it to wire the next component, instead of rebuilding URLs from the proxy state, which records no path per upstream. Idempotent: calling again with the same arguments prints the same URL.
-- `provisioning check <model>` prints `{ "fits": true|false, "reason": "…" }` and exits 0 in both cases; a failure to evaluate (llmfit error, unknown model name) is exit 1. It is a thin wrapper, see [Wrapping native tools](#wrapping-native-tools): the verdict is read from llmfit's own output with `jq`, the fit computation is never redone by the project.
+- `provisioning` has no service: its `status` reports `running` when the command is present and `healthy` when `llmfit recommend --json` answers with valid JSON, and its state has no `service` or `endpoint`. `provisioning check <model>` prints `{ "fits": true|false, "reason": "…" }` and exits 0 in both cases; a failure to evaluate (llmfit error, unknown model name) is exit 1. It is a thin wrapper, see [Wrapping native tools](#wrapping-native-tools): the verdict is read from llmfit's own output with `jq`, the fit computation is never redone by the project.
 
 An engine either serves all its models from **one process** (Ollama), or runs **one instance per model** (vLLM, which serves a single model per process). The `engine` actions are the same in both cases, see [Engines with one instance per model](#engines-with-one-instance-per-model).
 
@@ -85,7 +85,7 @@ These are the "component commands" mirrored by `easy-cs-ai <type> <name> <action
 | `engine add-model` (Ollama) | `ollama pull` | size-aware wait, state, journal |
 | `engine remove-model` (Ollama) | `ollama rm` | state, journal |
 | `provisioning recommend` | `llmfit recommend --json` | exit codes, no state |
-| `provisioning check <model>` | llmfit's own output (`llmfit recommend --json`, or a per-model llmfit command if it has one, to confirm in the [findings](../search/llmfit.md)) | `fits` / `reason` JSON read with `jq` |
+| `provisioning check <model>` | llmfit's own output: `llmfit info <model> --json`, else `llmfit fit --json` filtered on the Ollama tag (see the [findings](../search/llmfit.md#observed-behaviour-llmfit-1116-run-on-a-cpu-only-machine)) | `fits` (false only for the level `Too Tight`) and `reason` (name, level, mode, memory) read with `jq` |
 | `proxy` configuration check | `nginx -t` before every reload | exit code 6 on failure |
 
 - When the tool's output is already in the required form, it is passed through untouched. Parsing is limited to `jq` over the tool's JSON.
