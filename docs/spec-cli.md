@@ -92,7 +92,7 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 
 ## Implementation status
 
-Implemented: dispatch, `status`, `install` (dependencies, `--defaults`, default stack), `uninstall` (single, `--all`, wiring clean-up), component and native commands. `add` and `remove` are implemented (in `lib/cli-models.sh`) and tested with fake components; they cannot succeed on a real machine before the proxy, llmfit and a chat interface exist (a missing one is the documented exit 4). The signal handling (SIGINT/SIGTERM, rollback, 130/143) is written but not covered by tests yet. `apply` is implemented (in `lib/cli-apply.sh`, see [spec: config](spec-config.md)) and tested with fake components. `generate` answers "not available yet" (exit 1).
+Implemented: dispatch, `status`, `install` (dependencies, `--defaults`, default stack), `uninstall` (single, `--all`, wiring clean-up), component and native commands. `add` and `remove` are implemented (in `lib/cli-models.sh`) and tested with fake components; they cannot succeed on a real machine before the proxy, llmfit and a chat interface exist (a missing one is the documented exit 4). The signal handling (SIGINT/SIGTERM, rollback, 130/143) is written but not covered by tests yet. `apply` is implemented (in `lib/cli-apply.sh`, see [spec: config](spec-config.md)) and tested with fake components. `generate` hands over to `vm_script/generate.sh` (`$HOME_DIR/vm_script`, else `../vm_script`), exporting `EASY_CS_AI_HOME` and `EASY_CS_AI_CLI_VERSION`, and forwarding `--dry-run` and `--verbose`.
 
 ## `status`
 

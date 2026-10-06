@@ -42,6 +42,16 @@ Takes the [configuration](spec-config.md) from a file instead of a session: **no
 - The summary is printed on stderr and **not** asked for confirmation.
 - Incompatible with `--config-only` (it would only copy the file): exit 2.
 
+## Implementation notes
+
+- The session picks **one component per type** (the configuration allows several, but there is no question to ask for a second one; edit the file written by `--config-only` for that). The rank 1 is offered as the default answer, `none` skips the type; a type with no shipped component is not asked.
+- A dependency the administrator refuses sends the session back to the component choice. At the summary, `y` confirms, `n` cancels, and `1`, `3` or `4` redo the components (with their dependencies), the options or the models. Step 2 (dependencies) is part of step 1.
+- End of input on stdin cancels the session: exit 0, nothing written.
+- The generator plans for another machine: what is installed on the machine running it is ignored (`EASY_CS_AI_ASSUME_EMPTY`), so a configuration is validated as for a fresh VM, and a requirement that the file does not satisfy is an incomplete file (exit 2).
+- The validation, the ordering of components and the summary are the code of `apply` (`lib/cli-apply.sh`), so the generator and `apply` cannot disagree.
+- `--dry-run` also applies to `--config-only`: the configuration goes to stderr.
+- The script is written with mode `0755` (it holds no secret), and a warning is logged when it exceeds 32 KB, the default user-data limit of CloudStack.
+
 ## What the generator knows
 
 Everything comes from the shipped scripts, nothing is hardcoded (same principle as the CLI [dispatch](spec-cli.md#dispatch)):
@@ -77,9 +87,11 @@ Not asked with `--config-only` (and given as options with `--config`):
 | `--package-url` | Where the VM downloads the package or tarball. A mirror URL for a restricted network | The GitHub Releases URL of the version below |
 | `--package-version` | Version to install, **pinned** | The version of the installed CLI |
 | `--package-format` | `deb`, `rpm` or `tarball` | `deb` (primary target, see [packaging](decision-packaging.md)) |
-| `--package-sha256` | Checksum the script verifies | Fetched from the release by the generator, or computed from a local file |
+| `--package-sha256` | Checksum the script verifies | Else computed from `--package-file <path>` (a local copy of the package), else read from `<package-url>.sha256` (first field of its first line), which a release publishes next to each package. Neither available: exit 5 |
 
 The generator never emits a script without a checksum.
+
+The default URL is `https://github.com/Dimsi-BS/easy-cs-ai/releases/download/v<version>/<file>`, with `<file>` being `easy-cs-ai_<version>_all.deb`, `easy-cs-ai-<version>-1.noarch.rpm` or `easy-cs-ai-<version>.tar.gz`. The tarball unpacks to the tree `bin/easy-cs-ai`, `lib/easy-cs-ai/…` (the layout the CLI finds relative to itself); the generated script unpacks it in `/opt/easy-cs-ai`, links `/usr/local/bin/easy-cs-ai` to it and installs `jq` when missing. When the CLI hands over to the generator it passes its own version as the default `--package-version` (a generator run on its own needs the option).
 
 ## Generated script
 

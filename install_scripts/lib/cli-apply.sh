@@ -90,6 +90,11 @@ apply_describes() {
 
 installed_by_type() {
     local t out='{}'
+    if [[ -n "${EASY_CS_AI_ASSUME_EMPTY:-}" ]]; then
+        printf '{}
+'
+        return 0
+    fi
     for t in "${TYPES[@]}"; do
         out="$(jq -c --arg t "$t" --argjson l "$(state_list "$t" | jq -R . | jq -sc .)" '. + {($t): $l}' <<<"$out")"
     done
@@ -121,7 +126,7 @@ apply_order() {
             if jq -e --arg r "$req" '(.components // []) | any(.name == $r or .type == $r)' <<<"$config" >/dev/null; then continue; fi
             rtype="$req"
             is_type "$req" || rtype="$(type_of "$req" || printf '?')"
-            fail "$EXIT_PRECONDITION" "$req is required by $name and is neither installed nor in the file" \
+            fail "${APPLY_ORDER_FAIL_CODE:-$EXIT_PRECONDITION}" "$req is required by $name and is neither installed nor in the file" \
                 "easy-cs-ai install $rtype $([[ "$rtype" == "$req" ]] && rank_lookup "$req" || printf '%s' "$req")"
         done < <(reqs_of "$type" "$name")
     done

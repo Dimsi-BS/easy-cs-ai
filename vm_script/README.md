@@ -8,4 +8,6 @@ It is invoked from the layer 2 CLI through the `generate` command (`generate`, o
 
 The generator is **interactive**: run by an administrator, it guides the choices (components, dependencies, options, models) and writes a configuration, then a small self-contained script that downloads the package from a pinned source and runs `easy-cs-ai apply` on that configuration. Scripts and CLI never prompt, the generator is the only exception. How it behaves is in [spec: VM script generator](../docs/spec-vm-generator.md).
 
+Contents: `generate.sh` (the generator), `lib/questions.sh` (the question engine) and `templates/vm-script.sh.tpl` (the shape of the generated script).
+
 See also: [package](../package/README.md), the layer this script downloads and runs.

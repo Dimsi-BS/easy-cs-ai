@@ -16,6 +16,7 @@ Layer 2 was initially planned as a snap package. What is actually needed is a si
   - **`.deb` and `.rpm` packages**, both built in CI from one definition with [`nfpm`](https://nfpm.goreleaser.com/).
 - The VM post-install layer downloads the package (or tarball) from a pinned, checksummed and configurable source, installs it, then runs `easy-cs-ai apply` on a configuration embedded in the script (see [spec: config](spec-config.md) and [decision: VM script generator](decision-vm-generator.md)), or `easy-cs-ai install --defaults`. The package is not embedded in the script, VM user-data being size-limited.
 - The layer 1 scripts remain usable on their own, without the CLI.
+- Package files are named `easy-cs-ai_<version>_all.deb`, `easy-cs-ai-<version>-1.noarch.rpm` and `easy-cs-ai-<version>.tar.gz`, each published with a `<file>.sha256` (see [spec: VM script generator](spec-vm-generator.md#package-source)).
 - Installed state lives in `/var/lib/easy-cs-ai/`, which feeds `status` and the defaults of `add`.
 
 ## Why

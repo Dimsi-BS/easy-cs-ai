@@ -2,12 +2,10 @@
 # easy-cs-ai: dispatcher over the layer 1 install scripts, see docs/spec-cli.md.
 # Implemented: help, version, status, install, uninstall, add, remove (in
 # lib/cli-models.sh), apply (lib/cli-apply.sh), component commands (contract
-# actions and native tool commands). generate is not written yet.
+# actions and native tool commands), generate (hands over to vm_script/).
 set -euo pipefail
 
 readonly CLI_VERSION=0.1.0
-# Types in install order; uninstall --all goes the other way round.
-readonly TYPES=(provisioning proxy engine chat-interface)
 readonly CHANGING_ACTIONS=" install uninstall add-model remove-model add-upstream remove-upstream add-endpoint remove-endpoint "
 readonly CONTRACT_ACTIONS=" install uninstall status describe add-model remove-model list-models add-upstream remove-upstream show-key add-endpoint remove-endpoint recommend check "
 
@@ -15,7 +13,7 @@ readonly CONTRACT_ACTIONS=" install uninstall status describe add-model remove-m
 
 find_home() {
     local here candidate
-    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
     for candidate in "${EASY_CS_AI_HOME:-}" "$here/../lib/easy-cs-ai" "$here/../../install_scripts" /usr/lib/easy-cs-ai; do
         if [[ -n "$candidate" && -r "$candidate/lib/common.sh" ]]; then
             (cd "$candidate" && pwd)
@@ -31,6 +29,8 @@ readonly HOME_DIR
 export EASY_CS_AI_LIB="$HOME_DIR/lib"
 # shellcheck source=../../install_scripts/lib/common.sh
 source "$EASY_CS_AI_LIB/common.sh"
+# shellcheck source=../../install_scripts/lib/cli-base.sh
+source "$EASY_CS_AI_LIB/cli-base.sh"
 # shellcheck source=../../install_scripts/lib/cli-models.sh
 source "$EASY_CS_AI_LIB/cli-models.sh"
 # shellcheck source=../../install_scripts/lib/cli-apply.sh
@@ -55,7 +55,7 @@ Commands:
   add <model> [--engine <n>] [--chat-interface <n>] [--no-chat-interface] [--defaults] [--force]
   remove <model> [--engine <n>]            remove --all [--engine <n>]
   apply <file|-> [--prune]                 make the machine match a configuration file
-  generate                                 not available yet
+  generate [--config-only] [--config <file>] [options]   VM post-install script generator
   help, version
 
 Types: provisioning, proxy, engine, chat-interface
@@ -64,42 +64,11 @@ EOF
 
 # --- Helpers ----------------------------------------------------------------------
 
-# fail <code> <message> [<hint>]: "[ERROR] what (exit n: meaning)" then the hint.
-fail() {
-    local code="$1" message="$2" hint="${3:-}" meaning
-    case "$code" in
-    1) meaning="error" ;; 2) meaning="usage" ;; 3) meaning="unsupported platform" ;;
-    4) meaning="precondition not met" ;; 5) meaning="network" ;; 6) meaning="verification failed" ;;
-    *) meaning="failed" ;;
-    esac
-    log_error "$message (exit $code: $meaning)"
-    [[ -z "$hint" ]] || log_info "$hint"
-    exit "$code"
-}
-
 need_root() {
     if is_test_root || ((EUID == 0)); then
         return 0
     fi
     fail "$EXIT_PRECONDITION" "this command must run as root" "try: sudo easy-cs-ai $*"
-}
-
-is_type() {
-    local t
-    for t in "${TYPES[@]}"; do
-        [[ "$t" == "$1" ]] && return 0
-    done
-    return 1
-}
-
-script_path() { printf '%s/%s/%s.sh\n' "$HOME_DIR" "$1" "$2"; }
-
-component_names() {
-    local f
-    for f in "$HOME_DIR/$1"/*.sh; do
-        [[ -e "$f" ]] && basename "$f" .sh
-    done
-    return 0
 }
 
 # resolve_script <type> <name>: print the script path or fail with exit 2.
@@ -111,39 +80,6 @@ resolve_script() {
         fail "$EXIT_USAGE" "unknown $1 '$2'" "available: $(component_names "$1" | tr '\n' ' ')"
     fi
     printf '%s\n' "$path"
-}
-
-# rank_lookup <type>: the rank 1 component of a type, empty when none.
-rank_lookup() { awk -v t="$1" '$1 == t { print $2; exit }' "$HOME_DIR/ranks.conf" 2>/dev/null || true; }
-
-# rank_one <type>: same, but a usage error when none.
-rank_one() {
-    local name
-    name="$(rank_lookup "$1")"
-    [[ -n "$name" ]] || fail "$EXIT_USAGE" "no default component known for type $1"
-    printf '%s\n' "$name"
-}
-
-# type_of <name>: the type of an installed or shipped component.
-type_of() {
-    local t json
-    if json="$(state_read "$1" 2>/dev/null)"; then
-        jq -r '.type' <<<"$json"
-        return 0
-    fi
-    for t in "${TYPES[@]}"; do
-        if [[ -e "$(script_path "$t" "$1")" ]]; then
-            printf '%s\n' "$t"
-            return 0
-        fi
-    done
-    return 1
-}
-
-# is_installed <name-or-type>
-is_installed() {
-    state_read "$1" >/dev/null 2>&1 && return 0
-    is_type "$1" && [[ -n "$(state_list "$1")" ]]
 }
 
 # run_script <type> <name> <args…>: run a script, passing streams through.
@@ -497,6 +433,23 @@ cmd_component() {
     cmd_native "$type" "$name" "$@"
 }
 
+# --- generate ---------------------------------------------------------------------
+
+# cmd_generate <args…>: hand over to the VM script generator, which reads the
+# same scripts tree. Streams and exit code are the generator's.
+cmd_generate() {
+    local dir generator=""
+    for dir in "$HOME_DIR/vm_script" "$HOME_DIR/../vm_script"; do
+        [[ -f "$dir/generate.sh" ]] && generator="$dir/generate.sh" && break
+    done
+    [[ -n "$generator" ]] || fail "$EXIT_ERROR" "the generator is not installed (vm_script/generate.sh not found)"
+    export EASY_CS_AI_HOME="$HOME_DIR" EASY_CS_AI_CLI_VERSION="$CLI_VERSION"
+    local flags=()
+    ((DRY)) && flags+=(--dry-run)
+    [[ "${EASY_CS_AI_VERBOSE:-0}" != 1 ]] || flags+=(--verbose)
+    exec bash "$generator" "${flags[@]}" "$@"
+}
+
 # --- main -------------------------------------------------------------------------
 
 main() {
@@ -526,7 +479,7 @@ main() {
     add) cmd_add "$@" ;;
     remove) cmd_remove "$@" ;;
     apply) cmd_apply "$@" ;;
-    generate) fail "$EXIT_ERROR" "$command is not available yet" ;;
+    generate) cmd_generate "$@" ;;
     *)
         if is_type "$command"; then
             cmd_component "$command" "$@"

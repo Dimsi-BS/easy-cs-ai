@@ -2,7 +2,7 @@
 
 This project is a toolbox that wraps the best open-source AI tools available out there.
 
-> **Status: early development.** Most of this README describes the intended design. Only the shared library, the Ollama install script and the CLI dispatcher (`status`, `install`, `uninstall`) exist so far, and none has been tested on a real VM. See [Roadmap](#roadmap) for what's built vs. planned.
+> **Status: early development.** Most of this README describes the intended design. Only the shared library, the Ollama install script, the CLI (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`) and the VM script generator exist so far, none has been tested on a real VM, and the other components and the packaging are still missing. See [Roadmap](#roadmap) for what's built vs. planned.
 
 Built on [Ollama](https://ollama.com). This project only wraps existing open-source tools; more are credited here as they are integrated.
 
@@ -132,6 +132,6 @@ Planned work, in dependency order:
 | Package / CLI   | `install` command                | Written, unit-tested |
 | Package / CLI   | `add` / `remove` model commands  | Written, unit-tested with fake components |
 | Package / CLI   | `apply` command                  | Written, unit-tested with fake components |
-| Package / CLI   | `generate` command               | Not started |
-| VM post-install | Post-install script              | Not started |
-| VM post-install | Script generator (`generate`)    | Not started |
+| Package / CLI   | `generate` command               | Written (hands over to the generator) |
+| VM post-install | Post-install script              | Written (emitted by the generator), unit-tested |
+| VM post-install | Script generator (`generate`)    | Written, unit-tested |
