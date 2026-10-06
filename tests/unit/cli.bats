@@ -76,7 +76,7 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
 }
 
 @test "commands that need missing components say so" {
-    cli apply x
+    cli generate
     [ "$status" -eq 1 ]
     [[ "$stderr" == *"not available yet"* ]]
 }

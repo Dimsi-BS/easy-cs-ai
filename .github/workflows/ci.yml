@@ -19,7 +19,7 @@ jobs:
 
       - name: shellcheck
         run: |
-          mapfile -t scripts < <(git ls-files '*.sh')
+          mapfile -t scripts < <(git ls-files '*.sh' package/bin)
           if [ "${#scripts[@]}" -gt 0 ]; then shellcheck "${scripts[@]}"; fi
 
       - name: bats unit tests
