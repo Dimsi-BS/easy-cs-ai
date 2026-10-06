@@ -4,6 +4,6 @@
 
 This directory contains the files specific to the packaging layer: the `easy-cs-ai` CLI dispatcher and the tarball/`.deb`/`.rpm` packaging definitions (see [docs/decision-packaging](../docs/decision-packaging.md)).
 
-- `bin/easy-cs-ai` — the dispatcher: `status`, `install`, `uninstall`, component and native commands (`add`, `remove`, `apply`, `generate` are not available yet). From a checkout it runs the scripts of [install_scripts](../install_scripts/README.md) directly. The `.deb`/`.rpm`/tarball definitions are not written yet.
+- `bin/easy-cs-ai` — the dispatcher: `status`, `install`, `uninstall`, `add`, `remove`, component and native commands (`apply`, `generate` are not available yet). From a checkout it runs the scripts of [install_scripts](../install_scripts/README.md) directly. The `.deb`/`.rpm`/tarball definitions are not written yet.
 
 See also: [install_scripts](../install_scripts/README.md), the layer this package wraps, and [docs/cli-commands](../docs/cli-commands.md) for the planned command reference.

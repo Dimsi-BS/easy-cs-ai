@@ -76,7 +76,7 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
 }
 
 @test "commands that need missing components say so" {
-    cli add llama
+    cli apply x
     [ "$status" -eq 1 ]
     [[ "$stderr" == *"not available yet"* ]]
 }
