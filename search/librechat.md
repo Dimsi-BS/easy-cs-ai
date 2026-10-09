@@ -36,6 +36,14 @@ Run on 2026-10-09 in WSL2 Ubuntu 24.04 (Docker Engine 29.9.0, Compose v5.6.0).
 
 **Known noise:** the API logs `The argument to $size must be an array, but was of type: missing` (`contextProjectionController`) on the first message. MongoDB 7 returns the exact same error, so it is not caused by FerretDB, and it does not break the chat.
 
+**Host-network test** (same day, images pinned by digest, `network_mode: host` for the `api` container, as in the [install decision](../docs/decision-librechat-install.md#4-reaching-the-models-from-the-container)). FerretDB published on `127.0.0.1:27017` only, `HOST=127.0.0.1`, and a mock engine listening on `127.0.0.1:8000` of the host only (the case of Ollama):
+- cold start: `/health` 200 after 17 s; the three sockets listen on the loopback only; LibreChat connects to FerretDB on `127.0.0.1:27017`;
+- a streamed chat reaches the loopback-only engine from the container with `baseURL: http://127.0.0.1:8000/v1` and `apiKey: "unused"`: no certificate, no key, no name resolution;
+- roles: the **first** registered account is `ADMIN`, the next ones are `USER`;
+- closing the registration (`ALLOW_REGISTRATION=false`, `up -d --force-recreate api`): the `api` container is back in 14 s, FerretDB and PostgreSQL untouched, and `POST /api/auth/register` answers 403 `Registration is not allowed.`;
+- `docker compose exec -T api npm run create-user -- <email> <name> <username>` **works with the registration closed**, and **reads the password from a piped stdin** (the new account logs in with it); nothing goes on a command line. The account is a `USER`;
+- a new account has no endpoint selected: the first message fails with `agent_id is required in request body` until the user picks the model once in the selector (reproduced with an empty browser storage).
+
 **Not covered:** Meilisearch search, RAG API / PGVector, file uploads, agents and a real inference endpoint (a mock OpenAI-compatible server was used). Quantified behaviour under several concurrent users was not tested either.
 
 ## Sources
