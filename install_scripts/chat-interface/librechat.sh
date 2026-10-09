@@ -17,7 +17,7 @@ readonly SCRIPT_VERSION=0.1.0
 readonly UNIT=easy-cs-ai-librechat.service
 readonly HEALTH_TIMEOUT=300
 readonly PROJECT=easy-cs-ai-librechat
-readonly VOLUME_ENTRY="docker-volume:${PROJECT}_pgdata"
+readonly VOLUME_ENTRIES=("docker-volume:${PROJECT}_pgdata" "docker-volume:${PROJECT}_ferretdb-state")
 readonly ACTIONS="install uninstall status describe add-endpoint remove-endpoint"
 readonly DEFAULT_PORT=3080
 readonly DEFAULT_DB_PORT=27017
@@ -450,12 +450,12 @@ record_state() {
         jq -sc --argjson s "$secrets" '[.[] | (.files // [])[]] | unique | map(select(. as $f | $s | index($f) | not))')"
     json="$(jq -n --arg v "$VERSION" --arg sv "$SCRIPT_VERSION" --arg port "$PORT" --arg bind "$BIND" \
         --arg dbport "$DB_PORT" --arg reg "$ALLOW_REG" --arg unit "$UNIT" --arg cf "$(compose_file)" \
-        --arg proxy "$PROXY" --arg vol "$VOLUME_ENTRY" --argjson files "$files" --argjson secrets "$secrets" \
+        --arg proxy "$PROXY" --argjson vols "$(printf '%s\n' "${VOLUME_ENTRIES[@]}" | jq -R . | jq -sc .)" --argjson files "$files" --argjson secrets "$secrets" \
         --argjson default "$MAKE_DEFAULT" '{
         name: "librechat", type: "chat-interface", version: $v, script_version: $sv,
         params: { port: $port, bind: $bind, "db-port": $dbport, "allow-registration": $reg },
         service: { unit: $unit, compose_file: $cf }, requires: [$proxy],
-        files: $files, data_dirs: [$vol], secrets: $secrets
+        files: $files, data_dirs: $vols, secrets: $secrets
       } + (if $default == 1 then { default: true } else {} end)')"
     if ! state_read "$NAME" >/dev/null 2>&1; then
         json="$(jq '. + { endpoints: [] }' <<<"$json")"

@@ -138,7 +138,7 @@ lc() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ -f "$SECRETS/librechat.env" ]
     [ -f "$SECRETS/librechat-db.env" ]
     [ -f "$SYS/etc/systemd/system/easy-cs-ai-librechat.service" ]
-    run jq -r '.name, .type, .default, .version, .params.port, .params.bind, .params["db-port"], .params["allow-registration"], .service.unit, .service.compose_file, (.requires | join(",")), (.endpoints | length), .data_dirs[0]' \
+    run jq -r '.name, .type, .default, .version, .params.port, .params.bind, .params["db-port"], .params["allow-registration"], .service.unit, .service.compose_file, (.requires | join(",")), (.endpoints | length), (.data_dirs | join(","))' \
         "$STATE/components/librechat.json"
     [ "${lines[0]}" = "librechat" ]
     [ "${lines[1]}" = "chat-interface" ]
@@ -152,7 +152,7 @@ lc() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "${lines[9]}" = "/etc/easy-cs-ai/librechat/docker-compose.yml" ]
     [ "${lines[10]}" = "nginx" ]
     [ "${lines[11]}" = "0" ]
-    [ "${lines[12]}" = "docker-volume:easy-cs-ai-librechat_pgdata" ]
+    [ "${lines[12]}" = "docker-volume:easy-cs-ai-librechat_pgdata,docker-volume:easy-cs-ai-librechat_ferretdb-state" ]
     [ ! -e "$STATE/pending/librechat.json" ]
 }
 
@@ -167,6 +167,10 @@ lc() { run --separate-stderr bash "$SCRIPT" "$@"; }
     grep -q '"127.0.0.1:27017:27017"' "$f"
     grep -q 'condition: service_healthy' "$f"
     grep -q 'pg_isready -U ferret -d postgres' "$f"
+    # FerretDB's /state is a named volume: an anonymous one is a new volume at each re-creation and is never purged
+    grep -q -- '- ferretdb-state:/state' "$f"
+    grep -q '^  ferretdb-state:$' "$f"
+    grep -q '^  pgdata:$' "$f"
     grep -q 'env_file: /etc/easy-cs-ai/secrets/librechat.env' "$f"
     grep -q 'env_file: /etc/easy-cs-ai/secrets/librechat-db.env' "$f"
     grep -q -- '- /etc/easy-cs-ai/librechat/librechat.yaml:/app/librechat.yaml:ro' "$f"

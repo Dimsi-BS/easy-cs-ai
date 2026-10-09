@@ -20,6 +20,8 @@ services:
     image: ${LC_IMAGE_FERRETDB}
     restart: unless-stopped
     env_file: ${LC_DB_ENV_FILE}
+    volumes:
+      - ferretdb-state:/state
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,5 +40,8 @@ services:
       timeout: 5s
       retries: 20
 
+# Named, so that a reinstall finds the same volumes and `down -v` removes them: an anonymous
+# volume (FerretDB declares /state) is a new one at every re-creation and is never purged.
 volumes:
   pgdata:
+  ferretdb-state:
