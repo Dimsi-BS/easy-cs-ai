@@ -51,13 +51,14 @@ Components of one type expose the same actions, so switching is one parameter:
 | Type | Actions |
 | --- | --- |
 | `engine` | `add-model <name>`, `remove-model <name>`, `list-models` |
-| `proxy` | `add-upstream <name> <url>`, `remove-upstream <name>`, `show-key` |
-| `chat-interface` | `add-endpoint <name> <url>`, `remove-endpoint <name>` |
+| `proxy` | `add-upstream <name> <url>`, `remove-upstream <name>`, `add-site <name> <url>`, `remove-site <name>`, `show-key` |
+| `chat-interface` | `add-endpoint <name> <url> [--model <model>]`, `remove-endpoint <name>` |
 | `provisioning` | `recommend` (JSON on stdout), `check <model>` (JSON on stdout) |
 
 Output of the actions that return something other than the standard `status` / `describe` / `list-models`:
 
-- `proxy add-upstream` and `chat-interface add-endpoint` print `{ "url": "…" }` on stdout: for the proxy, the URL under which the model is now reachable from outside (through HTTPS); for the chat interface, the URL of the declared endpoint, which is the **internal** URL it was given (the chat interface and the engine share the machine, see [decision: LibreChat install](decision-librechat-install.md#4-reaching-the-models-from-the-container)). The proxy URL is what an external client uses, the CLI does not feed it to the chat interface. Idempotent: calling again with the same arguments prints the same URL.
+- `proxy add-upstream`, `proxy add-site` and `chat-interface add-endpoint` print `{ "url": "…" }` on stdout: for the proxy, the URL under which the model is now reachable from outside (through HTTPS); for the chat interface, the URL of the declared endpoint, which is the **internal** URL it was given (the chat interface and the engine share the machine, see [decision: LibreChat install](decision-librechat-install.md#4-reaching-the-models-from-the-container)). The proxy URL is what an external client uses, the CLI does not feed it to the chat interface. Idempotent: calling again with the same arguments prints the same URL.
+- `proxy add-site` publishes a **web site** for browsers (the chat interface) on its own HTTPS port, with the proxy's certificate and **without the API key**, and prints its public URL; the API keeps requiring the key on every path (see [decision: LibreChat install](decision-librechat-install.md#3-serving-the-web-interface)). `chat-interface add-endpoint` takes the model the endpoint serves in `--model <model>`, which the CLI passes from `add`; without it the chat interface fetches the list of models of the endpoint, which would show every model of the engine under each endpoint.
 - `provisioning` has no service: its `status` reports `running` when the command is present and `healthy` when `llmfit recommend --json` answers with valid JSON, and its state has no `service` or `endpoint`. `provisioning check <model>` prints `{ "fits": true|false, "reason": "…" }` and exits 0 in both cases; a failure to evaluate (llmfit error, unknown model name) is exit 1. It is a thin wrapper, see [Wrapping native tools](#wrapping-native-tools): the verdict is read from llmfit's own output with `jq`, the fit computation is never redone by the project.
 
 An engine either serves all its models from **one process** (Ollama), or runs **one instance per model** (vLLM, which serves a single model per process). The `engine` actions are the same in both cases, see [Engines with one instance per model](#engines-with-one-instance-per-model).
@@ -104,7 +105,7 @@ These are the "component commands" mirrored by `easy-cs-ai <type> <name> <action
 ## Output
 
 - **stderr**: logs, one line each, `[LEVEL] message` with LEVEL in `INFO`, `WARN`, `ERROR`, plus `DEBUG` with `--verbose`.
-- **stdout**: reserved for machine-readable output (JSON of `status`, `describe`, `list-models`, `recommend`, `check`, the `url` of `add-upstream` and `add-endpoint`, or a secret printed on explicit request). Nothing else may write to stdout, including the commands the script runs (redirect them to stderr).
+- **stdout**: reserved for machine-readable output (JSON of `status`, `describe`, `list-models`, `recommend`, `check`, the `url` of `add-upstream`, `add-site` and `add-endpoint`, or a secret printed on explicit request). Nothing else may write to stdout, including the commands the script runs (redirect them to stderr).
 - Dates are ISO 8601 UTC.
 - **System journal**: besides stderr, every action that changes the system (`install`, `uninstall`, `add-model`, `remove-model`) writes an event to the journal through `logger -t easy-cs-ai`, see [Action journal](#action-journal).
 
@@ -246,7 +247,7 @@ Two kinds of lock (`flock`), for two different jobs. Mixing them in one lock wou
 | Lock | File | Protects | Held for | If busy |
 | --- | --- | --- | --- | --- |
 | **State lock** | `/var/lib/easy-cs-ai/.lock` | Read-modify-write of state files, `defaults_set` (see [state format](spec-state-format.md#writing-rules)) | A few seconds at most | Waits up to 60 s, then exit 1 |
-| **Component lock** | `/var/lib/easy-cs-ai/locks/<type>-<name>.lock` | Every action that changes that component: `install`, `uninstall`, `add-model`, `remove-model`, `add-upstream`, `remove-upstream`, `add-endpoint`, `remove-endpoint` | The whole action, including downloads and health waits | **Fails at once**, exit 4: `another action is running on <name> (<action>, pid <n>)`. `--lock-timeout <seconds>` (env `EASY_CS_AI_<COMPONENT>_LOCK_TIMEOUT`) waits instead |
+| **Component lock** | `/var/lib/easy-cs-ai/locks/<type>-<name>.lock` | Every action that changes that component: `install`, `uninstall`, `add-model`, `remove-model`, `add-upstream`, `remove-upstream`, `add-site`, `remove-site`, `add-endpoint`, `remove-endpoint` | The whole action, including downloads and health waits | **Fails at once**, exit 4: `another action is running on <name> (<action>, pid <n>)`. `--lock-timeout <seconds>` (env `EASY_CS_AI_<COMPONENT>_LOCK_TIMEOUT`) waits instead |
 
 Rules:
 

@@ -188,7 +188,7 @@ add_steps() {
     # 4. chat interface: linked to the internal URL of the engine, not to the proxy.
     if [[ -n "$A_CHAT" && -z "$before_chat" ]]; then
         url="$(model_base_url "$A_ENGINE" "$A_MODEL")"
-        step run_script chat-interface "$A_CHAT" add-endpoint "$upstream" "$url" >/dev/null || rc=$?
+        step run_script chat-interface "$A_CHAT" add-endpoint "$upstream" "$url" --model "$A_MODEL" >/dev/null || rc=$?
         if ((rc)); then
             add_rollback "$upstream" "$did2" "$did3" 0 || return "$?"
             return "$rc"

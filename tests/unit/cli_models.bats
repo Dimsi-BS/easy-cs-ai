@@ -66,7 +66,7 @@ calls() { cat "$CALLS"; }
     [ "${lines[0]}" = "fit check llama3.2:3b" ]
     [ "${lines[1]}" = "eng add-model llama3.2:3b" ]
     [ "${lines[2]}" = "prox add-upstream eng-llama3.2-3b http://127.0.0.1:1234" ]
-    [ "${lines[3]}" = "chat add-endpoint eng-llama3.2-3b http://127.0.0.1:1234/v1" ]
+    [ "${lines[3]}" = "chat add-endpoint eng-llama3.2-3b http://127.0.0.1:1234/v1 --model llama3.2:3b" ]
     run jq -r '.models[0] | [.exposed_via, (.linked_to | join(","))] | join(" ")' "$STATE/eng.json"
     [ "$output" = "prox chat" ]
 }
@@ -85,7 +85,7 @@ calls() { cat "$CALLS"; }
     cli add m1
     [ "$status" -eq 0 ]
     ! grep -q add-upstream "$CALLS"
-    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:1234/v1' "$CALLS"
+    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:1234/v1 --model m1$' "$CALLS"
 }
 
 @test "add uses the per-model port of an engine with one instance per model" {
@@ -98,14 +98,14 @@ calls() { cat "$CALLS"; }
     cli add m1
     [ "$status" -eq 0 ]
     grep -q 'prox add-upstream eng-m1 http://127.0.0.1:1234' "$CALLS"
-    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:1234/v1$' "$CALLS"
+    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:1234/v1 --model m1$' "$CALLS"
     ! grep -q 'add-endpoint.*https://' "$CALLS"
 }
 
 @test "add links an engine with one instance per model on its own port, base URL included" {
     install_state eng engine '"models":[{"name":"m1","port":8001,"exposed_via":null,"linked_to":[]}]'
     cli add m1
-    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:8001/v1$' "$CALLS"
+    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:8001/v1 --model m1$' "$CALLS"
 }
 
 @test "add resumed on a model already exposed links it without calling the proxy again" {
@@ -114,7 +114,7 @@ calls() { cat "$CALLS"; }
     cli add m1
     [ "$status" -eq 0 ]
     ! grep -q 'prox add-upstream' "$CALLS"
-    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:1234/v1$' "$CALLS"
+    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:1234/v1 --model m1$' "$CALLS"
     [ "$(jq -r '.models[0] | [.exposed_via, (.linked_to | join(","))] | join(" ")' "$STATE/eng.json")" = "prox chat" ]
 }
 
