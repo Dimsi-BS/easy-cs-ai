@@ -7,3 +7,4 @@
 package/bin/* text eol=lf
 *.tpl text eol=lf
 install_scripts/templates/nginx/*.conf text eol=lf
+install_scripts/templates/librechat/* text eol=lf
