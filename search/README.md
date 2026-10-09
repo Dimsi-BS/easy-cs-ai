@@ -14,7 +14,7 @@ See also: [docs](../docs/README.md) for the design decisions made from these fin
 | [vLLM](vllm.md) | Inference engine | Apache 2.0 | High throughput; heavy, CUDA |
 | [nginx](nginx.md) | Reverse proxy | BSD-2 | HTTPS + API key; streaming tweaks |
 | [llmfit](llmfit.md) | Model provisioning | MIT | Hardware-aware model choice |
-| [LibreChat](librechat.md) | Chat UI | MIT | Needs MongoDB (SSPL issue) |
+| [LibreChat](librechat.md) | Chat UI | MIT | Needs MongoDB (SSPL); works on FerretDB + PostgreSQL |
 | [AnythingLLM](anythingllm.md) | Chat UI (candidate) | MIT | Light, built-in RAG/vector DB |
 | [Open WebUI](open-webui.md) | Chat UI (candidate) | Custom (branding clause) | Not OSI open source |
 | [LiteLLM](litellm.md) | API gateway (candidate) | MIT | Virtual keys; needs Postgres |
@@ -24,4 +24,4 @@ See also: [docs](../docs/README.md) for the design decisions made from these fin
 | [LM Studio](lm-studio.md) | Inference engine | Closed source | Excluded |
 | [Jan](jan.md) | Inference engine | Apache 2.0 | Desktop, single-user |
 
-Remaining: test FerretDB with LibreChat and AnythingLLM `update-env` on a running instance; nginx certificate strategy (design decision, not a finding).
+Remaining: AnythingLLM `update-env` on a running instance; nginx certificate strategy (design decision, not a finding).

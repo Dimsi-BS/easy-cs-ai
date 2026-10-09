@@ -38,7 +38,7 @@ For every function with several candidates, components are ranked. The rank is t
 
 | Order | Component | Reason |
 | --- | --- | --- |
-| 1 | [LibreChat](../search/librechat.md) | Already planned; multi-user. Needs MongoDB (SSPL issue, FerretDB to be tested) |
+| 1 | [LibreChat](../search/librechat.md) | Already planned; multi-user. Needs MongoDB (SSPL issue), replaced by FerretDB + PostgreSQL (tested) |
 | 2 | [AnythingLLM](../search/anythingllm.md) | Light, built-in RAG and vector DB; Docker version only, multi-user mode to enable at install |
 | – | [Open WebUI](../search/open-webui.md) | Excluded: custom licence with branding clause, not OSI |
 | – | [LobeChat](../search/lobechat.md) | Excluded: LobeHub Community License, not OSI |
@@ -56,5 +56,5 @@ No order needed, listed so that a second candidate triggers the rules above:
 - The roadmap follows this order: Ollama before vLLM, LibreChat before AnythingLLM.
 - The CLI default for each function is its rank 1.
 - The excluded components stay documented in [search](../search/README.md) so the reason is not lost.
-- **To revisit: LibreChat rank 1 and MongoDB (SSPL).** LibreChat is kept first, but it requires MongoDB, whose SSPL licence is not OSI-approved and conflicts with the eligibility rule (details in [LibreChat findings](../search/librechat.md)). Planned handling: test LibreChat on FerretDB + PostgreSQL. If that fails or the licence risk matters (distribution, service to customers), choose between accepting MongoDB as a documented exception and promoting AnythingLLM to rank 1, then update the chat interface table.
+- **LibreChat rank 1 and MongoDB (SSPL): resolved by FerretDB.** LibreChat requires MongoDB, whose SSPL licence is not OSI-approved and conflicts with the eligibility rule. LibreChat v0.8.7 was tested on FerretDB 2.7.0 + PostgreSQL (DocumentDB) and works (register, login, chat, persistence across restart); see [LibreChat findings](../search/librechat.md). The install script must therefore deploy FerretDB + PostgreSQL instead of MongoDB, and LibreChat stays rank 1.
 - A new function with several candidates gets its own table here before any implementation starts.
