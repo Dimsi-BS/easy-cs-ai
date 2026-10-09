@@ -117,6 +117,13 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "$output" = "false" ]
 }
 
+@test "uninstall accepts --purge, which the CLI forwards to every component, and has nothing more to remove" {
+    llmfit install
+    llmfit uninstall --purge
+    [ "$status" -eq 0 ]
+    [ ! -e "$STATE/components/llmfit.json" ]
+}
+
 @test "uninstall removes the state; not installed is exit 4; a dependent blocks it" {
     llmfit uninstall
     [ "$status" -eq 4 ]

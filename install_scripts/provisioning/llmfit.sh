@@ -41,6 +41,7 @@ Options:
   --lock-timeout <s>      wait for a busy component lock instead of failing
   --default               install: make llmfit the default of its type
   --force                 uninstall: even if another component requires it
+  --purge                 uninstall: accepted and ignored, llmfit keeps no data
   --help --version --verbose --dry-run --json
 EOF
 }
@@ -98,6 +99,8 @@ parse_args() {
             ;;
         --default) MAKE_DEFAULT=1 ;;
         --force) FORCE=1 ;;
+        # `uninstall --all --purge` forwards --purge to every component: llmfit keeps no data, nothing to purge
+        --purge) ;;
         -*)
             # recommend passes its own options to llmfit.
             [[ "$ACTION" == recommend ]] || die "$EXIT_USAGE" "unknown option: $opt"
