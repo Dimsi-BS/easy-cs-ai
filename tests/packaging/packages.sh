@@ -109,13 +109,10 @@ expect "the extracted CLI reports the version" "$VERSION" "$("$TREE/bin/easy-cs-
 
 step "deb and rpm (nfpm $NFPM_VERSION)"
 NFPM="$(find_nfpm)" || die "cannot get nfpm (set ECSAI_NFPM to a binary, or check the network)"
-for packager in deb rpm; do
-    # nfpm.yaml holds paths relative to the directory that has dist/stage
-    (cd "$WORK" && VERSION="$VERSION" "$NFPM" package --config "$ROOT/package/nfpm.yaml" --packager "$packager" --target dist/ >"$WORK/nfpm-$packager.log" 2>&1) \
-        || { cat "$WORK/nfpm-$packager.log" >&2; die "nfpm failed for $packager"; }
-done
+"$ROOT/package/build-native.sh" --nfpm "$NFPM" --output "$DIST" >"$WORK/nfpm.log" 2>&1 || { cat "$WORK/nfpm.log" >&2; die "package/build-native.sh failed"; }
 check "the deb has the name the generated scripts download" test -f "$DIST/$DEB"
 check "the rpm has the name the generated scripts download" test -f "$DIST/$RPM"
+check "the checksum of the deb and of the rpm match" bash -c "cd '$DIST' && sha256sum -c '$DEB.sha256' '$RPM.sha256'"
 
 # Same files in the three formats: the tree of the tarball, under /usr.
 want="$(cd "$TREE" && find bin lib -type f | sed 's|^|/usr/|' | LC_ALL=C sort)"
@@ -134,6 +131,34 @@ if command -v dpkg-deb >/dev/null 2>&1; then
     check "deb: no maintainer script" bash -c "! dpkg-deb -I '$DIST/$DEB' | grep -Eq '(postinst|preinst|prerm|postrm)'"
 else
     skip "deb inspection (no dpkg-deb)"
+fi
+
+
+# --- a pre-release -----------------------------------------------------------------------------
+
+# A tag v<v>-rc1 gives a pre-release: nfpm writes the version in the package manager's form
+# (0.1.0~rc1) in the file name, and the generated scripts look for the name with the version of
+# the tag, so build-native.sh renames the files. The metadata keep the tilde (sorts before <v>).
+step "pre-release version ($VERSION-rc1)"
+PRE="$WORK/pre"
+mkdir -p "$PRE"
+cp -a "$ROOT/package" "$ROOT/install_scripts" "$ROOT/vm_script" "$PRE/"
+sed -i "s/^readonly CLI_VERSION=.*/readonly CLI_VERSION=$VERSION-rc1/" "$PRE/package/bin/easy-cs-ai"
+if "$PRE/package/build.sh" --output "$PRE/dist" >/dev/null 2>&1 && "$PRE/package/build-native.sh" --nfpm "$NFPM" --output "$PRE/dist" >/dev/null 2>"$WORK/pre.log"; then
+    check "the files are named after the version of the tag" test -f "$PRE/dist/easy-cs-ai-$VERSION-rc1.tar.gz" -a -f "$PRE/dist/easy-cs-ai_$VERSION-rc1_all.deb" -a -f "$PRE/dist/easy-cs-ai-$VERSION-rc1-1.noarch.rpm"
+    if command -v dpkg-deb >/dev/null 2>&1; then
+        expect "the deb metadata carry the tilde form" "$VERSION~rc1" "$(dpkg-deb -f "$PRE/dist/easy-cs-ai_$VERSION-rc1_all.deb" Version)"
+    fi
+    echo '{"schema_version":1,"components":[{"type":"engine","name":"ollama"}]}' >"$PRE/config.json"
+    for f in deb:easy-cs-ai_$VERSION-rc1_all.deb rpm:easy-cs-ai-$VERSION-rc1-1.noarch.rpm; do
+        EASY_CS_AI_CLI_VERSION="$VERSION-rc1" bash "$PRE/vm_script/generate.sh" --config "$PRE/config.json" --package-format "${f%%:*}" \
+            --package-version "$VERSION-rc1" --package-file "$PRE/dist/${f#*:}" --output "$PRE/vm-${f%%:*}.sh" >/dev/null 2>&1
+        check "the script generated for the ${f%%:*} downloads ${f#*:} from the release of the tag" \
+            grep -q "releases/download/v$VERSION-rc1/${f#*:}" "$PRE/vm-${f%%:*}.sh"
+    done
+else
+    cat "$WORK/pre.log" >&2
+    check "a pre-release builds" false
 fi
 
 # --- installs in containers ------------------------------------------------------------------

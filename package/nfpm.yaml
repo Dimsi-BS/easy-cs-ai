@@ -1,6 +1,7 @@
 # Definition of the .deb and .rpm, built from the tree staged by package/build.sh.
-#   VERSION=0.1.0 nfpm package --config package/nfpm.yaml --packager deb --target dist/
-# Run it from the directory that holds dist/stage (paths below are relative to it).
+#   package/build-native.sh --output dist     (after package/build.sh --output dist)
+# It is what runs `nfpm` on this file, from a directory where dist/ is the output (the paths below
+# are relative to it) and with VERSION in the environment.
 name: easy-cs-ai
 arch: all
 platform: linux

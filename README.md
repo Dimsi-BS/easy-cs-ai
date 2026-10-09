@@ -2,7 +2,7 @@
 
 This project is a toolbox that wraps the best open-source AI tools available out there.
 
-> **Status: early development.** Most of this README describes the intended design. Only the shared library, the Ollama, llmfit and nginx install scripts, the CLI (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`) and the VM script generator exist so far, none has been tested on a real VM, and the other components and the packaging are still missing. See [Roadmap](#roadmap) for what's built vs. planned.
+> **Status: early development.** Ollama, llmfit, nginx (self-signed certificate) and LibreChat install, run and uninstall on an Ubuntu 24.04 VM (see [tests](tests/README.md#integration-tests-on-a-vm)), through the CLI (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`) and the VM script generator. vLLM and AnythingLLM are not integrated yet, Debian, a GPU, and the `provided` and Let's Encrypt certificates are untested, and the `.deb`/`.rpm` release workflow has not been run yet. See [Roadmap](#roadmap) for what's built vs. planned.
 
 Built on [Ollama](https://ollama.com), [llmfit](https://github.com/AlexsJones/llmfit) and [nginx](https://nginx.org). This project only wraps existing open-source tools; more are credited here as they are integrated.
 
@@ -13,6 +13,47 @@ Install AI models locally and access them through a web API with an API key.
 Chat with your local AI models through a web interface.
 
 Generate customized install scripts for your local server or your VMs (Virtual Machines).
+
+## Getting started
+
+What works today (tested on a throw-away Ubuntu 24.04 VM, CPU only): installing an inference engine (Ollama), the HTTPS and API key reverse proxy (nginx, self-signed certificate), a chat interface (LibreChat) and a first model, then using them. vLLM and AnythingLLM are not integrated yet.
+
+You need an Ubuntu 24.04 machine (a VM is ideal), root access, internet access, and about 10 GB of disk and 6 GB of RAM for the default model.
+
+**1. Install the CLI** from the [releases](https://github.com/Dimsi-BS/easy-cs-ai/releases) (a version marked *Pre-release* is a test version; check the exact version there):
+
+```bash
+VERSION=0.1.0
+curl -fsSLO "https://github.com/Dimsi-BS/easy-cs-ai/releases/download/v$VERSION/easy-cs-ai_${VERSION}_all.deb"
+curl -fsSLO "https://github.com/Dimsi-BS/easy-cs-ai/releases/download/v$VERSION/easy-cs-ai_${VERSION}_all.deb.sha256"
+sha256sum -c "easy-cs-ai_${VERSION}_all.deb.sha256"
+sudo apt install "./easy-cs-ai_${VERSION}_all.deb"
+```
+
+The `.rpm` and the `.tar.gz` are published next to it (see [docs/decision-packaging](docs/decision-packaging.md)); the scripts target Ubuntu/Debian. Installing the package only drops files: nothing is started.
+
+**2. Install the default stack and a first model** (llmfit, nginx, Ollama, LibreChat, then `llama3.2:3b`, about 2 GB to download):
+
+```bash
+sudo easy-cs-ai install --defaults
+easy-cs-ai status
+```
+
+**3. Use it**
+
+- Chat: open `https://<hostname>:8443` (the site is on port 8443 and the certificate is self-signed, so the browser warns once). **Registration is open: the first account becomes the administrator.** Close it afterwards with `sudo easy-cs-ai install chat-interface librechat --allow-registration false`.
+- API: the models are served under `https://<hostname>/ollama-llama3.2-3b/v1` with the key of the proxy, which is created at install:
+
+```bash
+KEY="$(sudo easy-cs-ai proxy nginx show-key)"
+curl -k -H "Authorization: Bearer $KEY" "https://$(hostname)/ollama-llama3.2-3b/v1/models"
+```
+
+- Another model: `sudo easy-cs-ai add <model>` (llmfit checks that it fits the machine, then the model is served and offered in the chat). `sudo easy-cs-ai remove <model>` takes it away.
+
+**4. Remove everything**: `sudo easy-cs-ai uninstall --all` (add `--purge` to delete the data too: models, databases, accounts).
+
+For a fleet of VMs, `easy-cs-ai generate` asks a few questions and writes a post-install script that installs the package and the chosen stack on a new VM (`--config-only` writes the [configuration file](docs/spec-config.md) alone). All commands are in [docs/cli-commands](docs/cli-commands.md).
 
 ## Requirements
 

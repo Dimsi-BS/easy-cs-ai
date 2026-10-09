@@ -25,6 +25,7 @@ See also: [.github/workflows](../.github/workflows/README.md), which runs these 
 5. LibreChat uninstalled and installed again: database, password and account survive, `add` links the model again;
 6. an install that fails its health check is reported (`status`) and cleaned (`uninstall`), and a normal install resumes;
 7. `uninstall --all --purge` leaves nothing of the project, only what is shared (Docker, the nginx package).
+8. `install --defaults` on the emptied machine installs the default stack and the default model, linked and served through the API; the same command again changes nothing; a last purge leaves nothing.
 
 Not run by CI (hardware virtualisation, several GB of downloads): by hand before a release and after a change to an install script. Found and fixed by these runs: the API key made `nginx -t` fail (hash bucket too small), `llmfit` refused `--purge`, a re-run of the Ollama script forgot its binary, FerretDB's state volume was never purged.
 

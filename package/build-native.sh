@@ -29,14 +29,17 @@ output="$(cd "$output" && pwd)"
 version="$(sed -n 's/^readonly CLI_VERSION=//p' "$root/package/bin/easy-cs-ai")"
 
 tmp="$(mktemp -d)"
+mkdir "$tmp/out"
+ln -s "$output" "$tmp/dist"
 trap 'rm -rf "$tmp"' EXIT
 
 for packager in deb rpm; do
-    STAGE="$output/stage" VERSION="$version" "$nfpm" package --config "$root/package/nfpm.yaml" --packager "$packager" --target "$tmp/" >&2
+    # nfpm.yaml holds paths relative to the directory that has dist/stage
+    (cd "$tmp" && VERSION="$version" "$nfpm" package --config "$root/package/nfpm.yaml" --packager "$packager" --target "$tmp/out/" >&2)
 done
 
 shopt -s nullglob
-for built in "$tmp"/*.deb "$tmp"/*.rpm; do
+for built in "$tmp"/out/*.deb "$tmp"/out/*.rpm; do
     case "$built" in
     *.deb) final="easy-cs-ai_${version}_all.deb" ;;
     *.rpm) final="easy-cs-ai-${version}-1.noarch.rpm" ;;

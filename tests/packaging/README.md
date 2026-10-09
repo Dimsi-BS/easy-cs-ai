@@ -9,8 +9,9 @@ tests/packaging/packages.sh [--keep]
 ```
 
 1. **Tarball**: built by `package/build.sh`, checksum verified, CLI and scripts tree present, no documentation shipped, no CRLF, the extracted CLI answers `--version` (the reproducibility and the staging are covered by [tests/unit/package.bats](../unit/package.bats)).
-2. **deb and rpm**: built by `nfpm` from [package/nfpm.yaml](../../package/nfpm.yaml), with the file names the generated VM scripts download (`easy-cs-ai_<v>_all.deb`, `easy-cs-ai-<v>-1.noarch.rpm`). The deb is inspected with `dpkg-deb`: name, version, architecture, dependencies, the same files as the tarball under `/usr`, the CLI executable, no maintainer script.
-3. **Install in containers** (Docker): the deb on `ubuntu:24.04`, the rpm on `fedora:latest`. Each is installed with its dependencies, the CLI runs (`--version`, `status`), `generate --config` writes a script that pins this very package (checksum included) and passes `bash -n`, then the package is removed and nothing is left in `/usr/bin` nor `/usr/lib`. Nothing is installed as a component: the test never starts a service.
+2. **deb and rpm**: built by [package/build-native.sh](../../package/build-native.sh) (`nfpm` on [package/nfpm.yaml](../../package/nfpm.yaml)), with the file names the generated VM scripts download (`easy-cs-ai_<v>_all.deb`, `easy-cs-ai-<v>-1.noarch.rpm`). The deb is inspected with `dpkg-deb`: name, version, architecture, dependencies, the same files as the tarball under `/usr`, the CLI executable, no maintainer script.
+3. **Pre-release**: the same build on a copy where the version is `<v>-rc1` (what a tag `v<v>-rc1` gives): files named after the tag, metadata in the `0.1.0~rc1` form, generated scripts that download those names.
+4. **Install in containers** (Docker): the deb on `ubuntu:24.04`, the rpm on `fedora:latest`. Each is installed with its dependencies, the CLI runs (`--version`, `status`), `generate --config` writes a script that pins this very package (checksum included) and passes `bash -n`, then the package is removed and nothing is left in `/usr/bin` nor `/usr/lib`. Nothing is installed as a component: the test never starts a service.
 
 Without Docker the container steps are skipped (reported as `skip`); without `dpkg-deb` the deb inspection is skipped too.
 

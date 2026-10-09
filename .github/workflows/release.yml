@@ -3,6 +3,9 @@ name: Release
 # A tag v<version> publishes the tarball, the .deb and the .rpm with their
 # .sha256 files, the names the generated VM scripts download (see
 # docs/spec-vm-generator.md#package-source).
+#   v0.1.0       a release, marked as the latest one
+#   v0.1.0-rc1   a version with a hyphen is a pre-release: published as such, never the latest
+# The tag must match CLI_VERSION in package/bin/easy-cs-ai (package/build.sh refuses otherwise).
 on:
   push:
     tags: ["v*"]
@@ -37,18 +40,17 @@ jobs:
 
       - name: deb and rpm
         run: |
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
-          for packager in deb rpm; do
-            "$(go env GOPATH)/bin/nfpm" package --config package/nfpm.yaml --packager "$packager" --target dist/
-          done
-          # nfpm names them easy-cs-ai_<v>_all.deb and easy-cs-ai-<v>-1.noarch.rpm
-          cd dist
-          for f in *.deb *.rpm; do sha256sum "$f" > "$f.sha256"; done
-          ls -l
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          package/build-native.sh --nfpm "$(go env GOPATH)/bin/nfpm" --output dist
+          ls -l dist
+
+      - name: Packaging tests
+        run: bash tests/packaging/packages.sh
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes \
+          if [[ "$VERSION" == *-* ]]; then kind=(--prerelease); else kind=(--latest); fi
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes "${kind[@]}" \
             dist/*.tar.gz dist/*.tar.gz.sha256 dist/*.deb dist/*.deb.sha256 dist/*.rpm dist/*.rpm.sha256
