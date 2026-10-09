@@ -4,7 +4,7 @@ This project is a toolbox that wraps the best open-source AI tools available out
 
 > **Status: early development.** Ollama, llmfit, nginx (self-signed certificate) and LibreChat install, run and uninstall on an Ubuntu 24.04 VM (see [tests](tests/README.md#integration-tests-on-a-vm)), through the CLI (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`) and the VM script generator. vLLM and AnythingLLM are not integrated yet, Debian, a GPU, and the `provided` and Let's Encrypt certificates are untested, and the `.deb`/`.rpm` release workflow has not been run yet. See [Roadmap](#roadmap) for what's built vs. planned.
 
-Built on [Ollama](https://ollama.com), [llmfit](https://github.com/AlexsJones/llmfit) and [nginx](https://nginx.org). This project only wraps existing open-source tools; more are credited here as they are integrated.
+Built on [Ollama](https://ollama.com), [LibreChat](https://www.librechat.ai), [llmfit](https://github.com/AlexsJones/llmfit) and [nginx](https://nginx.org), with [FerretDB](https://www.ferretdb.com) on [PostgreSQL](https://www.postgresql.org) for LibreChat's data, run by [Docker](https://www.docker.com). [jq](https://jqlang.org) is a dependency of the CLI; it is packaged with [nfpm](https://nfpm.goreleaser.com) and tested with [bats](https://github.com/bats-core/bats-core) and [ShellCheck](https://www.shellcheck.net). This project only wraps existing open-source tools, each installed from its own source and kept under its own licence; more are credited here as they are integrated.
 
 ## Features
 
@@ -66,13 +66,12 @@ How the layers and components fit together:
 ```mermaid
 graph TD
     subgraph L3["Layer 3: VM Post-install"]
-        VMGen["VM Script Generator"] -.generates.-> VM["VM Post-install Script"]
-        VM --> PKG
+        VM["VM Post-install Script"] --> PKG
     end
     subgraph L2["Layer 2: Package / CLI"]
         PKG["easy-cs-ai CLI\n(tarball / deb / rpm)"] --> IS
         PKG --> Extra["Extra commands:\nstatus / install / add model / apply / generate"]
-        Extra -.generate.-> VMGen
+        Extra -.generate.-> VM
     end
     subgraph L1["Layer 1: Install Scripts"]
         IS["Install Scripts"]
