@@ -69,7 +69,7 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage: easy-cs-ai"* ]]
     cli --version
-    [ "$output" = "0.1.0" ]
+    [ "$output" = "0.1.0-rc1" ]
 }
 
 @test "unknown command and unknown type are usage errors" {

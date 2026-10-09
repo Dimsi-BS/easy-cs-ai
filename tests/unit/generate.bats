@@ -328,7 +328,7 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
     valid_config
     run --separate-stderr bash "$CLI" generate --config cfg.json --package-sha256 "$SHA" --output vm.sh
     [ "$status" -eq 0 ]
-    grep -q "^PACKAGE_VERSION='0.1.0'" vm.sh
+    grep -q "^PACKAGE_VERSION='$(sed -n 's/^readonly CLI_VERSION=//p' "$CLI")'" vm.sh
     run --separate-stderr bash "$CLI" --dry-run generate --config cfg.json --package-sha256 "$SHA" --output vm2.sh
     [ ! -e vm2.sh ]
 }
