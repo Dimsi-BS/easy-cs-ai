@@ -2,9 +2,9 @@
 
 This project is a toolbox that wraps the best open-source AI tools available out there.
 
-> **Status: early development.** Most of this README describes the intended design. Only the shared library, the Ollama install script, the CLI (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`) and the VM script generator exist so far, none has been tested on a real VM, and the other components and the packaging are still missing. See [Roadmap](#roadmap) for what's built vs. planned.
+> **Status: early development.** Most of this README describes the intended design. Only the shared library, the Ollama, llmfit and nginx install scripts, the CLI (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`) and the VM script generator exist so far, none has been tested on a real VM, and the other components and the packaging are still missing. See [Roadmap](#roadmap) for what's built vs. planned.
 
-Built on [Ollama](https://ollama.com) and [llmfit](https://github.com/AlexsJones/llmfit). This project only wraps existing open-source tools; more are credited here as they are integrated.
+Built on [Ollama](https://ollama.com) [llmfit](https://github.com/AlexsJones/llmfit) and [nginx](https://nginx.org). This project only wraps existing open-source tools; more are credited here as they are integrated.
 
 ## Features
 
@@ -125,7 +125,7 @@ Planned work, in dependency order:
 | Install scripts | Ollama install script            | Written, unit-tested, not yet tested on a VM |
 | Install scripts | vLLM install script              | Not started |
 | Install scripts | llmfit install script            | Written, unit-tested, run against the real binary (CPU-only), not tested on a VM |
-| Install scripts | Reverse proxy (HTTPS + API key)  | Not started |
+| Install scripts | Reverse proxy (HTTPS + API key)  | nginx written and unit-tested, self-signed certificate only, not tested on a VM |
 | Install scripts | LibreChat install script         | Not started |
 | Package / CLI   | CLI dispatcher + tarball/deb/rpm | Dispatcher and tarball written and unit-tested; `.deb`/`.rpm` definition and release workflow written, not run yet |
 | Package / CLI   | `status` command                 | Written, unit-tested |
