@@ -10,7 +10,7 @@
 - Suited to serving many requests with predictable latency.
 
 ## Weaknesses / must-know
-- Heavy: ~6 GB Docker image and CUDA toolkit → effectively requires an NVIDIA GPU setup on the VM.
+- Heavy: ~6 GB Docker image and CUDA toolkit → effectively requires an NVIDIA GPU setup on the VM. How the project installs it (Python venv or Docker) is proposed in [decision: vLLM install](../docs/decision-vllm-install.md).
 - More configuration than Ollama; overkill for single-user setups.
 - Has `--api-key` (one or several keys) and `--ssl-keyfile`/`--ssl-certfile`, but the key only protects `/v1`, `/v2` and `/inference`; other endpoints stay open. Still wrap with the [reverse proxy](nginx.md) for uniform HTTPS + key handling.
 
