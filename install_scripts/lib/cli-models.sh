@@ -18,6 +18,14 @@ model_url() {
         ([(.models // [])[] | select(.name == $m and .port != null) | "http://127.0.0.1:\(.port)"][0]) // .endpoint.url // empty'
 }
 
+# model_base_url <engine> <model>: the OpenAI base URL of the model on this
+# machine, which the chat interface uses (it shares the machine with the engine,
+# so the link needs neither HTTPS nor an API key, see docs/spec-cli.md, step 4).
+model_base_url() {
+    state_read "$1" | jq -r --arg m "$2" '
+        ([(.models // [])[] | select(.name == $m and .port != null) | "http://127.0.0.1:\(.port)/v1"][0]) // .endpoint.openai_base_url // empty'
+}
+
 # add_wiring <engine> <model> <proxy-or-empty> <chat-or-empty>: record the
 # relations in the engine state (the one place the CLI writes a component state).
 add_wiring() {
@@ -167,20 +175,19 @@ add_steps() {
     before_proxy="$(model_field "$A_ENGINE" "$A_MODEL" .exposed_via)"
     before_chat="$(model_field "$A_ENGINE" "$A_MODEL" '(.linked_to // []) | index("'"$A_CHAT"'")')"
 
-    # 3. proxy. The URL is printed again on a resume, add-upstream is idempotent.
-    if [[ -n "$A_PROXY" && ( -z "$before_proxy" || ( -n "$A_CHAT" && -z "$before_chat" ) ) ]]; then
-        out="$(step run_script proxy "$A_PROXY" add-upstream "$upstream" "$(model_url "$A_ENGINE" "$A_MODEL")")" || rc=$?
+    # 3. proxy: the access from outside the machine, independent of step 4.
+    if [[ -n "$A_PROXY" && -z "$before_proxy" ]]; then
+        step run_script proxy "$A_PROXY" add-upstream "$upstream" "$(model_url "$A_ENGINE" "$A_MODEL")" >/dev/null || rc=$?
         if ((rc)); then
             ((did2)) && add_rollback "$upstream" "$did2" 0 0
             return "$rc"
         fi
-        url="$(jq -r '.url' <<<"$out")"
-        [[ -n "$before_proxy" ]] || did3=1
+        did3=1
     fi
 
-    # 4. chat interface
+    # 4. chat interface: linked to the internal URL of the engine, not to the proxy.
     if [[ -n "$A_CHAT" && -z "$before_chat" ]]; then
-        [[ -n "$url" ]] || url="$(state_read "$A_ENGINE" | jq -r '.endpoint.openai_base_url // empty')"
+        url="$(model_base_url "$A_ENGINE" "$A_MODEL")"
         step run_script chat-interface "$A_CHAT" add-endpoint "$upstream" "$url" >/dev/null || rc=$?
         if ((rc)); then
             add_rollback "$upstream" "$did2" "$did3" 0 || return "$?"

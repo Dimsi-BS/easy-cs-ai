@@ -66,7 +66,7 @@ calls() { cat "$CALLS"; }
     [ "${lines[0]}" = "fit check llama3.2:3b" ]
     [ "${lines[1]}" = "eng add-model llama3.2:3b" ]
     [ "${lines[2]}" = "prox add-upstream eng-llama3.2-3b http://127.0.0.1:1234" ]
-    [ "${lines[3]}" = "chat add-endpoint eng-llama3.2-3b https://host/eng-llama3.2-3b" ]
+    [ "${lines[3]}" = "chat add-endpoint eng-llama3.2-3b http://127.0.0.1:1234/v1" ]
     run jq -r '.models[0] | [.exposed_via, (.linked_to | join(","))] | join(" ")' "$STATE/eng.json"
     [ "$output" = "prox chat" ]
 }
@@ -92,6 +92,30 @@ calls() { cat "$CALLS"; }
     install_state eng engine '"models":[{"name":"m1","port":8001,"exposed_via":null,"linked_to":[]}]'
     cli add m1
     grep -q 'prox add-upstream eng-m1 http://127.0.0.1:8001' "$CALLS"
+}
+
+@test "add links the chat interface to the internal URL of the engine, never to the proxy" {
+    cli add m1
+    [ "$status" -eq 0 ]
+    grep -q 'prox add-upstream eng-m1 http://127.0.0.1:1234' "$CALLS"
+    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:1234/v1$' "$CALLS"
+    ! grep -q 'add-endpoint.*https://' "$CALLS"
+}
+
+@test "add links an engine with one instance per model on its own port, base URL included" {
+    install_state eng engine '"models":[{"name":"m1","port":8001,"exposed_via":null,"linked_to":[]}]'
+    cli add m1
+    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:8001/v1$' "$CALLS"
+}
+
+@test "add resumed on a model already exposed links it without calling the proxy again" {
+    cli add m1 --no-chat-interface
+    : >"$CALLS"
+    cli add m1
+    [ "$status" -eq 0 ]
+    ! grep -q 'prox add-upstream' "$CALLS"
+    grep -q 'chat add-endpoint eng-m1 http://127.0.0.1:1234/v1$' "$CALLS"
+    [ "$(jq -r '.models[0] | [.exposed_via, (.linked_to | join(","))] | join(" ")' "$STATE/eng.json")" = "prox chat" ]
 }
 
 @test "add --no-chat-interface and a missing chat interface skip the link" {
