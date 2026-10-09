@@ -4,7 +4,7 @@ This project is a toolbox that wraps the best open-source AI tools available out
 
 > **Status: early development.** Most of this README describes the intended design. Only the shared library, the Ollama, llmfit and nginx install scripts, the CLI (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`) and the VM script generator exist so far, none has been tested on a real VM, and the other components and the packaging are still missing. See [Roadmap](#roadmap) for what's built vs. planned.
 
-Built on [Ollama](https://ollama.com) [llmfit](https://github.com/AlexsJones/llmfit) and [nginx](https://nginx.org). This project only wraps existing open-source tools; more are credited here as they are integrated.
+Built on [Ollama](https://ollama.com), [llmfit](https://github.com/AlexsJones/llmfit) and [nginx](https://nginx.org). This project only wraps existing open-source tools; more are credited here as they are integrated.
 
 ## Features
 
