@@ -146,6 +146,7 @@ easy-cs-ai: ollama install end exit=0 duration=48s
 `describe` is the single source for `--help` text, CLI completion, and the parameter list that `apply` and the generator validate against.
 
 - `requires` is a list of component **names or types**. A type (e.g. `"proxy"`) means "any installed component of that type"; for the check it is satisfied by any one, and the CLI uses the rank 1 component of the type when it installs the missing requirement with `--defaults` (see [spec: CLI](spec-cli.md#dependencies)).
+- An option may carry an optional `warn` entry, `{ "when": "true", "message": "…" }`: the message to show when the option's effective value equals `when` (the default included). The VM script generator shows it in its summary, and the script logs it as a `WARN` at `install`, so a risk that comes with a default (LibreChat's open registration) is read before the VM exists and again when it is installed. Adding the entry is not a bump of `schema_version`.
 - `native` is optional: `command` is the component's own program, run as is by the CLI for actions that match no contract action (see [spec: CLI](spec-cli.md#native-tool-commands)); `env` maps variables to export to templates over the recorded `params` (`{bind}`, `{port}`…), so the program reaches the instance the project installed. For a Docker Compose component, `command` is `docker compose -f {compose_file}` (from the state `service`). Omitted when the component has nothing to run natively.
 
 ### `status`

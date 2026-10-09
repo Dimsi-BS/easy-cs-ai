@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed
+**Status:** proposed. Accepted on 2026-10-09: point 1 (Docker's apt repository), point 4 (host networking, external access kept) and point 5 (open registration with warnings). Still to confirm: point 2 (stack and unit) and point 3 (second nginx `server` for the interface).
 
 ## Context
 
@@ -88,25 +88,31 @@ LibreChat and the engines run on the **same machine**, so the link between them 
 
 ### 5. Accounts
 
-- `ALLOW_REGISTRATION=false` **by default**. In the test the first registered account became `ADMIN`, so an open registration on a reachable VM would hand the instance to whoever registers first. `--allow-registration true` opens it, with a `WARN` naming that consequence.
-- **First administrator**: optional `--admin-email <address>` (with `--admin-name`, default the part before the `@`) creates the account at install, through LibreChat's own command (`npm run create-user`, run by `docker compose exec -T api`, so the project reimplements nothing, see [Wrapping native tools](spec-script-contract.md#wrapping-native-tools)). The password follows the secret channels (`--admin-password-file`, environment variable, or `-` for stdin), and is **generated** when none is given, stored in `/etc/easy-cs-ai/secrets/librechat.admin-password`. It is never put on a command line (including `docker exec`, visible in `ps`) nor printed.
-- Without `--admin-email`, no account exists and nothing is guessed: the administrator creates it with the native command, `easy-cs-ai chat-interface librechat exec api npm run create-user` (interactive, the CLI forwards the TTY).
-- Retrieving a generated password is a new action **`show-admin-password`**, like `proxy show-key`, over SSH only.
+Accepted. The target use is an administrator who creates the VM with the post-install script, tries the product with `--defaults`, and is **the first to connect**, on a VM and a network they manage. Installing must stay simple, so there is no account step in the install.
+
+- `ALLOW_REGISTRATION=true` **by default** (`--allow-registration false` closes it). In the FerretDB test the first registered account became `ADMIN` and the next ones are plain users (to re-check in the host-network test), so the account created first by the administrator is the administrator of LibreChat, and nothing has to be created by the script: no `--admin-email`, no generated password, no `show-admin-password`.
+- **The risk is written down, not hidden.** With an open registration, anybody who reaches the web site can create an account and use the models, and the first registrant is the administrator. It is acceptable because the administrator owns the VM and its network, but it must be seen:
+  - **at generation time**: the [VM script generator](spec-vm-generator.md) shows the warning in its summary when the effective value is `true`, so the administrator reads it before creating any VM. This comes from the `describe` of the script (an option can carry a `warn` entry, see [`describe`](spec-script-contract.md#describe)), not from code specific to LibreChat in the generator;
+  - **at install time**: `install` logs a `WARN` on stderr (`registration is open: the first account created becomes the administrator, and anyone who reaches the site can sign up; close it with: easy-cs-ai install chat-interface librechat --allow-registration false`).
+- **After the first connection**, the administrator has two ways, both with what exists:
+  1. connect to the VM and run the LibreChat commands they need: close the registration (`install … --allow-registration false`, idempotent, recreates only the `api` container), or create accounts with the native command (`easy-cs-ai chat-interface librechat exec api npm run create-user`, which asks for an email, a password of at least 8 characters, and optionally a name of at least 3 characters and a user name, interactively);
+  2. generate a new VM script with the options they want (`--allow-registration false`) and start a new VM.
 
 ## Consequences
 
 - **CLI spec and contract amended** (done with this decision): step 4 of `add` links the chat interface to the engine's **internal** URL instead of the proxy URL, and step 3 (external exposure) no longer feeds it; `add-endpoint` prints the URL it was given. See [spec: CLI](spec-cli.md#steps) and [Type-specific actions](spec-script-contract.md#type-specific-actions).
-- **Contract**: `proxy` gains `add-site` / `remove-site` (printing a `url`), and `chat-interface` gains `show-admin-password` in its table. Their lock rules are the existing ones (component lock of the script called).
+- **Contract**: `proxy` gains `add-site` / `remove-site` (printing a `url`). The `describe` option schema gains an optional `warn` entry (see point 5). Lock rules are the existing ones (component lock of the script called).
 - **nginx script**: `add-site` / `remove-site`, a `site.conf` template, the `--site-port` option (default 8443, in `describe`), and the state `listen` gains `site_port`. Existing tests stay valid: the API `server` is untouched.
 - **`lib/common.sh`**: `ensure_docker` implemented and covered by `bats` tests in `EASY_CS_AI_ROOT` mode (which skips the installation, as for the other package helpers).
-- **State**: `service.compose_file` filled, `endpoints`, `url`, `requires: ["nginx"]`, `params` with `port`, `bind`, `allow-registration` (never the password or a secret), `secrets` listing `librechat.env` (JWT and credentials keys, database password) and `librechat.admin-password`. The `status` example of the [state format](spec-state-format.md) shows `0.7.5` for LibreChat and must read `0.8.7`.
+- **State**: `service.compose_file` filled, `endpoints`, `url`, `requires: ["nginx"]`, `params` with `port`, `bind`, `allow-registration` (never a secret), `secrets` listing `librechat.env` (JWT and credentials keys, database password). The `status` example of the [state format](spec-state-format.md) shows `0.7.5` for LibreChat and must read `0.8.7`.
 - **Uninstall**: stops and removes the containers, the unit and the generated files, calls `proxy remove-site`, keeps the volume and Docker; `--purge` removes the volume and the images of the stack.
 - **`install --defaults`** can now install the whole default stack (nginx, Ollama, LibreChat) without a MongoDB exception; the [CLI spec](spec-cli.md) note on the "LibreChat/MongoDB question" can be removed.
 - **Tests**: `bats` covers options, templates (compose, `librechat.yaml`, `librechat.env`), idempotence, state, the loopback preflight and the endpoint edit. The real install is covered by the integration tests on a VM, as the other scripts.
 
 ## Open questions
 
-- **First administrator without a command-line password**: whether `npm run create-user` reads the password from a piped stdin must be tested. If it does not, the options are a one-shot invitation or password-reset link, or leaving the account creation to the native command only.
+- **Closing the registration automatically** once the first account exists (the administrator would no longer have to do it), left out to keep the install simple; to reconsider if open registrations are found in the field.
+- **Allowed e-mail domains** (`registration.allowedDomains` of `librechat.yaml`, to check in this version) as a middle way between open and closed, only useful with an e-mail service.
 - **Offline VMs**: the apt repository of Docker and the three images come from the Internet. A mirror option (like the package mirror of the [VM script generator](decision-vm-generator.md)) and an `--image-archive` to load images offline are not designed.
 - **`--site-port` and the browser**: 8443 avoids a clash with the API `server`, but a deployment that wants the interface on 443 needs another `server_name` for it, which `self-signed` on an IP address cannot give.
 - **Memory**: about 420 MiB for the `api` container at idle with an empty database. Not measured with many users or conversations.

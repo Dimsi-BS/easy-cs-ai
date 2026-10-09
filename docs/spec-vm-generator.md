@@ -74,7 +74,7 @@ It produces a configuration.
 2. **Dependencies**: from `requires`, propose the missing components (a type means "any of this type"), and refuse a selection that cannot be satisfied. The administrator confirms or changes them; the generator never adds a component unannounced.
 3. **Options**: for each selected component, ask its `describe.options`, in the order of the script. Options left at their default are not written to the configuration. Secret options are asked as a source, see [Secrets](spec-config.md#secrets).
 4. **Models** (when an engine is selected): ask which models to add, and on which engine and chat interface when there is a choice. Whether a model fits the machine is checked at run time, on the target, not at generation time.
-5. **Summary**: components in install order, options (secrets masked), models, target platforms. The administrator confirms, goes back to a step, or cancels.
+5. **Summary**: components in install order, options (secrets masked), models, target platforms, and the **warnings** of the options whose effective value matches their `warn` entry in `describe` (a default included), so a risk such as an open registration is read before the VM is created (see [`describe`](spec-script-contract.md#describe)). The administrator confirms, goes back to a step, or cancels.
 
 `--config-only` stops here and writes the file. With `--config`, steps 1 to 5 are replaced by the validation of the file. Otherwise the generator goes on to the package source, then emits the script.
 
