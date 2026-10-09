@@ -13,7 +13,7 @@ Five points are not specified, and the install script cannot be written without 
 1. how Docker is installed;
 2. what the stack is made of, how it is pinned and run;
 3. how the web interface is served over HTTPS, since [nginx](../search/nginx.md) currently requires the API key on **every** path and a browser cannot send it;
-4. how the container reaches the models, through a proxy with a self-signed certificate and an API key;
+4. how the container reaches the models, which run on the same machine and listen on its loopback;
 5. who can create an account, and how the first administrator is created without a prompt.
 
 ## Options and decision
@@ -63,19 +63,28 @@ LibreChat has no TLS of its own, and logins travel over this connection. The ngi
 **Decision: B.**
 
 - New proxy action **`add-site <name> <url>` / `remove-site <name>`**, added to the contract table of the `proxy` type. It writes `sites/<name>.conf` with its own `server` block on `--site-port` (nginx option, default **8443**), same certificate and key as the API `server`, no key check, WebSocket and streaming headers, `client_max_body_size 50m`, and reloads after `nginx -t`. It prints `{ "url": "https://<server-name>:<site-port>/" }`, idempotent as `add-upstream` is.
-- LibreChat binds **`127.0.0.1:3080`** (`--port`, `--bind`); only nginx reaches it from outside. `install` calls `proxy add-site librechat http://127.0.0.1:3080` and records the returned URL as the state `url`.
+- LibreChat binds **`127.0.0.1:3080`** (`--port`, `--bind`, host networking, see point 4); only nginx reaches it from outside. `install` calls `proxy add-site librechat http://127.0.0.1:3080` and records the returned URL as the state `url`.
 - Consequence: `requires: ["nginx"]` (the name, not the type, since the site action belongs to nginx). The certificate is therefore **shared** (answers the open question of the [certificate decision](decision-nginx-certificates.md#open-questions)), and the browser warning of `self-signed` applies to the interface as well, as that decision already notes.
-- Since the site shares the certificate, `proxy`'s `listen.certificate` is what the next point uses.
 
 ### 4. Reaching the models from the container
 
-`chat-interface add-endpoint <name> <url>` receives the URL printed by `proxy add-upstream`: `https://<server-name>:<port>/<upstream>/v1`, a self-signed certificate valid for `<server-name>`, `localhost` and `127.0.0.1`, and an API key.
+LibreChat and the engines run on the **same machine**, so the link between them needs neither HTTPS nor an API key: nothing leaves the host. The authentication of the proxy protects the access **from the network**, not this local link. The only obstacle is that, in a bridge container, `127.0.0.1` is the container itself, and an engine listening on the loopback of the host (Ollama and vLLM both default to it) is out of reach.
 
-- **Name resolution**: the container resolves `<server-name>` to the host with `extra_hosts: "<server-name>:host-gateway"` in the compose file (skipped when `<server-name>` is an IP address). The URL stays **identical** and the certificate stays valid, where `host.docker.internal` would fail the name check.
-- **Reachability**: nginx must listen on an address the Docker network can reach. Preflight reads the proxy state: if `listen.address` is the loopback, **exit 4** with the message `nginx listens on 127.0.0.1, the LibreChat container cannot reach it: reinstall nginx with --bind 0.0.0.0` (the nginx default is `0.0.0.0`, so this only catches an explicit choice). The firewall is not managed (out of scope, like for nginx).
-- **Trust**: the certificate file recorded in the proxy state (`listen.certificate`) is mounted read-only into the `api` container and `NODE_EXTRA_CA_CERTS` points to it. With `letsencrypt`, the system store of the image is enough and the mount is skipped. With `provided`, the certificate is mounted like the self-signed one (it may come from an internal CA).
-- **API key**: `librechat.yaml` never contains it. Each endpoint has `apiKey: "${EASY_CS_AI_<NAME>_KEY}"`, and the value is written to `librechat.env` (mode `0600`), read by the script from the nginx secret file listed in the proxy state `secrets` (`/etc/easy-cs-ai/secrets/nginx.api-key`). It is neither printed nor put in the state (contract, Secrets). Rotating the key at nginx is followed by a re-run of `add-endpoint` for each endpoint (idempotent, re-renders `librechat.env`).
-- **Effect**: `add-endpoint` edits `librechat.yaml` (a `custom` entry with `name`, `baseURL`, `models.default: [<model>]`, `fetch: false`, `titleConvo: false`), then **recreates only the `api` container** (`docker compose up -d --force-recreate api`, a few seconds), only when the rendered file or `librechat.env` changed. It prints `{ "url": "<baseURL>" }`. `remove-endpoint` removes the entry the same way. The state `endpoints` list follows.
+| Option | Pros | Cons |
+| --- | --- | --- |
+| **A. `network_mode: host` for the `api` container** | The container reaches the engines on `127.0.0.1` as they are; no change to the engines, no certificate, no key, no name resolution | The container shares the host network (less isolation); its port must be free on the host |
+| **B. Engine bound to the Docker bridge gateway** | `api` stays in the Compose network | The LibreChat script would have to reconfigure the engine (coupling between components); the gateway address depends on the network; a fallback to `0.0.0.0` would expose the engine to the network without authentication |
+| **C. Through the proxy (HTTPS, API key)** | No change to the networking | The container needs the certificate (trust), the server name resolved to the host, the API key in a file, and nginx listening on a reachable address: four mechanisms for a link that does not need protection |
+
+**Decision: A.** (C was the first proposal of this document, carried over from the [CLI spec](spec-cli.md#steps), which linked the chat interface through the proxy URL. That spec is amended below.)
+
+- The `api` service has `network_mode: host`. LibreChat listens on `HOST=127.0.0.1` and `PORT=3080` (the `--bind` and `--port` options), set in `librechat.env`; no `ports:` entry, which host mode ignores. The preflight checks that the port is free (contract, Preflight).
+- `postgres` and `ferretdb` stay in the Compose network. `ferretdb` publishes `127.0.0.1:27017` only, so `api` reaches it with `MONGO_URI=mongodb://…@127.0.0.1:27017/LibreChat`. The preflight also checks that port 27017 is free, which catches a MongoDB already on the machine. The database credentials still protect it from other local users.
+- **Endpoint URL**: `chat-interface add-endpoint <name> <url>` receives the **internal** OpenAI base URL of the engine: its state `endpoint.openai_base_url` (`http://127.0.0.1:11434/v1` for Ollama), or `http://127.0.0.1:<port>/v1` from the model entry for an engine with one instance per model. Nothing depends on the proxy, so `requires` of the endpoint step is the engine only.
+- **`apiKey`**: LibreChat requires the field for a custom endpoint, the engines ignore it. `librechat.yaml` carries the constant placeholder `apiKey: "unused"`. It is not a secret and no key file is involved.
+- **Effect**: `add-endpoint` edits `librechat.yaml` (a `custom` entry with `name`, `baseURL`, `models.default: [<model>]`, `fetch: false`, `titleConvo: false`), then **recreates only the `api` container** (`docker compose up -d --force-recreate api`, a few seconds), only when the rendered file changed. It prints `{ "url": "<baseURL>" }`, the URL it was given. `remove-endpoint` removes the entry the same way. The state `endpoints` list follows.
+- **External access to the models stays**: `add` still exposes every model through the proxy (HTTPS and API key, step 3), exactly as before, for clients outside the machine. LibreChat simply no longer goes through it. The two paths are independent: removing the proxy exposure of a model does not affect the chat, and unwiring the chat does not affect the external access.
+- **Security note**: with host networking, the `api` container can reach every service that listens on the loopback of the machine, which is the point here, and is the reason the engines can stay on `127.0.0.1` without authentication. The administrator must not run, on the same machine, an unauthenticated loopback service that LibreChat should not reach.
 
 ### 5. Accounts
 
@@ -86,10 +95,11 @@ LibreChat has no TLS of its own, and logins travel over this connection. The ngi
 
 ## Consequences
 
+- **CLI spec and contract amended** (done with this decision): step 4 of `add` links the chat interface to the engine's **internal** URL instead of the proxy URL, and step 3 (external exposure) no longer feeds it; `add-endpoint` prints the URL it was given. See [spec: CLI](spec-cli.md#steps) and [Type-specific actions](spec-script-contract.md#type-specific-actions).
 - **Contract**: `proxy` gains `add-site` / `remove-site` (printing a `url`), and `chat-interface` gains `show-admin-password` in its table. Their lock rules are the existing ones (component lock of the script called).
 - **nginx script**: `add-site` / `remove-site`, a `site.conf` template, the `--site-port` option (default 8443, in `describe`), and the state `listen` gains `site_port`. Existing tests stay valid: the API `server` is untouched.
 - **`lib/common.sh`**: `ensure_docker` implemented and covered by `bats` tests in `EASY_CS_AI_ROOT` mode (which skips the installation, as for the other package helpers).
-- **State**: `service.compose_file` filled, `endpoints`, `url`, `requires: ["nginx"]`, `params` with `port`, `bind`, `allow-registration` (never the password or the key), `secrets` listing `librechat.env` and `librechat.admin-password`. The `status` example of the [state format](spec-state-format.md) shows `0.7.5` for LibreChat and must read `0.8.7`.
+- **State**: `service.compose_file` filled, `endpoints`, `url`, `requires: ["nginx"]`, `params` with `port`, `bind`, `allow-registration` (never the password or a secret), `secrets` listing `librechat.env` (JWT and credentials keys, database password) and `librechat.admin-password`. The `status` example of the [state format](spec-state-format.md) shows `0.7.5` for LibreChat and must read `0.8.7`.
 - **Uninstall**: stops and removes the containers, the unit and the generated files, calls `proxy remove-site`, keeps the volume and Docker; `--purge` removes the volume and the images of the stack.
 - **`install --defaults`** can now install the whole default stack (nginx, Ollama, LibreChat) without a MongoDB exception; the [CLI spec](spec-cli.md) note on the "LibreChat/MongoDB question" can be removed.
 - **Tests**: `bats` covers options, templates (compose, `librechat.yaml`, `librechat.env`), idempotence, state, the loopback preflight and the endpoint edit. The real install is covered by the integration tests on a VM, as the other scripts.
@@ -99,6 +109,5 @@ LibreChat has no TLS of its own, and logins travel over this connection. The ngi
 - **First administrator without a command-line password**: whether `npm run create-user` reads the password from a piped stdin must be tested. If it does not, the options are a one-shot invitation or password-reset link, or leaving the account creation to the native command only.
 - **Offline VMs**: the apt repository of Docker and the three images come from the Internet. A mirror option (like the package mirror of the [VM script generator](decision-vm-generator.md)) and an `--image-archive` to load images offline are not designed.
 - **`--site-port` and the browser**: 8443 avoids a clash with the API `server`, but a deployment that wants the interface on 443 needs another `server_name` for it, which `self-signed` on an IP address cannot give.
-- **Rotation of the API key**: re-running `add-endpoint` for each endpoint is manual. A `chat-interface` action to refresh the key of every endpoint would avoid the loop.
 - **Memory**: about 420 MiB for the `api` container at idle with an empty database. Not measured with many users or conversations.
 - **Meilisearch, RAG API, PGVector**: left out of the first version. Adding them is a new option, not a change of this decision.
