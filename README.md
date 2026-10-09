@@ -122,11 +122,11 @@ Planned work, in dependency order:
 
 | Layer           | Item                             | Status      |
 | --------------- | -------------------------------- | ----------- |
-| Install scripts | Ollama install script            | Written, unit-tested, run on an Ubuntu 24.04 VM (see [tests](tests/README.md#integration-tests-on-a-vm)): install, re-run, reboot, uninstall |
+| Install scripts | Ollama install script            | Written, unit-tested, run on an Ubuntu 24.04 VM (see [tests](tests/integration/README.md)): install, re-run, reboot, uninstall |
 | Install scripts | vLLM install script              | Not started |
-| Install scripts | llmfit install script            | Written, unit-tested, run on an Ubuntu 24.04 VM (see [tests](tests/README.md#integration-tests-on-a-vm)) (CPU-only) |
-| Install scripts | Reverse proxy (HTTPS + API key)  | nginx written and unit-tested (self-signed, provided or Let's Encrypt certificate); the self-signed case run on an Ubuntu 24.04 VM (see [tests](tests/README.md#integration-tests-on-a-vm)), the other two not |
-| Install scripts | LibreChat install script         | Written, unit-tested, run on an Ubuntu 24.04 VM (see [tests](tests/README.md#integration-tests-on-a-vm)): Docker installed from its repository, install, re-run, reboot, uninstall (kept and purged data), real chat through Ollama |
+| Install scripts | llmfit install script            | Written, unit-tested, run on an Ubuntu 24.04 VM (see [tests](tests/integration/README.md)) (CPU-only) |
+| Install scripts | Reverse proxy (HTTPS + API key)  | nginx written and unit-tested (self-signed, provided or Let's Encrypt certificate); the self-signed case run on an Ubuntu 24.04 VM (see [tests](tests/integration/README.md)), the other two not |
+| Install scripts | LibreChat install script         | Written, unit-tested, run on an Ubuntu 24.04 VM (see [tests](tests/integration/README.md)): Docker installed from its repository, install, re-run, reboot, uninstall (kept and purged data), real chat through Ollama |
 | Package / CLI   | CLI dispatcher + tarball/deb/rpm | Dispatcher and tarball written and unit-tested; `.deb`/`.rpm` definition and release workflow written, not run yet |
 | Package / CLI   | `status` command                 | Written, unit-tested |
 | Package / CLI   | `install` command                | Written, unit-tested |
