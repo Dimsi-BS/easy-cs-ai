@@ -10,6 +10,10 @@ See also: [.github/workflows](../.github/workflows/README.md), which runs these 
 
 `bats --recursive tests/unit`, in `EASY_CS_AI_ROOT` mode (no root, no package, service or Docker change). Run by CI with `shellcheck`.
 
+## Packaging tests
+
+[tests/packaging](packaging/README.md): `packages.sh` builds the tarball, the `.deb` and the `.rpm` as the release workflow does, inspects them, installs the deb on Ubuntu and the rpm on Fedora in containers, runs the CLI and the generator from the installed package, and checks that the removal leaves nothing. By hand, after a change to the packaging (needs Docker; `nfpm` is downloaded and cached).
+
 ## Integration tests on a VM
 
 [tests/integration](integration/README.md): `vm.sh` creates and drives a throw-away **Ubuntu 24.04** VM under libvirt/KVM, and `lifecycle.sh` runs the life of the default stack on it, as root, from the script produced by `easy-cs-ai generate`, with assertions:
