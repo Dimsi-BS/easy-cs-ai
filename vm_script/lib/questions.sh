@@ -164,12 +164,27 @@ session_config() {
         '{schema_version: 1, components: $c} + (if ($m | length) > 0 then {models: $m} else {} end)'
 }
 
+# summary_warnings <config> <describe-map>: the warnings of the options whose effective
+# value (the one given, else the default) equals the `when` of their `warn` entry in
+# `describe`, one line each, so a risk that comes with a default (LibreChat's open
+# registration) is read before the VM exists. The wording comes from the script.
+summary_warnings() {
+    jq -r --argjson cfg "$1" '
+      to_entries[] | .key as $k | .value as $d | ($k | split("/")) as [$t, $n]
+      | ($cfg.components[] | select(.type == $t and .name == $n) | (.options // {})) as $o
+      | $d.options[]? | select(.warn != null) | . as $opt
+      | (if ($o | has($opt.name)) then $o[$opt.name] else $opt.default end | tostring) as $v
+      | select($v == $opt.warn.when)
+      | "    \($n) --\($opt.name)=\($v): \($opt.warn.message)"' <<<"$2"
+}
+
 # print_summary <config>: components in install order, options (secrets are
-# generated, so nothing to mask), models, platforms.
+# generated, so nothing to mask), models, platforms, and the warnings of the options.
 print_summary() {
-    local config="$1" desc order type name
+    local config="$1" desc order type name warnings
     desc="$(apply_describes "$config")"
     order="$(apply_order "$config" "$desc")"
+    warnings="$(summary_warnings "$config" "$desc")"
     {
         printf '\nSummary\n  components, in install order:\n'
         while read -r type name; do
@@ -178,6 +193,9 @@ print_summary() {
         done <<<"$order"
         printf '  models: %s\n' "$(jq -r '[.models[]?.name] | if length == 0 then "none" else join(", ") end' <<<"$config")"
         printf '  platforms: %s\n' "$(jq -r '[.[].platforms[]?] | unique | join(", ")' <<<"$desc")"
+        if [[ -n "$warnings" ]]; then
+            printf '  [WARN] to read before creating the VM:\n%s\n' "$warnings"
+        fi
     } >&2
 }
 

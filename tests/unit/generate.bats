@@ -125,6 +125,65 @@ ask() { ANSWERS="$(printf '%s\n' "$@")"; export ANSWERS; session; }
     [[ "$stderr" == *'"name": "eng"'* ]]
 }
 
+# --- warnings of the options -----------------------------------------------------------------
+
+# a chat interface whose option allow-registration warns when it is true, like LibreChat's
+make_warning_chat() {
+    make_fake chat-interface chat '["proxy"]' '[{"name":"allow-registration","default":"true","secret":false,"description":"open","warn":{"when":"true","message":"registration is open"}}]'
+}
+
+@test "the summary of a session shows the warning of an option left at its default" {
+    make_warning_chat
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask prox none chat "" y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"[WARN] to read before creating the VM"* ]]
+    [[ "$stderr" == *"chat --allow-registration=true: registration is open"* ]]
+}
+
+@test "--config shows the warning of a default, and of an explicit value that matches" {
+    make_warning_chat
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat"}]}' >cfg.json
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"chat --allow-registration=true: registration is open"* ]]
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat","options":{"allow-registration":"true"}}]}' >cfg.json
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [[ "$stderr" == *"chat --allow-registration=true: registration is open"* ]]
+}
+
+@test "no warning when the option has another value, whatever its type" {
+    make_warning_chat
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat","options":{"allow-registration":"false"}}]}' >cfg.json
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"to read before creating the VM"* ]]
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat","options":{"allow-registration":false}}]}' >cfg.json
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [[ "$stderr" != *"to read before creating the VM"* ]]
+}
+
+@test "no warning section for components without a warning" {
+    valid_config
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"to read before creating the VM"* ]]
+}
+
+@test "the real LibreChat script makes the generator warn about its open registration" {
+    rm -f "$EASY_CS_AI_HOME/chat-interface/chat.sh"
+    cp "$REAL/chat-interface/librechat.sh" "$EASY_CS_AI_HOME/chat-interface/librechat.sh"
+    cp "$REAL/proxy/nginx.sh" "$EASY_CS_AI_HOME/proxy/nginx.sh"
+    ln -s "$REAL/templates" "$EASY_CS_AI_HOME/templates"
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"nginx"},{"type":"chat-interface","name":"librechat"}]}' >cfg.json
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"librechat --allow-registration=true: registration is open: the first account created becomes the administrator"* ]]
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"nginx"},{"type":"chat-interface","name":"librechat","options":{"allow-registration":"false"}}]}' >cfg.json
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [[ "$stderr" != *"registration is open"* ]]
+}
+
 # --- --config ---------------------------------------------------------------------------------
 
 valid_config() {
