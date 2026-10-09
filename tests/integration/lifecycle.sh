@@ -212,6 +212,29 @@ expect "exit 0" 0 "$?"
 expect "nothing of the project is left (state, files, units, nginx, docker, ollama, llmfit, ports)" \
     "state 0 0;files 0;units 0;nginx 0 0;docker 0 0 0;ollama 0 none;llmfit 0;ports 0;" "$(leftovers)"
 
+
+# --- 8. the default stack -----------------------------------------------------------------------
+
+step "8. install --defaults installs the default stack and its default model"
+DEFAULT_MODEL="$(awk '$1 == "ollama" {print $2}' "$HERE/../../install_scripts/default-models.conf")"
+UPD="ollama-$(printf '%s' "$DEFAULT_MODEL" | tr -c 'a-z0-9.\n' '-')"
+"$VM" ssh 'sudo easy-cs-ai install --defaults 2>&1' >"$WORK/defaults.log"
+expect "install --defaults exits 0" 0 "$?"
+check "the four components are healthy" all_healthy
+check "the engines and chat interfaces without a script are skipped with a warning, not an error" grep -q 'WARN' "$WORK/defaults.log"
+expect "the default model is the only model" "$DEFAULT_MODEL" "$(out 'sudo easy-cs-ai engine ollama list-models' | jq -r '[.[].name] | join(",")')"
+expect "it is linked to LibreChat" '["librechat"]' "$(out "sudo jq -c '.models[0].linked_to' /var/lib/easy-cs-ai/components/ollama.json")"
+expect "API without the key" 401 "$(out "curl -sk -o /dev/null -w '%{http_code}' https://\$(hostname)/$UPD/v1/models")"
+expect "API with the key" 200 "$(out "curl -sk -o /dev/null -w '%{http_code}' -H \"Authorization: Bearer \$(sudo easy-cs-ai proxy nginx show-key)\" https://\$(hostname)/$UPD/v1/models")"
+"$VM" ssh 'sudo easy-cs-ai install --defaults >/dev/null 2>&1'
+expect "the same command again exits 0" 0 "$?"
+expect "and adds no model" 1 "$(out 'sudo easy-cs-ai engine ollama list-models' | jq 'length')"
+check "still healthy" all_healthy
+"$VM" ssh 'sudo easy-cs-ai uninstall --all --purge >/dev/null 2>&1'
+expect "uninstall --all --purge exits 0" 0 "$?"
+expect "nothing of the project is left" \
+    "state 0 0;files 0;units 0;nginx 0 0;docker 0 0 0;ollama 0 none;llmfit 0;ports 0;" "$(leftovers)"
+
 # --- summary ------------------------------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

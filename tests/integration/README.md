@@ -52,6 +52,7 @@ Creates the VM if needed, then, with assertions (`ok` / `FAIL`, exit 1 if anythi
 5. uninstalls LibreChat and installs it again: the database, its password and the account survive, `add` links the model again;
 6. makes an install fail its health check: exit 6, no state, a pending manifest that `status` reports and `uninstall` cleans, then a normal install resumes;
 7. `uninstall --all --purge`: no state, file, unit, nginx configuration, container, volume, image, binary, user or listening port of the project is left.
+8. `install --defaults` on the emptied machine: the default stack and the default model (`default-models.conf`), linked and served through the API; the same command again changes nothing; a last `uninstall --all --purge` leaves nothing.
 
 It leaves the VM empty (`uninstall --all --purge`), unless `--keep` or a failure, so that you can look. The model is `llama3.2:1b` (`ECSAI_TEST_MODEL` to change it; llmfit must know it and it must fit the VM, 4.5 GB free).
 

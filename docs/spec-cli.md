@@ -148,7 +148,7 @@ An engine with no model leaves the first contact with the product empty (and the
 - **Failure**: a model that does not fit or cannot be downloaded is a `WARN` naming the `add` command to run; the install still succeeds (exit 0), since the stack is sound and only the model is missing.
 - **Only for what the run installed**: an engine already installed is left alone, as for every component, so a model removed with `remove` is not brought back by a re-run, and the command still converges. `--dry-run` announces the model without adding it.
 - **Cost**: the download and disk size of the model are added to a default install (about 2 GB for `llama3.2:3b`).
-- **Refreshing**: model names age (renamed tags, better small models). The file carries a `Last reviewed` date and is reviewed by hand, together with the [integration order](decision-integration-order.md#decision) and the pinned versions of the scripts. A tag that has disappeared shows as the `WARN` above on a default install, not as a failure. No automatic update: a default must be a reviewed, reproducible choice. The integration test does not yet cover the default model (it adds its own with `add`).
+- **Refreshing**: model names age (renamed tags, better small models). The file carries a `Last reviewed` date and is reviewed by hand, together with the [integration order](decision-integration-order.md#decision) and the pinned versions of the scripts. A tag that has disappeared shows as the `WARN` above on a default install, not as a failure. No automatic update: a default must be a reviewed, reproducible choice. The [integration test](../tests/integration/README.md) covers it (step 8).
 
 ### Dependencies
 
