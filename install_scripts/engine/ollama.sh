@@ -282,8 +282,12 @@ ensure_user() {
 
 record_state() {
     local json files dirs
-    files="$(pending_read "$NAME" | jq -c '.files + ["/etc/systemd/system/'"$UNIT"'"] | unique')"
-    dirs="$(pending_read "$NAME" | jq -c '.data_dirs + ["/usr/share/ollama/.ollama"] | unique')"
+    # the union of this run (pending manifest) and what an earlier run recorded: a re-run that
+    # changes nothing downloads no binary, so it tracks none, and must not forget the ones recorded
+    files="$( (pending_read "$NAME"; state_read "$NAME" 2>/dev/null || true) |
+        jq -sc '[.[] | (.files // [])[]] + ["/etc/systemd/system/'"$UNIT"'"] | unique')"
+    dirs="$( (pending_read "$NAME"; state_read "$NAME" 2>/dev/null || true) |
+        jq -sc '[.[] | (.data_dirs // [])[]] + ["/usr/share/ollama/.ollama"] | unique')"
     json="$(jq -n --arg v "$VERSION" --arg sv "$SCRIPT_VERSION" --arg port "$PORT" --arg bind "$BIND" \
         --arg url "$(base_url)" --arg unit "$UNIT" --argjson files "$files" --argjson dirs "$dirs" \
         --argjson default "$MAKE_DEFAULT" '{

@@ -138,6 +138,18 @@ ollama() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "$(jq -r '.models[0].name' "$STATE/components/ollama.json")" = "llama3.2:3b" ]
 }
 
+@test "a reinstall that downloads nothing keeps the files and data directories recorded earlier, so uninstall still removes them" {
+    ollama install
+    jq '.files += ["/usr/local/bin/ollama", "/usr/local/lib/ollama"] | .data_dirs += ["/srv/models"]' "$STATE/components/ollama.json" >"$BATS_TEST_TMPDIR/s.json"
+    cp "$BATS_TEST_TMPDIR/s.json" "$STATE/components/ollama.json"
+    ollama install --port 11500
+    [ "$status" -eq 0 ]
+    run jq -c '[.files, .data_dirs]' "$STATE/components/ollama.json"
+    [[ "$output" == *'"/usr/local/bin/ollama"'* && "$output" == *'"/usr/local/lib/ollama"'* ]]
+    [[ "$output" == *'"/srv/models"'* && "$output" == *'"/usr/share/ollama/.ollama"'* ]]
+    [[ "$output" == *'"/etc/systemd/system/ollama.service"'* ]]
+}
+
 @test "--default is applied only on request after the first install" {
     bash -c "source '${BATS_TEST_DIRNAME}/../../install_scripts/lib/common.sh'; state_write vllm '{\"name\":\"vllm\",\"type\":\"engine\"}'"
     ollama install
