@@ -1,0 +1,18 @@
+# Managed by easy-cs-ai (librechat.sh), do not edit: rewritten by `install`.
+# Restores the stack at boot. The containers restart themselves after a crash (restart: unless-stopped).
+[Unit]
+Description=LibreChat (easy-cs-ai)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=${LC_CONF_DIR}
+ExecStart=${LC_DOCKER_BIN} compose -f ${LC_COMPOSE_FILE} up -d
+ExecStop=${LC_DOCKER_BIN} compose -f ${LC_COMPOSE_FILE} down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

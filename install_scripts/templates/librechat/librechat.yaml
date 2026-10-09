@@ -1,0 +1,4 @@
+# Managed by easy-cs-ai (librechat.sh), do not edit: rewritten by `install`, `add-endpoint` and `remove-endpoint`.
+version: 1.2.8
+cache: true
+${LC_ENDPOINTS_BLOCK}

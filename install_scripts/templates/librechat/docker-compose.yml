@@ -1,0 +1,42 @@
+# Managed by easy-cs-ai (librechat.sh), do not edit: rewritten by `install`.
+# The api container shares the network of the machine, so it reaches the engines on
+# their loopback address (docs/decision-librechat-install.md, point 4). The database
+# containers stay in the Compose network, FerretDB being published on the loopback only.
+name: easy-cs-ai-librechat
+
+services:
+  api:
+    image: ${LC_IMAGE_API}
+    network_mode: host
+    restart: unless-stopped
+    env_file: ${LC_ENV_FILE}
+    volumes:
+      - ${LC_YAML_FILE}:/app/librechat.yaml:ro
+    depends_on:
+      ferretdb:
+        condition: service_started
+
+  ferretdb:
+    image: ${LC_IMAGE_FERRETDB}
+    restart: unless-stopped
+    env_file: ${LC_DB_ENV_FILE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${LC_DB_PORT}:27017"
+
+  postgres:
+    image: ${LC_IMAGE_POSTGRES}
+    restart: unless-stopped
+    env_file: ${LC_DB_ENV_FILE}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ferret -d postgres"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgdata:
