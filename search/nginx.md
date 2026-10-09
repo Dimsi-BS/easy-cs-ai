@@ -12,7 +12,7 @@
 ## Weaknesses / must-know
 - API key check is not built in: needs a `map` on the `Authorization` header (static keys), or `auth_request` / Lua for dynamic keys. Plain `auth_basic` is not an API key scheme.
 - Required for LLM streaming: `proxy_buffering off`, `proxy_http_version 1.1`, and read timeouts raised (~600s) because the 60s default cuts long generations.
-- Certificates: Let's Encrypt needs a public domain; otherwise a self-signed cert is needed (see [decision: certificates](../docs/decision-nginx-certificates.md), proposed).
+- Certificates: Let's Encrypt needs a public domain; otherwise a self-signed cert is needed (see [decision: certificates](../docs/decision-nginx-certificates.md)).
 
 ## Health check
 - nginx starts in well under a second. The meaningful check is functional, not just "port open": validate with `nginx -t` before the reload, then request through the proxy and expect **401 without key** and **success with key**, which proves TLS and auth work. Estimated timeout: **30 s**.

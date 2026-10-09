@@ -122,7 +122,7 @@ The default component of a type is **explicit**: it is the one whose file has `"
 ### Type-specific fields
 
 - **`engine`**: `models`, each with `name`, `added_at`, `exposed_via` (name of the `proxy` component, or `null` when the engine is `protected` or the model is not exposed) and `linked_to` (names of `chat-interface` components). The model list is the single source: `status` and `add` read it here, the chat interface and proxy hold no copy. For an engine running **one instance per model** (vLLM, see the [script contract](spec-script-contract.md#engines-with-one-instance-per-model)), each model also has `unit` (its systemd unit, e.g. `vllm@llama3-8b.service`) and `port`, the instance being an internal detail of the engine, not a separate component. `models` may be empty (installed, no model yet), and the component-level `service` and `endpoint` are then absent for such an engine: each model carries its own.
-- **`proxy`**: `upstreams`, array of `{ "name", "url" }` with the engine models they front, and `listen` (`{ "address", "port", "tls": "letsencrypt" | "self-signed" | "provided" }`; the strategy is proposed in [decision: certificates](decision-nginx-certificates.md)).
+- **`proxy`**: `upstreams`, array of `{ "name", "url" }` with the engine models they front, and `listen` (`{ "address", "port", "tls": "letsencrypt" | "self-signed" | "provided" }`; the strategy is decided in [decision: certificates](decision-nginx-certificates.md)).
 - **`chat-interface`**: `endpoints`, array of `{ "name", "url" }` declared in its configuration (for LibreChat, the entries of `librechat.yaml`), and `url` of the web site.
 - **`provisioning`**: none beyond the common fields.
 

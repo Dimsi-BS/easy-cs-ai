@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed
+**Status:** accepted for `self-signed` (implemented first); `provided` and `letsencrypt` are designed but deferred
 
 ## Context
 
@@ -28,10 +28,16 @@ Proposed:
 4. The option is `--tls self-signed|provided|letsencrypt`, a single parameter, so switching is a re-run of `install` (idempotence rules of the [contract](spec-script-contract.md#idempotence)). The proxy's `describe` lists it for `apply` and the generator.
 5. **No silent downgrade**: the strategy asked for is the one recorded; an unreachable ACME server never produces a self-signed certificate behind the administrator's back.
 
+## Scope of the first implementation
+
+- Only **`self-signed`** is implemented, and it is what `--defaults` gives. It is the default of the `--tls` option, so `install --defaults` and the VM post-install layer need no certificate parameter.
+- `--tls` is already part of the proxy's interface (`describe`, `apply`, the generator), and the three values are reserved in the state (`listen.tls`). `provided` and `letsencrypt` are **refused for now with exit 2** and a message saying they are not implemented yet, rather than ignored or replaced by a self-signed certificate (no silent downgrade).
+- Adding one later changes only the proxy script (a new certificate step and its options): the CLI, the configuration file format and the state schema stay as they are.
+
 ## Consequences
 
 - The chat interface and the clients are given the proxy's URL by `add-upstream`; with `self-signed` they must trust the certificate. The script exposes it (path recorded in the state) so that a client can be configured, and the documentation says that a browser warns until it is trusted.
-- Integration order: self-signed and provided are implemented with the proxy, Let's Encrypt after.
+- Integration order: self-signed with the proxy, then `provided`, then Let's Encrypt (see [scope](#scope-of-the-first-implementation)).
 - Health check of nginx (401 without key, success with key) uses the certificate as is: the probe runs locally with the certificate pinned, never with verification disabled.
 
 ## Open questions
