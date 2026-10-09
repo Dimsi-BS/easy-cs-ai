@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed. Accepted on 2026-10-09: point 1 (Docker's apt repository), point 4 (host networking, external access kept) and point 5 (open registration with warnings). Still to confirm: point 2 (stack and unit) and point 3 (second nginx `server` for the interface).
+**Status:** accepted on 2026-10-09 (points 1 to 5). The open questions at the end are deferred and do not block the implementation.
 
 ## Context
 
@@ -43,7 +43,7 @@ Five points are not specified, and the install script cannot be written without 
 | `ferretdb` | `ghcr.io/ferretdb/ferretdb:2.7.0` | `sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985` |
 | `postgres` | `ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0` | `sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7` |
 
-  The compose file references `image: <name>@<digest>`, so a moved tag changes nothing. `--version <x.y.z>` selects another **LibreChat** release, resolved by tag only, with a `WARN` (no known digest). FerretDB and PostgreSQL are a **pair** whose versions are tied together by the FerretDB project: they are pinned with the script and not exposed as options. The test used the all-in-one `ferretdb-eval` image of the FerretDB guide, documented as dev/test only, so it is **not** used: a plain PostgreSQL is not enough either, FerretDB 2.x needs the DocumentDB build.
+  The compose file references `image: <name>@<digest>`, so a moved tag changes nothing. `--version <x.y.z>` selects another **LibreChat** release, resolved by tag only, with a `WARN` (no known digest). FerretDB and PostgreSQL are a **pair** whose versions are tied together by the FerretDB project: they are pinned with the script and not exposed as options. The FerretDB guide for LibreChat uses an all-in-one `ferretdb-eval` image, documented as dev/test only, so it is **not** used (our test ran on the two separate images above): a plain PostgreSQL is not enough either, FerretDB 2.x needs the DocumentDB build.
 - **Files**: compose file `/etc/easy-cs-ai/librechat/docker-compose.yml` (rendered from a template, recorded as `service.compose_file`), `/etc/easy-cs-ai/librechat/librechat.yaml`, and `/etc/easy-cs-ai/secrets/librechat.env` (mode `0600`, root) holding what the containers read from the environment. Data: the PostgreSQL named volume, recorded in `data_dirs` by its name, kept by `uninstall` and removed by `--purge` (`docker compose down -v`).
 - **Unit** `easy-cs-ai-librechat.service`: `Type=oneshot`, `RemainAfterExit=yes`, `ExecStart=docker compose -f <compose_file> up -d`, `ExecStop=docker compose -f <compose_file> down`. The containers carry `restart: unless-stopped`, so Docker restarts them after a crash and the unit only restores the stack at boot. Fail fast (contract, Health check) reads `docker compose ps` instead of the unit state.
 - **Startup order**: `postgres` has a `pg_isready` healthcheck, `ferretdb` waits with `depends_on: condition: service_healthy`. The healthcheck is required so that FerretDB never starts against a PostgreSQL that is not ready (the test ran with it).
