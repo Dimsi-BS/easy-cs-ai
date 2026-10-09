@@ -48,6 +48,10 @@ rank_one() {
     printf '%s\n' "$name"
 }
 
+# default_model <engine>: the model `install --defaults` adds to an engine,
+# empty when the engine has none (default-models.conf, next to ranks.conf).
+default_model() { awk -v e="$1" '$1 == e { print $2; exit }' "$HOME_DIR/default-models.conf" 2>/dev/null || true; }
+
 # type_of <name>: the type of an installed or shipped component.
 type_of() {
     local t json

@@ -230,8 +230,7 @@ cmd_install() {
         install_one "$type" "$name" "$defaults" "${args[@]}"
         return
     fi
-    local t
-    local rank
+    local t engine rank fresh_engines=()
     for t in ${type:-"${TYPES[@]}"}; do
         [[ -z "$(state_list "$t")" ]] || continue
         rank="$(rank_lookup "$t")"
@@ -244,7 +243,34 @@ cmd_install() {
             continue
         fi
         install_one "$t" "$rank" 1 "${args[@]}"
+        [[ "$t" != engine ]] || fresh_engines+=("$rank")
     done
+    # The models come last: the chat interface is then there to be linked.
+    for engine in "${fresh_engines[@]}"; do
+        add_default_model "$engine"
+    done
+}
+
+# add_default_model <engine>: the default model of an engine installed by this
+# run. A model that does not fit or cannot be downloaded is a WARN, not a
+# failed install (docs/spec-cli.md, Default model).
+add_default_model() {
+    local engine="$1" model rc=0
+    model="$(default_model "$engine")"
+    if [[ -z "$model" ]]; then
+        log_info "no default model known for $engine, none added"
+        return 0
+    fi
+    if ((DRY)); then
+        log_info "dry run: would add $model to $engine"
+        return 0
+    fi
+    log_info "adding the default model $model to $engine"
+    (cmd_add "$model" --engine "$engine" --defaults) || rc=$?
+    if ((rc)); then
+        log_warn "default model $model not added to $engine (exit $rc), add one with: easy-cs-ai add <model> --engine $engine"
+    fi
+    return 0
 }
 
 # --- uninstall --------------------------------------------------------------------

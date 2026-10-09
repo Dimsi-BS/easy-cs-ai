@@ -46,6 +46,11 @@ uninstall)
 status)
     h=true; [[ "\${FAKE_HEALTHY:-}" == "$2" ]] && h=false
     jq -n --argjson h \$h '{name: "$2", installed: true, running: true, healthy: \$h}'; [[ \$h == true ]] || exit 6 ;;
+add-model)
+    [[ "\${FAKE_FAIL:-}" == "$2-add-model" ]] && exit 5
+    state_write $2 "\$(state_read $2 | jq --arg m "\$1" '{name, type, models: ((.models // []) + [{name: \$m}])}')" ;;
+check) echo '{"fits": true}' ;;
+add-endpoint|add-upstream) echo '{"url": "http://x"}' ;;
 remove-upstream|remove-endpoint) ;;
 esac
 EOF
@@ -137,6 +142,47 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     cli install --defaults
     [ "$status" -eq 0 ]
     ! grep -q ' install' "$CALLS"
+}
+
+# with_fit_stack: the default model is added with `add --defaults`, which needs llmfit.
+with_fit_stack() {
+    make_fake provisioning fit '[]'
+    printf 'provisioning fit\n' >>"$EASY_CS_AI_HOME/ranks.conf"
+    printf 'eng llama-test\n' >"$EASY_CS_AI_HOME/default-models.conf"
+}
+
+@test "install --defaults adds the default model of the engine it installed, once" {
+    with_fit_stack
+    cli install --defaults
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"default model llama-test to eng"* ]]
+    grep -q '^eng add-model llama-test' "$CALLS"
+    : >"$CALLS"
+    cli install --defaults
+    [ "$status" -eq 0 ]
+    run ! grep -q 'add-model' "$CALLS"
+}
+
+@test "install --defaults only warns when the default model cannot be added" {
+    with_fit_stack
+    export FAKE_FAIL=eng-add-model
+    cli install --defaults
+    [ "$status" -eq 0 ]
+    installed chat
+    [[ "$stderr" == *"default model llama-test not added to eng"* ]]
+}
+
+@test "install --defaults without a default model for the engine adds none" {
+    cli install --defaults
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"no default model known for eng"* ]]
+}
+
+@test "install --dry-run --defaults announces the default model" {
+    printf 'eng llama-test\n' >"$EASY_CS_AI_HOME/default-models.conf"
+    cli --dry-run install --defaults
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"would add llama-test to eng"* ]]
 }
 
 @test "install --dry-run installs nothing" {

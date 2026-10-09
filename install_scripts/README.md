@@ -17,6 +17,7 @@ See also: [spec: script contract](../docs/spec-script-contract.md), the rules ev
 - `engine/ollama.sh` — Ollama; version and archive checksums pinned in the script
 - `chat-interface/librechat.sh` — LibreChat on FerretDB and PostgreSQL, three containers run by Docker Compose (images pinned by digest) and a systemd unit; installs Docker itself (`ensure_docker`); `add-endpoint`, `remove-endpoint`
 - `ranks.conf` — integration order, rank 1 first per type, read by the CLI for `--defaults`
+- `default-models.conf` — default model of each engine, added by `install --defaults`
 - `templates/<component>/` — `envsubst` templates rendered by the scripts
 
 Unit tests run in `EASY_CS_AI_ROOT` mode (no root, no package or service changes): `bats --recursive tests/unit`. They need `bash`, `jq`, `flock` and `envsubst` (Linux or WSL).

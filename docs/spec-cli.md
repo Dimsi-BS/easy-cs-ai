@@ -138,6 +138,18 @@ The exit code is the script's, except when a dependency failed (that step's code
 
 **Default stack** (`install --defaults`): for each type (`provisioning`, `proxy`, `engine`, `chat-interface`), if no component of the type is installed, install the rank 1 one, in an order that satisfies `requires` (computed from `describe`, not hardcoded). Types already installed are left alone, so the command converges and is safe to re-run. It follows the integration order, so a change of rank 1 changes the stack without touching the CLI: the order is the file `ranks.conf` shipped next to the scripts (`<type> <name>` lines, rank 1 first within each type), not code. A type whose rank 1 has no install script yet (or that has no rank) is skipped with a `WARN`, so the command works while the catalogue is being built; naming the type explicitly (`install <type> --defaults`) fails instead. This is the one-line form for the VM post-install layer.
 
+### Default model
+
+An engine with no model leaves the first contact with the product empty (and the model selector of the chat interface too). `install --defaults` (the whole stack, or `install engine --defaults`) therefore adds the **default model** of each engine **it installed**, after every component of the run, so that the chat interface is there to be linked.
+
+- **Where**: `default-models.conf`, shipped next to `ranks.conf` (`<engine> <model>` per line, the model in the engine's own naming). It is data, not code, so changing a default needs no CLI change. An engine with no line gets no model (an `INFO`).
+- **Fixed, not chosen from the machine**: the default is a small model that fits any VM (`llama3.2:3b` for Ollama). Choosing from `provisioning recommend` would make two VMs of the same fleet differ and the result unpredictable for the VM post-install layer; the fit check of `add` still protects a machine too small even for it.
+- **How**: the [`add`](#add) orchestration with `--engine <engine> --defaults` (fit check, wiring, rollback as usual).
+- **Failure**: a model that does not fit or cannot be downloaded is a `WARN` naming the `add` command to run; the install still succeeds (exit 0), since the stack is sound and only the model is missing.
+- **Only for what the run installed**: an engine already installed is left alone, as for every component, so a model removed with `remove` is not brought back by a re-run, and the command still converges. `--dry-run` announces the model without adding it.
+- **Cost**: the download and disk size of the model are added to a default install (about 2 GB for `llama3.2:3b`).
+- **Refreshing**: model names age (renamed tags, better small models). The file carries a `Last reviewed` date and is reviewed by hand, together with the [integration order](decision-integration-order.md#decision) and the pinned versions of the scripts. A tag that has disappeared shows as the `WARN` above on a default install, not as a failure. No automatic update: a default must be a reviewed, reproducible choice. The integration test does not yet cover the default model (it adds its own with `add`).
+
 ### Dependencies
 
 The scripts only *check* `requires`, they never install another component (see the contract). Resolving is the CLI's job:
@@ -327,4 +339,3 @@ This spec relies on four points that are specified in the [script contract](spec
 
 - Whether `status` should probe in parallel once the number of components grows (sequential and bounded by 15 s per component today).
 - Shell completion (bash/zsh) built from `describe`: wanted, not specified.
-- **A default model for each engine**, so that the first contact with the product (`install --defaults`, then the chat interface) already has an AI model to talk to, instead of an empty list. Not designed yet. Points to settle: where the default is declared (a `default_model` in the engine's `describe`, or in the integration order file), whether it is fixed (a small model that fits any VM) or chosen from the machine with `provisioning recommend`, how `install --defaults` adds it (the [`add`](#add) orchestration, with its fit check), what happens when it does not fit or cannot be downloaded (a `WARN`, not a failed install), and the download time and disk size added to a default install. It also settles the empty selector seen at the first connection to LibreChat (see the [LibreChat decision](decision-librechat-install.md#open-questions)).

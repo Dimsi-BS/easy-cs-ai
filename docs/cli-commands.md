@@ -15,7 +15,7 @@ Overview of the commands exposed by the `easy-cs-ai` CLI (see [packaging](decisi
 
 - `uninstall <component-type> <component-name>`: uninstalls a component. `uninstall --all` or `uninstall <component-type> --all` uninstalls everything that is installed (of a type, or all), which wipes a test environment in one command
 - `remove <model-name> [--engine <engine-name>]`: the reverse of `add`, unlinks the model from the chat interface and the proxy, then removes it from the inference engine. `remove --all` removes every model (of the given engine, or of all)
-- `install --defaults` or `install <component-type> --defaults`: installs the default choices (rank 1 of each type, see [integration order](decision-integration-order.md)). The CLI never takes a default choice without this explicit option
+- `install --defaults` or `install <component-type> --defaults`: installs the default choices (rank 1 of each type, see [integration order](decision-integration-order.md)). With the whole stack, it also adds the default model of each engine it installs (see [default model](spec-cli.md#default-model)). The CLI never takes a default choice without this explicit option
 
 The detailed behaviour (dispatch, dependencies, `add` steps and rollback, exit codes) is in [spec: CLI](spec-cli.md).
 
