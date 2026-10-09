@@ -125,7 +125,7 @@ Planned work, in dependency order:
 | Install scripts | Ollama install script            | Written, unit-tested, not yet tested on a VM |
 | Install scripts | vLLM install script              | Not started |
 | Install scripts | llmfit install script            | Written, unit-tested, run against the real binary (CPU-only), not tested on a VM |
-| Install scripts | Reverse proxy (HTTPS + API key)  | nginx written and unit-tested, self-signed certificate only, not tested on a VM |
+| Install scripts | Reverse proxy (HTTPS + API key)  | nginx written and unit-tested (self-signed, provided or Let's Encrypt certificate), not tested on a VM |
 | Install scripts | LibreChat install script         | Not started |
 | Package / CLI   | CLI dispatcher + tarball/deb/rpm | Dispatcher and tarball written and unit-tested; `.deb`/`.rpm` definition and release workflow written, not run yet |
 | Package / CLI   | `status` command                 | Written, unit-tested |

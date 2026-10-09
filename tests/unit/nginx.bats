@@ -25,7 +25,7 @@ nginx() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "${lines[1]}" = "proxy" ]
     [ "${lines[2]}" = "1" ]
     [ "${lines[3]}" = "30" ]
-    [[ "${lines[4]}" == port,bind,server-name,tls,api-key,* ]]
+    [[ "${lines[4]}" == port,bind,server-name,tls,tls-cert,tls-key,tls-email,tls-accept-terms,api-key,* ]]
 }
 
 @test "describe flags the API key as a secret and lists the proxy actions" {
@@ -67,15 +67,16 @@ nginx() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "$status" -eq 2 ]
 }
 
-@test "the certificate strategies that are not implemented yet are refused with exit 2" {
-    nginx install --tls provided
-    [ "$status" -eq 2 ]
-    [[ "$stderr" == *"not implemented yet"* ]]
-    nginx install --tls letsencrypt
-    [ "$status" -eq 2 ]
+@test "an unknown certificate strategy is refused with exit 2" {
     nginx install --tls bogus
     [ "$status" -eq 2 ]
     [ ! -e "$STATE/components/nginx.json" ]
+}
+
+@test "describe flags the TLS key as a secret" {
+    nginx describe
+    run jq -r '.options[] | select(.name == "tls-key") | .secret' <<<"$output"
+    [ "$output" = "true" ]
 }
 
 # --- install -----------------------------------------------------------------------
@@ -361,4 +362,208 @@ nginx() { run --separate-stderr bash "$SCRIPT" "$@"; }
     nginx uninstall --force
     [ "$status" -eq 0 ]
     [ ! -f "$STATE/components/nginx.json" ]
+}
+
+# --- provided certificate ----------------------------------------------------------
+
+# make_pair <name> <days>: a certificate and its key in $BATS_TEST_TMPDIR.
+make_pair() {
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days "${2:-30}" \
+        -subj "/CN=$1" -addext "subjectAltName=DNS:$1" \
+        -keyout "$BATS_TEST_TMPDIR/$1.key" -out "$BATS_TEST_TMPDIR/$1.crt" 2>/dev/null
+    chmod 600 "$BATS_TEST_TMPDIR/$1.key"
+}
+
+@test "provided: the certificate and the key are installed and used by nginx" {
+    make_pair ai.test 90
+    nginx install --server-name ai.test --tls provided --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt" \
+        --tls-key-file "$BATS_TEST_TMPDIR/ai.test.key"
+    [ "$status" -eq 0 ]
+    cmp "$BATS_TEST_TMPDIR/ai.test.crt" "$SYS/etc/easy-cs-ai/nginx/server.crt"
+    cmp "$BATS_TEST_TMPDIR/ai.test.key" "$SECRETS/nginx.tls-key"
+    [ "$(stat -c %a "$SECRETS/nginx.tls-key")" = "600" ]
+    [ "$(stat -c %a "$SECRETS")" = "700" ]
+    grep -q "ssl_certificate $SYS/etc/easy-cs-ai/nginx/server.crt;" "$CONF/conf.d/easy-cs-ai.conf"
+    [ "$(jq -r '.params.tls, .listen.tls' "$STATE/components/nginx.json" | paste -sd,)" = "provided,provided" ]
+    [ ! -e "$CONF/conf.d/easy-cs-ai-acme.conf" ]
+}
+
+@test "provided: the key never appears in the output or the state" {
+    make_pair ai.test 90
+    nginx install --server-name ai.test --tls provided --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt" \
+        --tls-key-file "$BATS_TEST_TMPDIR/ai.test.key"
+    [[ "$output$stderr" != *"PRIVATE KEY"* ]]
+    run grep -c "PRIVATE KEY" "$STATE/components/nginx.json"
+    [ "$output" = "0" ]
+}
+
+@test "provided: the key comes from stdin or the environment" {
+    make_pair ai.test 90
+    run bash -c "bash '$SCRIPT' install --server-name ai.test --tls provided --tls-cert '$BATS_TEST_TMPDIR/ai.test.crt' --tls-key-file - <'$BATS_TEST_TMPDIR/ai.test.key'"
+    [ "$status" -eq 0 ]
+    cmp "$BATS_TEST_TMPDIR/ai.test.key" "$SECRETS/nginx.tls-key"
+    EASY_CS_AI_NGINX_TLS_KEY="$(cat "$BATS_TEST_TMPDIR/ai.test.key")" nginx install --server-name ai.test --tls provided \
+        --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt" --port 8443
+    [ "$status" -eq 0 ]
+}
+
+@test "provided: needs the certificate and the key, and refuses bad ones with exit 2" {
+    make_pair ai.test 90
+    make_pair other.test 90
+    nginx install --tls provided
+    [ "$status" -eq 2 ]
+    nginx install --tls provided --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt"
+    [ "$status" -eq 2 ]
+    nginx install --tls provided --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt" --tls-key-file "$BATS_TEST_TMPDIR/other.test.key"
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"does not match"* ]]
+    nginx install --tls provided --tls-cert "$BATS_TEST_TMPDIR/nope.crt" --tls-key-file "$BATS_TEST_TMPDIR/ai.test.key"
+    [ "$status" -eq 2 ]
+    chmod 644 "$BATS_TEST_TMPDIR/ai.test.key"
+    nginx install --tls provided --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt" --tls-key-file "$BATS_TEST_TMPDIR/ai.test.key"
+    [ "$status" -eq 2 ]
+    [ ! -e "$STATE/components/nginx.json" ]
+}
+
+@test "provided: a certificate for another name only warns" {
+    make_pair other.test 90
+    nginx install --server-name ai.test --tls provided --tls-cert "$BATS_TEST_TMPDIR/other.test.crt" \
+        --tls-key-file "$BATS_TEST_TMPDIR/other.test.key"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"does not cover the server name ai.test"* ]]
+}
+
+@test "provided: a re-run without the files keeps the installed certificate" {
+    make_pair ai.test 90
+    nginx install --server-name ai.test --tls provided --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt" \
+        --tls-key-file "$BATS_TEST_TMPDIR/ai.test.key"
+    nginx install --server-name ai.test --tls provided --port 8443
+    [ "$status" -eq 0 ]
+    cmp "$BATS_TEST_TMPDIR/ai.test.crt" "$SYS/etc/easy-cs-ai/nginx/server.crt"
+    run jq -r '.files | index("/etc/easy-cs-ai/nginx/server.crt") != null' "$STATE/components/nginx.json"
+    [ "$output" = "true" ]
+}
+
+@test "provided: a new certificate replaces the old one" {
+    make_pair ai.test 90
+    nginx install --server-name ai.test --tls provided --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt" \
+        --tls-key-file "$BATS_TEST_TMPDIR/ai.test.key"
+    make_pair ai.test 120
+    nginx install --server-name ai.test --tls provided --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt" \
+        --tls-key-file "$BATS_TEST_TMPDIR/ai.test.key"
+    cmp "$BATS_TEST_TMPDIR/ai.test.crt" "$SYS/etc/easy-cs-ai/nginx/server.crt"
+}
+
+@test "the certificate options are refused with another strategy" {
+    make_pair ai.test 90
+    nginx install --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt"
+    [ "$status" -eq 2 ]
+    nginx install --tls letsencrypt --server-name ai.example.org --tls-accept-terms --tls-key-file "$BATS_TEST_TMPDIR/ai.test.key"
+    [ "$status" -eq 2 ]
+}
+
+@test "provided to self-signed regenerates the certificate" {
+    make_pair ai.test 90
+    nginx install --server-name ai.test --tls provided --tls-cert "$BATS_TEST_TMPDIR/ai.test.crt" \
+        --tls-key-file "$BATS_TEST_TMPDIR/ai.test.key"
+    nginx install --server-name ai.test
+    [ "$status" -eq 0 ]
+    ! cmp -s "$BATS_TEST_TMPDIR/ai.test.crt" "$SYS/etc/easy-cs-ai/nginx/server.crt"
+    [ "$(jq -r .params.tls "$STATE/components/nginx.json")" = "self-signed" ]
+}
+
+# --- Let's Encrypt -----------------------------------------------------------------
+
+le() { nginx install --tls letsencrypt --server-name ai.example.org --tls-accept-terms "$@"; }
+
+@test "letsencrypt: needs a public server name given explicitly and the terms accepted" {
+    nginx install --tls letsencrypt --tls-accept-terms
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"explicit --server-name"* ]]
+    nginx install --tls letsencrypt --server-name localhost --tls-accept-terms
+    [ "$status" -eq 2 ]
+    nginx install --tls letsencrypt --server-name 192.0.2.10 --tls-accept-terms
+    [ "$status" -eq 2 ]
+    nginx install --tls letsencrypt --server-name ai.example.org
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"--tls-accept-terms"* ]]
+    nginx install --tls letsencrypt --server-name ai.example.org --tls-accept-terms false
+    [ "$status" -eq 2 ]
+    le --tls-email 'not an address'
+    [ "$status" -eq 2 ]
+    [ ! -e "$STATE/components/nginx.json" ]
+}
+
+@test "letsencrypt: sets up the challenge server and asks certbot, without a self-signed fallback" {
+    le --tls-email admin@example.org
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"would run: certbot certonly --webroot -w /var/www/easy-cs-ai-acme -d ai.example.org --cert-name ai.example.org --non-interactive --agree-tos --deploy-hook systemctl reload nginx.service -m admin@example.org"* ]]
+    grep -q 'server_name ai.example.org;' "$CONF/conf.d/easy-cs-ai-acme.conf"
+    grep -q 'location /.well-known/acme-challenge/' "$CONF/conf.d/easy-cs-ai-acme.conf"
+    grep -q 'return 301 https://\$host\$request_uri;' "$CONF/conf.d/easy-cs-ai-acme.conf"
+    [ -d "$SYS/var/www/easy-cs-ai-acme" ]
+    grep -q "ssl_certificate $SYS/etc/letsencrypt/live/ai.example.org/fullchain.pem;" "$CONF/conf.d/easy-cs-ai.conf"
+    grep -q "ssl_certificate_key $SYS/etc/letsencrypt/live/ai.example.org/privkey.pem;" "$CONF/conf.d/easy-cs-ai.conf"
+    [ ! -e "$SYS/etc/easy-cs-ai/nginx/server.crt" ]
+    run jq -r '.params.tls, .params["tls-email"], .listen.certificate, (.secrets | length)' "$STATE/components/nginx.json"
+    [ "${lines[0]}" = "letsencrypt" ]
+    [ "${lines[1]}" = "admin@example.org" ]
+    [ "${lines[2]}" = "/etc/letsencrypt/live/ai.example.org/fullchain.pem" ]
+    [ "${lines[3]}" = "1" ]
+}
+
+@test "letsencrypt: without an e-mail the account is registered without one" {
+    le
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"--register-unsafely-without-email"* ]]
+    [ "$(jq -r '.params | has("tls-email")' "$STATE/components/nginx.json")" = "false" ]
+}
+
+@test "letsencrypt: an existing certificate is not requested again" {
+    mkdir -p "$SYS/etc/letsencrypt/live/ai.example.org"
+    echo cert >"$SYS/etc/letsencrypt/live/ai.example.org/fullchain.pem"
+    le
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"already exists for ai.example.org"* ]]
+    [[ "$stderr" != *"would run: certbot"* ]]
+}
+
+@test "letsencrypt: the redirect keeps a non-default port" {
+    le --port 8443
+    grep -q 'return 301 https://\$host:8443\$request_uri;' "$CONF/conf.d/easy-cs-ai-acme.conf"
+}
+
+@test "letsencrypt: the terms can come from the environment" {
+    EASY_CS_AI_NGINX_TLS_ACCEPT_TERMS=true nginx install --tls letsencrypt --server-name ai.example.org
+    [ "$status" -eq 0 ]
+}
+
+@test "letsencrypt: the other actions use the recorded strategy and name" {
+    le
+    nginx add-upstream m http://127.0.0.1:8001
+    [ "$status" -eq 0 ]
+    [ "$(jq -r .url <<<"$output")" = "https://ai.example.org/m/v1" ]
+    nginx status
+    [ "$status" -eq 6 ]
+}
+
+@test "letsencrypt to self-signed removes the challenge server" {
+    le
+    nginx install --server-name ai.test
+    [ "$status" -eq 0 ]
+    [ ! -e "$CONF/conf.d/easy-cs-ai-acme.conf" ]
+    [ ! -e "$SYS/var/www/easy-cs-ai-acme" ]
+    [ -f "$SYS/etc/easy-cs-ai/nginx/server.crt" ]
+}
+
+@test "letsencrypt: uninstall removes the challenge server and keeps the certificate" {
+    mkdir -p "$SYS/etc/letsencrypt/live/ai.example.org"
+    echo cert >"$SYS/etc/letsencrypt/live/ai.example.org/fullchain.pem"
+    le
+    nginx uninstall
+    [ "$status" -eq 0 ]
+    [ ! -e "$CONF/conf.d/easy-cs-ai-acme.conf" ]
+    [ ! -e "$SYS/var/www/easy-cs-ai-acme" ]
+    [ -f "$SYS/etc/letsencrypt/live/ai.example.org/fullchain.pem" ]
+    [[ "$stderr" == *"is kept (--purge deletes it)"* ]]
 }

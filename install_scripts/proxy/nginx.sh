@@ -16,9 +16,11 @@ readonly NGX_DIR_LOGICAL=/etc/nginx/easy-cs-ai
 readonly UPSTREAM_DIR=/etc/nginx/easy-cs-ai/upstreams
 readonly HEALTH_PATH=/easy-cs-ai/health
 readonly ACTIONS="install uninstall status describe add-upstream remove-upstream show-key"
-# Only the strategy that is implemented, see the decision document.
-readonly TLS_IMPLEMENTED="self-signed"
-readonly TLS_RESERVED="provided letsencrypt"
+readonly ACME_CONF=/etc/nginx/conf.d/easy-cs-ai-acme.conf
+readonly ACME_ROOT=/var/www/easy-cs-ai-acme
+readonly LE_DIR=/etc/letsencrypt
+# Certificate strategies, see docs/decision-nginx-certificates.md. The first is the default.
+readonly TLS_STRATEGIES="self-signed provided letsencrypt"
 
 LIB_DIR="${EASY_CS_AI_LIB:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)}"
 readonly LIB_DIR
@@ -26,7 +28,7 @@ readonly TEMPLATE_DIR="$LIB_DIR/../templates/nginx"
 # shellcheck source=../lib/common.sh
 source "$LIB_DIR/common.sh"
 
-ACTION="" FORCE=0 MAKE_DEFAULT=0 API_KEY_FILE=""
+ACTION="" FORCE=0 PURGE=0 MAKE_DEFAULT=0 API_KEY_FILE="" TLS_KEY_FILE=""
 POSITIONAL=()
 
 usage() {
@@ -43,14 +45,21 @@ Options:
   --port <n>              HTTPS port (default 443, EASY_CS_AI_NGINX_PORT)
   --bind <address>        listening address (default 0.0.0.0, EASY_CS_AI_NGINX_BIND)
   --server-name <name>    name in the certificate and the URLs (default: the hostname, EASY_CS_AI_NGINX_SERVER_NAME)
-  --tls <strategy>        certificate strategy: self-signed (default). provided and letsencrypt are not implemented yet
+  --tls <strategy>        certificate: self-signed (default), provided or letsencrypt
+  --tls-cert <path>       provided: the certificate (PEM, full chain first)
+  --tls-key-file <path>   provided: its private key (PEM, mode 0600, not encrypted), or - for stdin
+                          (EASY_CS_AI_NGINX_TLS_KEY holds the PEM text)
+  --tls-email <address>   letsencrypt: contact address for expiry notices (optional)
+  --tls-accept-terms [v]  letsencrypt: accept the Let's Encrypt subscriber agreement (required)
+                          letsencrypt also needs an explicit --server-name, a public domain
+                          pointing to this machine, reachable on port 80 from the Internet
   --api-key-file <path>   file holding the API key (mode 0600), or - for stdin; generated when absent
                           (EASY_CS_AI_NGINX_API_KEY is also read)
   --health-timeout <s>    seconds to wait for the proxy (default $HEALTH_TIMEOUT)
   --lock-timeout <s>      wait for a busy component lock instead of failing
   --default               install: make nginx the default proxy
   --force                 uninstall: even if another component requires it
-  --purge                 uninstall: accepted, the proxy keeps no user data
+  --purge                 uninstall: also delete the Let's Encrypt certificate of this name
   --help --version --verbose --dry-run --json
 EOF
 }
@@ -74,12 +83,12 @@ parse_args() {
         opt="$1"
         shift
         case "$opt" in
-        --port | --bind | --server-name | --tls | --health-timeout | --lock-timeout)
+        --port | --bind | --server-name | --tls | --tls-cert | --tls-email | --health-timeout | --lock-timeout)
             [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$opt needs a value"
             set_option "$NAME" "${opt#--}" "$1"
             shift
             ;;
-        --port=* | --bind=* | --server-name=* | --tls=* | --health-timeout=* | --lock-timeout=*)
+        --port=* | --bind=* | --server-name=* | --tls=* | --tls-cert=* | --tls-email=* | --health-timeout=* | --lock-timeout=*)
             value="${opt#*=}"
             opt="${opt%%=*}"
             set_option "$NAME" "${opt#--}" "$value"
@@ -90,9 +99,25 @@ parse_args() {
             shift
             ;;
         --api-key-file=*) API_KEY_FILE="${opt#*=}" ;;
+        --tls-key-file)
+            [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$opt needs a value"
+            TLS_KEY_FILE="$1"
+            shift
+            ;;
+        --tls-key-file=*) TLS_KEY_FILE="${opt#*=}" ;;
+        --tls-accept-terms)
+            # a bare flag means true; apply passes the value as text
+            if [[ $# -gt 0 && "$1" =~ ^(true|false|yes|no|1|0)$ ]]; then
+                set_option "$NAME" tls-accept-terms "$1"
+                shift
+            else
+                set_option "$NAME" tls-accept-terms true
+            fi
+            ;;
+        --tls-accept-terms=*) set_option "$NAME" tls-accept-terms "${opt#*=}" ;;
         --default) MAKE_DEFAULT=1 ;;
         --force) FORCE=1 ;;
-        --purge) ;;
+        --purge) PURGE=1 ;;
         -*) die "$EXIT_USAGE" "unknown option: $opt" ;;
         *) POSITIONAL+=("$opt") ;;
         esac
@@ -101,11 +126,47 @@ parse_args() {
 
 default_server_name() { hostname -f 2>/dev/null || hostname 2>/dev/null || printf 'localhost\n'; }
 
+# recorded_tls: the strategy recorded at the last install, empty when none.
+recorded_tls() { state_read "$NAME" 2>/dev/null | jq -r '.params.tls // empty' || true; }
+
+# validate_tls: what each strategy needs, checked before any side effect.
+validate_tls() {
+    local cert email
+    cert="$(get_option "$NAME" tls-cert)"
+    if [[ "$TLS" != provided && ( -n "$cert" || -n "$TLS_KEY_FILE" || -n "$(get_option "$NAME" tls-key)" ) ]]; then
+        die "$EXIT_USAGE" "--tls-cert and --tls-key-file only go with --tls provided"
+    fi
+    case "$TLS" in
+    provided)
+        if [[ -z "$cert" ]]; then
+            # a re-run keeps the certificate already installed
+            [[ "$(recorded_tls)" == provided ]] || die "$EXIT_USAGE" "--tls provided needs --tls-cert and --tls-key-file"
+        elif [[ -z "$TLS_KEY_FILE" && -z "$(get_option "$NAME" tls-key)" ]]; then
+            die "$EXIT_USAGE" "--tls-cert needs its key: --tls-key-file <path>, - for stdin, or EASY_CS_AI_NGINX_TLS_KEY"
+        fi
+        ;;
+    letsencrypt)
+        [[ -n "$SERVER_NAME_GIVEN" ]] ||
+            die "$EXIT_USAGE" "--tls letsencrypt needs an explicit --server-name: the public domain name of this machine"
+        if [[ "$SERVER_NAME" != *.* || "$SERVER_NAME" =~ ^[0-9.]+$ ]]; then
+            die "$EXIT_USAGE" "--tls letsencrypt needs a public domain name, not '$SERVER_NAME'"
+        fi
+        [[ "$(get_option "$NAME" tls-accept-terms)" =~ ^(true|yes|1)$ ]] ||
+            die "$EXIT_USAGE" "--tls letsencrypt needs --tls-accept-terms: the Let's Encrypt subscriber agreement must be accepted"
+        email="$(get_option "$NAME" tls-email)"
+        if [[ -n "$email" && ! "$email" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
+            die "$EXIT_USAGE" "invalid --tls-email '$email'"
+        fi
+        ;;
+    esac
+}
+
 resolve_options() {
+    SERVER_NAME_GIVEN="$(get_option "$NAME" server-name)"
     set_option_default "$NAME" port 443
     set_option_default "$NAME" bind 0.0.0.0
     set_option_default "$NAME" server-name "$(default_server_name)"
-    set_option_default "$NAME" tls "$TLS_IMPLEMENTED"
+    set_option_default "$NAME" tls self-signed
     set_option_default "$NAME" health-timeout "$HEALTH_TIMEOUT"
     PORT="$(get_option "$NAME" port)"
     BIND="$(get_option "$NAME" bind)"
@@ -124,11 +185,12 @@ resolve_options() {
     if [[ ! "$HEALTH" =~ ^[0-9]+$ ]]; then
         die "$EXIT_USAGE" "invalid health timeout '$HEALTH'"
     fi
-    case " $TLS_RESERVED " in
-    *" $TLS "*) die "$EXIT_USAGE" "--tls $TLS is not implemented yet (see docs/decision-nginx-certificates.md), only $TLS_IMPLEMENTED is" ;;
+    case " $TLS_STRATEGIES " in
+    *" $TLS "*) ;;
+    *) die "$EXIT_USAGE" "unknown --tls strategy '$TLS' (expected: $TLS_STRATEGIES)" ;;
     esac
-    if [[ "$TLS" != "$TLS_IMPLEMENTED" ]]; then
-        die "$EXIT_USAGE" "unknown --tls strategy '$TLS' (expected: $TLS_IMPLEMENTED)"
+    if [[ "$ACTION" == install ]]; then
+        validate_tls
     fi
 }
 
@@ -172,6 +234,15 @@ public_url() {
 secret_file() { printf '%s/secrets/nginx.api-key\n' "${EASY_CS_AI_CONFIG_DIR:-/etc/easy-cs-ai}"; }
 tls_key_file() { printf '%s/secrets/nginx.tls-key\n' "${EASY_CS_AI_CONFIG_DIR:-/etc/easy-cs-ai}"; }
 tls_cert_file() { printf '%s/nginx/server.crt\n' "${EASY_CS_AI_CONFIG_DIR:-/etc/easy-cs-ai}"; }
+config_dir_logical() { printf '%s\n' "${EASY_CS_AI_CONFIG_DIR:-/etc/easy-cs-ai}"; }
+
+# cert_path / key_path: what nginx is given. Let's Encrypt keeps its own files.
+cert_path() {
+    if [[ "$TLS" == letsencrypt ]]; then printf '%s/live/%s/fullchain.pem\n' "$LE_DIR" "$SERVER_NAME"; else tls_cert_file; fi
+}
+key_path() {
+    if [[ "$TLS" == letsencrypt ]]; then printf '%s/live/%s/privkey.pem\n' "$LE_DIR" "$SERVER_NAME"; else tls_key_file; fi
+}
 
 # --- describe / helpers -----------------------------------------------------------
 
@@ -186,7 +257,11 @@ describe() {
           { name: "port", env: "EASY_CS_AI_NGINX_PORT", default: "443", secret: false, description: "HTTPS port" },
           { name: "bind", env: "EASY_CS_AI_NGINX_BIND", default: "0.0.0.0", secret: false, description: "Listening address" },
           { name: "server-name", env: "EASY_CS_AI_NGINX_SERVER_NAME", default: "hostname", secret: false, description: "Name in the certificate and in the public URLs" },
-          { name: "tls", env: "EASY_CS_AI_NGINX_TLS", default: "self-signed", secret: false, description: "Certificate strategy (only self-signed is implemented)" },
+          { name: "tls", env: "EASY_CS_AI_NGINX_TLS", default: "self-signed", secret: false, description: "Certificate strategy: self-signed, provided or letsencrypt" },
+          { name: "tls-cert", env: "EASY_CS_AI_NGINX_TLS_CERT", default: "", secret: false, description: "provided: path of the certificate (PEM, full chain first)" },
+          { name: "tls-key", env: "EASY_CS_AI_NGINX_TLS_KEY", default: "", secret: true, description: "provided: the private key of the certificate (PEM, not encrypted)" },
+          { name: "tls-email", env: "EASY_CS_AI_NGINX_TLS_EMAIL", default: "", secret: false, description: "letsencrypt: contact address for expiry notices" },
+          { name: "tls-accept-terms", env: "EASY_CS_AI_NGINX_TLS_ACCEPT_TERMS", default: "false", secret: false, description: "letsencrypt: accept the Lets Encrypt subscriber agreement (required)" },
           { name: "api-key", env: "EASY_CS_AI_NGINX_API_KEY", default: "generated", secret: true, description: "API key clients send as a Bearer token" },
           { name: "health-timeout", env: "EASY_CS_AI_NGINX_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, description: "Seconds to wait for the proxy after a change" },
           { name: "lock-timeout", env: "EASY_CS_AI_NGINX_LOCK_TIMEOUT", default: "0", secret: false, description: "Seconds to wait for a busy component lock" }
@@ -208,7 +283,7 @@ run_logged() {
 service_active() { ! is_test_root && systemctl is-active --quiet "$UNIT"; }
 
 port_in_use() {
-    command -v ss >/dev/null 2>&1 && [[ -n "$(ss -H -ltn "sport = :$PORT" 2>/dev/null)" ]]
+    command -v ss >/dev/null 2>&1 && [[ -n "$(ss -H -ltn "sport = :${1:-$PORT}" 2>/dev/null)" ]]
 }
 
 nginx_version() {
@@ -287,7 +362,10 @@ store_api_key() {
 
 # cert_matches: a certificate and its key exist and already cover the server name.
 cert_matches() {
-    local cert
+    local cert prev
+    prev="$(recorded_tls)"
+    # a certificate left by another strategy is not ours to keep
+    [[ -z "$prev" || "$prev" == self-signed ]] || return 1
     cert="$(root_path "$(tls_cert_file)")"
     [[ -f "$cert" && -f "$(root_path "$(tls_key_file)")" ]] &&
         openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -qF "$SERVER_NAME"
@@ -318,26 +396,146 @@ make_certificate() {
     chmod 0600 "$key"
 }
 
+# --- Provided certificate -----------------------------------------------------------
+
+# key_pem: the private key given by --tls-key-file (file or stdin) or the environment.
+key_pem() {
+    local value mode
+    if [[ "$TLS_KEY_FILE" == - ]]; then
+        value="$(cat)"
+    elif [[ -n "$TLS_KEY_FILE" ]]; then
+        [[ -f "$TLS_KEY_FILE" ]] || die "$EXIT_USAGE" "TLS key file not found: $TLS_KEY_FILE"
+        mode="$(stat -c '%a' "$TLS_KEY_FILE")"
+        if ((8#$mode & 8#077)); then
+            die "$EXIT_USAGE" "TLS key file $TLS_KEY_FILE has mode $mode, 600 or stricter required"
+        fi
+        value="$(cat "$TLS_KEY_FILE")"
+    else
+        value="$(get_option "$NAME" tls-key)"
+    fi
+    [[ -n "$value" ]] || die "$EXIT_USAGE" "the TLS key is empty"
+    printf '%s\n' "$value"
+}
+
+# check_pair <cert-file> <key-pem>: valid, not expired, and the key belongs to it.
+check_pair() {
+    local cert="$1" key="$2" from_cert from_key
+    openssl x509 -in "$cert" -noout >/dev/null 2>&1 || die "$EXIT_USAGE" "$cert is not a PEM certificate"
+    openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1 || die "$EXIT_USAGE" "the certificate $cert has expired"
+    from_cert="$(openssl x509 -in "$cert" -noout -pubkey 2>/dev/null)"
+    from_key="$(printf '%s\n' "$key" | openssl pkey -pubout -passin pass: 2>/dev/null || true)"
+    if [[ -z "$from_key" || "$from_cert" != "$from_key" ]]; then
+        die "$EXIT_USAGE" "the TLS key is unreadable (an encrypted key is not supported) or does not match the certificate"
+    fi
+    openssl x509 -in "$cert" -noout -checkend 2592000 >/dev/null 2>&1 || log_warn "the certificate expires in less than 30 days"
+    openssl x509 -in "$cert" -noout -checkhost "$SERVER_NAME" 2>/dev/null | grep -q 'does match' ||
+        log_warn "the certificate does not cover the server name $SERVER_NAME"
+}
+
+install_provided() {
+    local cert_src pem rc=0
+    cert_src="$(get_option "$NAME" tls-cert)"
+    if [[ -z "$cert_src" ]]; then
+        log_info "keeping the provided certificate already installed"
+        track_file "$(tls_cert_file)"
+        track_file "$(tls_key_file)"
+        return 0
+    fi
+    [[ -r "$cert_src" ]] || die "$EXIT_USAGE" "certificate not readable: $cert_src"
+    pem="$(key_pem)" || exit "$?"
+    check_pair "$cert_src" "$pem"
+    write_file "$(tls_cert_file)" 0644 <"$cert_src" || rc=$?
+    ((rc == 0 || rc == 10)) || exit "$rc"
+    rc=0
+    printf '%s\n' "$pem" | write_file "$(tls_key_file)" 0600 || rc=$?
+    ((rc == 0 || rc == 10)) || exit "$rc"
+    log_info "installed the provided certificate"
+}
+
+# --- Let's Encrypt -------------------------------------------------------------------
+
+remove_acme() {
+    rm -f "$(root_path "$ACME_CONF")"
+    rm -rf "$(root_path "$ACME_ROOT")"
+}
+
+# render_acme: the port 80 server that answers the HTTP-01 challenge.
+render_acme() {
+    local rc=0
+    export DOLLAR='$' NGX_SERVER_NAME="$SERVER_NAME" NGX_ACME_ROOT="$ACME_ROOT"
+    if [[ "$PORT" == 443 ]]; then NGX_PORT_SUFFIX=""; else NGX_PORT_SUFFIX=":$PORT"; fi
+    export NGX_PORT_SUFFIX
+    track_file "$ACME_ROOT"
+    mkdir -p "$(root_path "$ACME_ROOT")"
+    render_template "$TEMPLATE_DIR/acme.conf" "$ACME_CONF" 0644 root:root || rc=$?
+    ((rc == 0 || rc == 10)) || exit "$rc"
+}
+
+# obtain_letsencrypt: certbot, once. The renewal is certbot's own timer, and its
+# deploy hook reloads nginx. A failure is exit 5, never a self-signed certificate.
+obtain_letsencrypt() {
+    local email args
+    if [[ -s "$(root_path "$(cert_path)")" ]]; then
+        log_info "a Let's Encrypt certificate already exists for $SERVER_NAME, certbot renews it"
+        return 0
+    fi
+    email="$(get_option "$NAME" tls-email)"
+    args=(certbot certonly --webroot -w "$ACME_ROOT" -d "$SERVER_NAME" --cert-name "$SERVER_NAME"
+        --non-interactive --agree-tos --deploy-hook "systemctl reload $UNIT")
+    if [[ -n "$email" ]]; then
+        args+=(-m "$email")
+    else
+        args+=(--register-unsafely-without-email)
+    fi
+    if is_test_root; then
+        log_info "(test mode) would run: ${args[*]}"
+        return 0
+    fi
+    log_info "requesting a certificate for $SERVER_NAME from Let's Encrypt"
+    "${args[@]}" >&2 ||
+        die "$EXIT_NETWORK" "Let's Encrypt refused or could not be reached; the domain must point to this machine and port 80 be open (see /var/log/letsencrypt/letsencrypt.log)"
+}
+
 # --- Probe --------------------------------------------------------------------------
 
 # probe_code [<key>]: HTTP status of the health path, the certificate pinned
 # (verification is never disabled). The key goes through curl's config on
 # stdin, not on the command line.
 probe_code() {
-    local url cert
-    url="https://$(client_host "$BIND"):$PORT$HEALTH_PATH"
-    cert="$(root_path "$(tls_cert_file)")"
+    local host url args=(-sS -o /dev/null -w '%{http_code}' --max-time 5)
+    host="$(client_host "$BIND")"
+    url="https://$host:$PORT$HEALTH_PATH"
+    case "$TLS" in
+    self-signed) args+=(--cacert "$(root_path "$(tls_cert_file)")") ;;
+    letsencrypt)
+        # trusted by the system: connect by name so that it is verified
+        url="https://$SERVER_NAME:$PORT$HEALTH_PATH"
+        args+=(--resolve "$SERVER_NAME:$PORT:$host")
+        ;;
+    # provided: the CA may be unknown to this machine. The request only reaches the
+    # loopback to prove nginx and the key; served_cert_matches proves the certificate.
+    provided) args+=(--insecure) ;;
+    esac
     if [[ -n "${1:-}" ]]; then
-        printf 'header = "Authorization: Bearer %s"\n' "$1" |
-            curl -sS -o /dev/null -w '%{http_code}' --max-time 5 --cacert "$cert" -K - "$url" 2>/dev/null || true
+        printf 'header = "Authorization: Bearer %s"\n' "$1" | curl "${args[@]}" -K - "$url" 2>/dev/null || true
     else
-        curl -sS -o /dev/null -w '%{http_code}' --max-time 5 --cacert "$cert" "$url" 2>/dev/null || true
+        curl "${args[@]}" "$url" 2>/dev/null || true
     fi
+}
+
+# served_cert_matches: nginx serves the certificate that was provided.
+served_cert_matches() {
+    local served file
+    served="$(openssl s_client -connect "$(client_host "$BIND"):$PORT" -servername "$SERVER_NAME" </dev/null 2>/dev/null |
+        openssl x509 -noout -fingerprint -sha256 2>/dev/null || true)"
+    file="$(openssl x509 -in "$(root_path "$(tls_cert_file)")" -noout -fingerprint -sha256 2>/dev/null || true)"
+    [[ -n "$served" && "$served" == "$file" ]]
 }
 
 # probe_ok <key>: 401 without the key and 200 with it, which proves TLS and auth.
 probe_ok() {
-    [[ "$(probe_code "")" == 401 && "$(probe_code "$1")" == 200 ]]
+    [[ "$(probe_code "")" == 401 && "$(probe_code "$1")" == 200 ]] &&
+        { [[ "$TLS" != provided ]] || served_cert_matches; }
 }
 
 wait_for_proxy() {
@@ -368,6 +566,10 @@ preflight() {
     if port_in_use && ! { service_active && state_read "$NAME" >/dev/null 2>&1; }; then
         die "$EXIT_PRECONDITION" "port $PORT is already in use by another process"
     fi
+    # the HTTP-01 challenge needs port 80: ours, or nginx's own (the distribution's default site)
+    if [[ "$TLS" == letsencrypt ]] && port_in_use 80 && ! service_active; then
+        die "$EXIT_PRECONDITION" "port 80 is in use by another process, Let's Encrypt needs it"
+    fi
 }
 
 # render_all <key>: the two configuration files. 0 when one changed, 10 when none.
@@ -376,8 +578,8 @@ render_all() {
     export DOLLAR='$'
     NGX_LISTEN="$(listen_address)"
     NGX_SERVER_NAME="$SERVER_NAME"
-    NGX_CERT="$(root_path "$(tls_cert_file)")"
-    NGX_KEY="$(root_path "$(tls_key_file)")"
+    NGX_CERT="$(root_path "$(cert_path)")"
+    NGX_KEY="$(root_path "$(key_path)")"
     NGX_DIR="$(root_path "$NGX_DIR_LOGICAL")"
     NGX_API_KEY="$1"
     export NGX_LISTEN NGX_SERVER_NAME NGX_CERT NGX_KEY NGX_DIR NGX_API_KEY
@@ -400,14 +602,16 @@ record_state() {
     local json files
     files="$( (pending_read "$NAME"; state_read "$NAME" 2>/dev/null || true) | jq -sc '[.[] | (.files // [])[]] | unique')"
     json="$(jq -n --arg v "$(nginx_version)" --arg sv "$SCRIPT_VERSION" --arg port "$PORT" --arg bind "$BIND" \
-        --arg sn "$SERVER_NAME" --arg tls "$TLS" --arg unit "$UNIT" --arg cert "$(tls_cert_file)" \
+        --arg sn "$SERVER_NAME" --arg tls "$TLS" --arg unit "$UNIT" --arg cert "$(cert_path)" \
+        --arg email "$(get_option "$NAME" tls-email)" \
         --arg apikey "$(secret_file)" --arg tlskey "$(tls_key_file)" --argjson files "$files" \
         --argjson default "$MAKE_DEFAULT" '{
         name: "nginx", type: "proxy", version: $v, script_version: $sv,
-        params: { port: $port, bind: $bind, "server-name": $sn, tls: $tls },
+        params: ({ port: $port, bind: $bind, "server-name": $sn, tls: $tls }
+          + (if $tls == "letsencrypt" and $email != "" then { "tls-email": $email } else {} end)),
         listen: { address: $bind, port: ($port | tonumber), tls: $tls, certificate: $cert },
         service: { unit: $unit }, requires: [], files: $files, data_dirs: [],
-        secrets: [$apikey, $tlskey]
+        secrets: ([$apikey] + (if $tls == "letsencrypt" then [] else [$tlskey] end))
       } + (if $default == 1 then { default: true } else {} end)')"
     if ! state_read "$NAME" >/dev/null 2>&1; then
         json="$(jq '. + { upstreams: [] }' <<<"$json")"
@@ -420,9 +624,29 @@ do_install() {
     pending_begin "$TYPE" "$NAME"
     # `|| exit`: this runs under `||` in run_logged, where set -e is off.
     key="$(resolve_api_key)" || exit "$?"
-    apt_install nginx openssl curl ca-certificates
+    if [[ "$TLS" == letsencrypt ]]; then
+        apt_install nginx openssl curl ca-certificates certbot
+    else
+        apt_install nginx openssl curl ca-certificates
+    fi
+    mkdir -p "$(root_path "$(config_dir_logical)/secrets")"
+    chmod 0700 "$(root_path "$(config_dir_logical)/secrets")"
     store_api_key "$key"
-    make_certificate
+    case "$TLS" in
+    self-signed)
+        remove_acme
+        make_certificate
+        ;;
+    provided)
+        remove_acme
+        install_provided
+        ;;
+    letsencrypt)
+        render_acme
+        nginx_reload || exit "$EXIT_VERIFY"
+        obtain_letsencrypt
+        ;;
+    esac
     render_all "$key" || rc=$?
     ((rc == 0 || rc == 10)) || exit "$rc"
     nginx_reload || {
@@ -443,13 +667,13 @@ do_install() {
         defaults_set "$TYPE" "$NAME"
     fi
     pending_remove "$NAME"
-    log_info "nginx proxy is installed on https://$SERVER_NAME:$PORT (self-signed certificate $(tls_cert_file))"
+    log_info "nginx proxy is installed on https://$SERVER_NAME:$PORT (certificate: $TLS)"
 }
 
 cmd_install() {
     preflight
     if is_dry_run; then
-        log_info "dry run: would install the nginx package, generate the API key and a self-signed" \
+        log_info "dry run: would install the nginx package, generate the API key, set up the $TLS" \
             "certificate for $SERVER_NAME, write $MAIN_CONF (listen $(listen_address)), reload nginx and record the state"
         return 0
     fi
@@ -488,6 +712,16 @@ do_uninstall() {
     done < <(jq -rs '[.[] | (.files // [])[]] | unique[]' <<<"$state $pending")
     remove_path "$MAIN_CONF"
     remove_path "$NGX_DIR_LOGICAL"
+    remove_path "$ACME_CONF"
+    remove_path "$ACME_ROOT"
+    if [[ "$TLS" == letsencrypt ]]; then
+        if ((PURGE)) && ! is_test_root && command -v certbot >/dev/null 2>&1; then
+            certbot delete --cert-name "$SERVER_NAME" --non-interactive >&2 ||
+                log_warn "could not delete the Let's Encrypt certificate of $SERVER_NAME"
+        else
+            log_info "the Let's Encrypt certificate of $SERVER_NAME is kept (--purge deletes it)"
+        fi
+    fi
     # The distribution's package and service are shared: they stay, without our configuration.
     if service_active; then
         nginx_reload || log_warn "nginx did not reload after the clean-up, check: nginx -t"

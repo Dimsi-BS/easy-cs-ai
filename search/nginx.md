@@ -12,7 +12,7 @@
 ## Weaknesses / must-know
 - API key check is not built in: needs a `map` on the `Authorization` header (static keys), or `auth_request` / Lua for dynamic keys. Plain `auth_basic` is not an API key scheme.
 - Required for LLM streaming: `proxy_buffering off`, `proxy_http_version 1.1`, and read timeouts raised (~600s) because the 60s default cuts long generations.
-- Certificates: Let's Encrypt needs a public domain; otherwise a self-signed cert is needed (see [decision: certificates](../docs/decision-nginx-certificates.md)).
+- Certificates: three strategies, self-signed (default), provided by the customer, or Let's Encrypt (needs a public domain and port 80), see [decision: certificates](../docs/decision-nginx-certificates.md).
 
 ## Health check
 - nginx starts in well under a second. The meaningful check is functional, not just "port open": validate with `nginx -t` before the reload, then request through the proxy and expect **401 without key** and **success with key**, which proves TLS and auth work. Estimated timeout: **30 s**.
@@ -22,7 +22,8 @@
 - The templates go through `envsubst`, which would erase the nginx variables (`$host`…): they are written `${DOLLAR}host`, with `DOLLAR='$'` exported.
 - The key is checked with a `map` on `Authorization: Bearer <key>`; every path, the health path `/easy-cs-ai/health` included, answers 401 without it. The key is generated (or given with `--api-key-file`, stdin or `EASY_CS_AI_NGINX_API_KEY`) and limited to `A-Za-z0-9._~-`, so it is safe inside the nginx file.
 - An upstream `<name>` is served under `/<name>/` (the prefix is stripped) and `add-upstream` prints `https://<server-name>[:port]/<name>/v1`.
-- The health probe pins the self-signed certificate with `--cacert` (verification is never disabled) and passes the key through curl's config on stdin.
+- The health probe depends on the strategy (pinned certificate, name and trust store, or fingerprint comparison for a provided one, see the decision) and passes the key through curl's config on stdin.
+- Let's Encrypt goes through `certbot certonly --webroot` and a port 80 `server` answering the HTTP-01 challenge; the certificate stays in `/etc/letsencrypt`, renewed by certbot's timer with a deploy hook reloading nginx.
 - `uninstall` removes the configuration and reloads nginx; the package and the service stay.
 
 ## Sources
