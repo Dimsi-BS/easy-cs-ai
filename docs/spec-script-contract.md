@@ -190,7 +190,7 @@ Phases, in order. A failure in any phase stops the script with the matching exit
 - **Fail fast**: if the service unit enters `failed` (or the container exits) while polling, stop at once with exit 6, without waiting for the timeout.
 - On failure, log the last probe result and the last lines of the service log (`journalctl` / `docker compose logs`) on stderr, never secrets.
 - The check proves the component answers; it does **not** include model pulls or loads, which are the business of `add-model` (size-dependent, with its own wait).
-- Starting values, estimated from the component findings and **to be confirmed by the integration tests** (measured on a minimal VM, then set with margin, roughly 3× the observed time):
+- Starting values, estimated from the component findings and **to be confirmed by the integration tests** (measured on a minimal VM, then set with margin, roughly 3× the observed time). Measured so far on an Ubuntu 24.04 VM with 4 vCPU (see [tests](../tests/README.md#integration-tests-on-a-vm)): LibreChat answers 25 to 30 s after the start with the images present, nginx and Ollama within a few seconds; vLLM and the other platforms are not measured:
 
 | Component | Probe | Default timeout |
 | --- | --- | --- |
