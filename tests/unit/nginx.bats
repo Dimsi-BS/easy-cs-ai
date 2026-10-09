@@ -25,7 +25,7 @@ nginx() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "${lines[1]}" = "proxy" ]
     [ "${lines[2]}" = "1" ]
     [ "${lines[3]}" = "30" ]
-    [[ "${lines[4]}" == port,bind,server-name,tls,tls-cert,tls-key,tls-email,tls-accept-terms,api-key,* ]]
+    [[ "${lines[4]}" == port,bind,site-port,server-name,tls,tls-cert,tls-key,tls-email,tls-accept-terms,api-key,* ]]
 }
 
 @test "describe flags the API key as a secret and lists the proxy actions" {
@@ -33,7 +33,7 @@ nginx() { run --separate-stderr bash "$SCRIPT" "$@"; }
     run jq -r '.options[] | select(.name == "api-key") | .secret' <<<"$output"
     [ "$output" = "true" ]
     nginx describe
-    for a in install uninstall status describe add-upstream remove-upstream show-key; do
+    for a in install uninstall status describe add-upstream remove-upstream add-site remove-site show-key; do
         run jq -e --arg a "$a" '.actions | index($a)' <<<"$(bash "$SCRIPT" describe)"
         [ "$status" -eq 0 ]
     done
@@ -133,8 +133,8 @@ nginx() { run --separate-stderr bash "$SCRIPT" "$@"; }
 }
 
 @test "install journals start and end" {
-    nginx install --server-name ai.test --port 8443
-    [[ "$stderr" == *"nginx install start params=port=8443,bind=0.0.0.0,server-name=ai.test,tls=self-signed"* ]]
+    nginx install --server-name ai.test --port 9443
+    [[ "$stderr" == *"nginx install start params=port=9443,bind=0.0.0.0,site-port=8443,server-name=ai.test,tls=self-signed"* ]]
     [[ "$stderr" == *"nginx install end exit=0"* ]]
 }
 
@@ -154,6 +154,15 @@ nginx() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "$status" -eq 2 ]
     EASY_CS_AI_NGINX_API_KEY='short key;' nginx install --server-name ai.test
     [ "$status" -eq 2 ]
+    EASY_CS_AI_NGINX_API_KEY="$(printf 'k%.0s' {1..129})" nginx install --server-name ai.test
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"16 to 128 characters"* ]]
+}
+
+@test "the key map has a hash bucket large enough for the longest key (nginx -t fails on a generated key otherwise)" {
+    nginx install --server-name ai.test
+    grep -q '^map_hash_bucket_size 256;' "$CONF/easy-cs-ai/api-key.conf"
+    [ "$(stat -c %a "$CONF/easy-cs-ai/api-key.conf")" = "600" ]
 }
 
 @test "a second install keeps the generated key and the certificate and changes nothing" {
@@ -235,9 +244,9 @@ nginx() { run --separate-stderr bash "$SCRIPT" "$@"; }
 }
 
 @test "the public URL carries a non-default port" {
-    nginx install --server-name ai.test --port 8443
+    nginx install --server-name ai.test --port 9443
     nginx add-upstream m http://127.0.0.1:8001
-    [ "$(jq -r .url <<<"$output")" = "https://ai.test:8443/m/v1" ]
+    [ "$(jq -r .url <<<"$output")" = "https://ai.test:9443/m/v1" ]
 }
 
 @test "add-upstream is idempotent and updates a changed URL" {
@@ -286,6 +295,145 @@ nginx() { run --separate-stderr bash "$SCRIPT" "$@"; }
     nginx add-upstream m http://127.0.0.1:8001 --dry-run
     [ "$status" -eq 0 ]
     [ ! -e "$CONF/easy-cs-ai/upstreams/m.conf" ]
+}
+
+# --- sites -------------------------------------------------------------------------
+
+@test "install records the site port, with 8443 as the default, and an empty list of sites" {
+    nginx install --server-name ai.test
+    run jq -r '.params["site-port"], .listen.site_port, (.sites | length)' "$STATE/components/nginx.json"
+    [ "${lines[0]}" = "8443" ]
+    [ "${lines[1]}" = "8443" ]
+    [ "${lines[2]}" = "0" ]
+    grep -q 'include .*/easy-cs-ai/sites/\*.conf;' "$CONF/conf.d/easy-cs-ai.conf"
+    [ -d "$CONF/easy-cs-ai/sites" ]
+}
+
+@test "--site-port is validated and recorded" {
+    nginx install --site-port abc
+    [ "$status" -eq 2 ]
+    nginx install --site-port 70000
+    [ "$status" -eq 2 ]
+    nginx install --server-name ai.test --site-port 9443
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.listen.site_port' "$STATE/components/nginx.json")" = "9443" ]
+}
+
+@test "add-site renders its own server without the API key, records it and prints the public URL" {
+    nginx install --server-name ai.test
+    nginx add-site librechat http://127.0.0.1:3080
+    [ "$status" -eq 0 ]
+    [ "$(jq -r .url <<<"$output")" = "https://ai.test:8443/" ]
+    f="$CONF/easy-cs-ai/sites/librechat.conf"
+    grep -q 'listen 0.0.0.0:8443 ssl;' "$f"
+    grep -q 'server_name ai.test;' "$f"
+    grep -q 'proxy_pass http://127.0.0.1:3080;' "$f"
+    grep -q 'proxy_buffering off;' "$f"
+    grep -q 'proxy_set_header Host \$host;' "$f"
+    grep -q 'proxy_set_header Upgrade \$http_upgrade;' "$f"
+    grep -q 'map \$http_upgrade \$easy_cs_ai_connection_librechat' "$f"
+    grep -q "ssl_certificate $SYS/etc/easy-cs-ai/nginx/server.crt;" "$f"
+    ! grep -q 'easy_cs_ai_authorized' "$f"
+    run jq -c '.sites' "$STATE/components/nginx.json"
+    [ "$output" = '[{"name":"librechat","url":"http://127.0.0.1:3080"}]' ]
+    jq -e '.files | index("/etc/nginx/easy-cs-ai/sites/librechat.conf")' "$STATE/components/nginx.json"
+}
+
+@test "the API server is untouched by a site: the key is still required on every path" {
+    nginx install --server-name ai.test
+    before="$(cat "$CONF/conf.d/easy-cs-ai.conf")"
+    nginx add-site librechat http://127.0.0.1:3080
+    [ "$(cat "$CONF/conf.d/easy-cs-ai.conf")" = "$before" ]
+    grep -q '\$easy_cs_ai_authorized = 0' "$CONF/conf.d/easy-cs-ai.conf"
+}
+
+@test "add-site is idempotent and updates a changed URL" {
+    nginx install --server-name ai.test
+    nginx add-site librechat http://127.0.0.1:3080
+    first="$output"
+    nginx add-site librechat http://127.0.0.1:3080/
+    [ "$output" = "$first" ]
+    nginx add-site librechat http://127.0.0.1:3081
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.sites' "$STATE/components/nginx.json")" = '[{"name":"librechat","url":"http://127.0.0.1:3081"}]' ]
+    grep -q 'proxy_pass http://127.0.0.1:3081;' "$CONF/easy-cs-ai/sites/librechat.conf"
+}
+
+@test "add-site validates its arguments and needs an installed proxy" {
+    nginx add-site librechat http://127.0.0.1:3080
+    [ "$status" -eq 4 ]
+    nginx install --server-name ai.test
+    nginx add-site
+    [ "$status" -eq 2 ]
+    nginx add-site 'Bad Name' http://127.0.0.1:3080
+    [ "$status" -eq 2 ]
+    nginx add-site librechat
+    [ "$status" -eq 2 ]
+    nginx add-site librechat 'http://x; return 200;'
+    [ "$status" -eq 2 ]
+    nginx add-site librechat http://127.0.0.1:3080/some/path
+    [ "$status" -eq 2 ]
+    nginx add-site librechat ftp://127.0.0.1
+    [ "$status" -eq 2 ]
+}
+
+@test "add-site refuses a site port equal to the API port, and a second site on the same port" {
+    nginx install --server-name ai.test --port 8443
+    nginx add-site librechat http://127.0.0.1:3080
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"is the HTTPS port of the API"* ]]
+    nginx install --server-name ai.test --site-port 9443
+    nginx add-site librechat http://127.0.0.1:3080
+    [ "$status" -eq 0 ]
+    nginx add-site other http://127.0.0.1:3090
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"site librechat already uses port 9443"* ]]
+}
+
+@test "add-site uses the site port recorded at install and the recorded certificate strategy" {
+    nginx install --server-name ai.test --site-port 9443
+    nginx add-site librechat http://127.0.0.1:3080
+    [ "$(jq -r .url <<<"$output")" = "https://ai.test:9443/" ]
+    grep -q 'listen 0.0.0.0:9443 ssl;' "$CONF/easy-cs-ai/sites/librechat.conf"
+}
+
+@test "a reinstall keeps the sites" {
+    nginx install --server-name ai.test
+    nginx add-site librechat http://127.0.0.1:3080
+    nginx install --server-name ai.test
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.sites' "$STATE/components/nginx.json")" = '[{"name":"librechat","url":"http://127.0.0.1:3080"}]' ]
+    [ -f "$CONF/easy-cs-ai/sites/librechat.conf" ]
+}
+
+@test "remove-site removes the server and the record, and is idempotent" {
+    nginx install --server-name ai.test
+    nginx add-site librechat http://127.0.0.1:3080
+    nginx remove-site librechat
+    [ "$status" -eq 0 ]
+    [ ! -e "$CONF/easy-cs-ai/sites/librechat.conf" ]
+    [ "$(jq -c '.sites' "$STATE/components/nginx.json")" = "[]" ]
+    ! jq -e '.files | index("/etc/nginx/easy-cs-ai/sites/librechat.conf")' "$STATE/components/nginx.json"
+    nginx remove-site librechat
+    [ "$status" -eq 0 ]
+}
+
+@test "add-site and remove-site --dry-run change nothing" {
+    nginx install --server-name ai.test
+    nginx add-site librechat http://127.0.0.1:3080 --dry-run
+    [ "$status" -eq 0 ]
+    [ ! -e "$CONF/easy-cs-ai/sites/librechat.conf" ]
+    nginx add-site librechat http://127.0.0.1:3080
+    nginx remove-site librechat --dry-run
+    [ -e "$CONF/easy-cs-ai/sites/librechat.conf" ]
+}
+
+@test "uninstall removes the sites with the rest of the configuration" {
+    nginx install --server-name ai.test
+    nginx add-site librechat http://127.0.0.1:3080
+    nginx uninstall
+    [ "$status" -eq 0 ]
+    [ ! -e "$CONF/easy-cs-ai" ]
 }
 
 # --- show-key ----------------------------------------------------------------------

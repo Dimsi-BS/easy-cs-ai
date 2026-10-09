@@ -3,7 +3,7 @@
 # docs/spec-script-contract.md, search/nginx.md and docs/decision-nginx-certificates.md.
 #
 #   nginx.sh <action> [options]
-#   actions: install uninstall status describe add-upstream remove-upstream show-key
+#   actions: install uninstall status describe add-upstream remove-upstream add-site remove-site show-key
 set -euo pipefail
 
 readonly NAME=nginx
@@ -14,8 +14,9 @@ readonly HEALTH_TIMEOUT=30
 readonly MAIN_CONF=/etc/nginx/conf.d/easy-cs-ai.conf
 readonly NGX_DIR_LOGICAL=/etc/nginx/easy-cs-ai
 readonly UPSTREAM_DIR=/etc/nginx/easy-cs-ai/upstreams
+readonly SITE_DIR=/etc/nginx/easy-cs-ai/sites
 readonly HEALTH_PATH=/easy-cs-ai/health
-readonly ACTIONS="install uninstall status describe add-upstream remove-upstream show-key"
+readonly ACTIONS="install uninstall status describe add-upstream remove-upstream add-site remove-site show-key"
 readonly ACME_CONF=/etc/nginx/conf.d/easy-cs-ai-acme.conf
 readonly ACME_ROOT=/var/www/easy-cs-ai-acme
 readonly LE_DIR=/etc/letsencrypt
@@ -39,11 +40,14 @@ Actions: $ACTIONS
 
   add-upstream <name> <url>   expose an internal HTTP URL under /<name>/ (prints its public URL)
   remove-upstream <name>      stop exposing it
+  add-site <name> <url>       serve a web site (browsers, no API key) on --site-port (prints its public URL)
+  remove-site <name>          stop serving it
   show-key                    print the API key (the only action that prints a secret)
 
 Options:
   --port <n>              HTTPS port (default 443, EASY_CS_AI_NGINX_PORT)
   --bind <address>        listening address (default 0.0.0.0, EASY_CS_AI_NGINX_BIND)
+  --site-port <n>         HTTPS port of the web site added with add-site (default 8443, EASY_CS_AI_NGINX_SITE_PORT)
   --server-name <name>    name in the certificate and the URLs (default: the hostname, EASY_CS_AI_NGINX_SERVER_NAME)
   --tls <strategy>        certificate: self-signed (default), provided or letsencrypt
   --tls-cert <path>       provided: the certificate (PEM, full chain first)
@@ -83,12 +87,12 @@ parse_args() {
         opt="$1"
         shift
         case "$opt" in
-        --port | --bind | --server-name | --tls | --tls-cert | --tls-email | --health-timeout | --lock-timeout)
+        --port | --bind | --site-port | --server-name | --tls | --tls-cert | --tls-email | --health-timeout | --lock-timeout)
             [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$opt needs a value"
             set_option "$NAME" "${opt#--}" "$1"
             shift
             ;;
-        --port=* | --bind=* | --server-name=* | --tls=* | --tls-cert=* | --tls-email=* | --health-timeout=* | --lock-timeout=*)
+        --port=* | --bind=* | --site-port=* | --server-name=* | --tls=* | --tls-cert=* | --tls-email=* | --health-timeout=* | --lock-timeout=*)
             value="${opt#*=}"
             opt="${opt%%=*}"
             set_option "$NAME" "${opt#--}" "$value"
@@ -165,16 +169,21 @@ resolve_options() {
     SERVER_NAME_GIVEN="$(get_option "$NAME" server-name)"
     set_option_default "$NAME" port 443
     set_option_default "$NAME" bind 0.0.0.0
+    set_option_default "$NAME" site-port 8443
     set_option_default "$NAME" server-name "$(default_server_name)"
     set_option_default "$NAME" tls self-signed
     set_option_default "$NAME" health-timeout "$HEALTH_TIMEOUT"
     PORT="$(get_option "$NAME" port)"
     BIND="$(get_option "$NAME" bind)"
+    SITE_PORT="$(get_option "$NAME" site-port)"
     SERVER_NAME="$(get_option "$NAME" server-name)"
     TLS="$(get_option "$NAME" tls)"
     HEALTH="$(get_option "$NAME" health-timeout)"
     if [[ ! "$PORT" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
         die "$EXIT_USAGE" "invalid port '$PORT'"
+    fi
+    if [[ ! "$SITE_PORT" =~ ^[0-9]+$ ]] || ((SITE_PORT < 1 || SITE_PORT > 65535)); then
+        die "$EXIT_USAGE" "invalid site port '$SITE_PORT'"
     fi
     if [[ ! "$BIND" =~ ^[A-Za-z0-9.:-]+$ ]]; then
         die "$EXIT_USAGE" "invalid bind address '$BIND'"
@@ -199,7 +208,7 @@ resolve_options() {
 adopt_recorded_params() {
     local json key
     if json="$(state_read "$NAME")"; then
-        for key in port bind server-name tls; do
+        for key in port bind site-port server-name tls; do
             set_option_default "$NAME" "$key" "$(jq -r --arg k "$key" '.params[$k] // empty' <<<"$json")"
         done
     fi
@@ -213,13 +222,14 @@ client_host() {
     esac
 }
 
-# listen_address: the nginx `listen` value (an IPv6 address needs brackets).
+# listen_address [<port>]: the nginx `listen` value (an IPv6 address needs
+# brackets), for the HTTPS port unless another is given.
 listen_address() {
     local bind="$BIND"
     if [[ "$bind" == *:* && "$bind" != \[* ]]; then
         bind="[$bind]"
     fi
-    printf '%s:%s\n' "$bind" "$PORT"
+    printf '%s:%s\n' "$bind" "${1:-$PORT}"
 }
 
 # public_url <upstream>: the OpenAI-style base URL of an upstream.
@@ -228,6 +238,9 @@ public_url() {
     [[ "$PORT" == 443 ]] || port=":$PORT"
     printf 'https://%s%s/%s/v1\n' "$SERVER_NAME" "$port" "$1"
 }
+
+# site_url: the public URL of a web site, which has its own port.
+site_url() { printf 'https://%s:%s/\n' "$SERVER_NAME" "$SITE_PORT"; }
 
 # --- Paths (logical, EASY_CS_AI_ROOT is applied by root_path) -------------------
 
@@ -256,6 +269,7 @@ describe() {
         options: [
           { name: "port", env: "EASY_CS_AI_NGINX_PORT", default: "443", secret: false, description: "HTTPS port" },
           { name: "bind", env: "EASY_CS_AI_NGINX_BIND", default: "0.0.0.0", secret: false, description: "Listening address" },
+          { name: "site-port", env: "EASY_CS_AI_NGINX_SITE_PORT", default: "8443", secret: false, description: "HTTPS port of the web site added with add-site (a chat interface for browsers, no API key)" },
           { name: "server-name", env: "EASY_CS_AI_NGINX_SERVER_NAME", default: "hostname", secret: false, description: "Name in the certificate and in the public URLs" },
           { name: "tls", env: "EASY_CS_AI_NGINX_TLS", default: "self-signed", secret: false, description: "Certificate strategy: self-signed, provided or letsencrypt" },
           { name: "tls-cert", env: "EASY_CS_AI_NGINX_TLS_CERT", default: "", secret: false, description: "provided: path of the certificate (PEM, full chain first)" },
@@ -274,7 +288,7 @@ describe() {
 run_logged() {
     local action="$1" start=$SECONDS rc=0
     shift
-    log_event "$NAME $action start params=port=$PORT,bind=$BIND,server-name=$SERVER_NAME,tls=$TLS"
+    log_event "$NAME $action start params=port=$PORT,bind=$BIND,site-port=$SITE_PORT,server-name=$SERVER_NAME,tls=$TLS"
     ("$@") || rc=$?
     log_event "$NAME $action end exit=$rc duration=$((SECONDS - start))s"
     return "$rc"
@@ -334,7 +348,7 @@ write_file() {
 
 # --- API key and certificate ------------------------------------------------------
 
-valid_key() { [[ "$1" =~ ^[A-Za-z0-9._~-]{16,}$ ]]; }
+valid_key() { [[ "$1" =~ ^[A-Za-z0-9._~-]{16,128}$ ]]; }
 
 # resolve_api_key: the channels of the contract (file or stdin, environment),
 # then the key already installed, else a generated one. Prints it, never logs it.
@@ -350,7 +364,7 @@ resolve_api_key() {
     else
         key="$(generate_secret)"
     fi
-    valid_key "$key" || die "$EXIT_USAGE" "the API key must be at least 16 characters among A-Z a-z 0-9 . _ ~ -"
+    valid_key "$key" || die "$EXIT_USAGE" "the API key must be 16 to 128 characters among A-Z a-z 0-9 . _ ~ -"
     printf '%s\n' "$key"
 }
 
@@ -583,7 +597,7 @@ render_all() {
     NGX_DIR="$(root_path "$NGX_DIR_LOGICAL")"
     NGX_API_KEY="$1"
     export NGX_LISTEN NGX_SERVER_NAME NGX_CERT NGX_KEY NGX_DIR NGX_API_KEY
-    mkdir -p "$(root_path "$UPSTREAM_DIR")"
+    mkdir -p "$(root_path "$UPSTREAM_DIR")" "$(root_path "$SITE_DIR")"
     track_file "$NGX_DIR_LOGICAL"
     for pair in "api-key.conf|$NGX_DIR_LOGICAL/api-key.conf|0600" "easy-cs-ai.conf|$MAIN_CONF|0644"; do
         rc=0
@@ -601,20 +615,20 @@ render_all() {
 record_state() {
     local json files
     files="$( (pending_read "$NAME"; state_read "$NAME" 2>/dev/null || true) | jq -sc '[.[] | (.files // [])[]] | unique')"
-    json="$(jq -n --arg v "$(nginx_version)" --arg sv "$SCRIPT_VERSION" --arg port "$PORT" --arg bind "$BIND" \
+    json="$(jq -n --arg v "$(nginx_version)" --arg sv "$SCRIPT_VERSION" --arg port "$PORT" --arg bind "$BIND" --arg sport "$SITE_PORT" \
         --arg sn "$SERVER_NAME" --arg tls "$TLS" --arg unit "$UNIT" --arg cert "$(cert_path)" \
         --arg email "$(get_option "$NAME" tls-email)" \
         --arg apikey "$(secret_file)" --arg tlskey "$(tls_key_file)" --argjson files "$files" \
         --argjson default "$MAKE_DEFAULT" '{
         name: "nginx", type: "proxy", version: $v, script_version: $sv,
-        params: ({ port: $port, bind: $bind, "server-name": $sn, tls: $tls }
+        params: ({ port: $port, bind: $bind, "site-port": $sport, "server-name": $sn, tls: $tls }
           + (if $tls == "letsencrypt" and $email != "" then { "tls-email": $email } else {} end)),
-        listen: { address: $bind, port: ($port | tonumber), tls: $tls, certificate: $cert },
+        listen: { address: $bind, port: ($port | tonumber), site_port: ($sport | tonumber), tls: $tls, certificate: $cert },
         service: { unit: $unit }, requires: [], files: $files, data_dirs: [],
         secrets: ([$apikey] + (if $tls == "letsencrypt" then [] else [$tlskey] end))
       } + (if $default == 1 then { default: true } else {} end)')"
     if ! state_read "$NAME" >/dev/null 2>&1; then
-        json="$(jq '. + { upstreams: [] }' <<<"$json")"
+        json="$(jq '. + { upstreams: [], sites: [] }' <<<"$json")"
     fi
     state_write "$NAME" "$json"
 }
@@ -849,6 +863,108 @@ cmd_remove_upstream() {
     with_component_lock "$TYPE" "$NAME" remove-upstream run_logged remove-upstream do_remove_upstream "${POSITIONAL[0]}"
 }
 
+# --- sites --------------------------------------------------------------------------
+# A site is a web page for browsers (the chat interface): its own `server` on its
+# own port, same certificate, no API key, so the API server keeps requiring the key
+# on every path (docs/decision-librechat-install.md, point 3).
+
+check_site_url() {
+    if [[ ! "${1:-}" =~ ^https?://[][A-Za-z0-9.:-]+/?$ ]]; then
+        die "$EXIT_USAGE" "invalid or missing site URL '${1:-}' (a scheme, a host and a port, no path)"
+    fi
+}
+
+# site_var <name>: the name as a part of an nginx variable.
+site_var() { printf '%s\n' "${1//[^A-Za-z0-9]/_}"; }
+
+# check_site_slot <name>: one site per site port, which is not the API port and
+# is free (nginx itself holding it for this very site is fine).
+check_site_slot() {
+    local name="$1" other own
+    if [[ "$SITE_PORT" == "$PORT" ]]; then
+        die "$EXIT_PRECONDITION" "the site port $SITE_PORT is the HTTPS port of the API: reinstall nginx with another --site-port"
+    fi
+    other="$(state_read "$NAME" | jq -r --arg n "$name" '[(.sites // [])[] | select(.name != $n) | .name][0] // empty')"
+    if [[ -n "$other" ]]; then
+        die "$EXIT_PRECONDITION" "the site $other already uses port $SITE_PORT: one site per --site-port"
+    fi
+    if ! is_test_root; then
+        own="$(state_read "$NAME" | jq -r --arg n "$name" '(.sites // []) | any(.name == $n)')"
+        if [[ "$own" != true ]] && port_in_use "$SITE_PORT"; then
+            die "$EXIT_PRECONDITION" "port $SITE_PORT is already in use by another process"
+        fi
+    fi
+}
+
+do_add_site() {
+    local name="$1" url="${2%/}" file="$SITE_DIR/$1.conf" dest backup="" rc=0
+    check_site_slot "$name"
+    dest="$(root_path "$file")"
+    if [[ -f "$dest" ]]; then
+        backup="$(mktemp)"
+        cp -p "$dest" "$backup"
+    fi
+    mkdir -p "$(root_path "$SITE_DIR")"
+    DOLLAR='$' NGX_SITE="$name" NGX_SITE_URL="$url" NGX_SERVER_NAME="$SERVER_NAME"
+    NGX_SITE_VAR="$(site_var "$name")"
+    NGX_SITE_LISTEN="$(listen_address "$SITE_PORT")"
+    NGX_CERT="$(root_path "$(cert_path)")"
+    NGX_KEY="$(root_path "$(key_path)")"
+    export DOLLAR NGX_SITE NGX_SITE_VAR NGX_SITE_URL NGX_SITE_LISTEN NGX_SERVER_NAME NGX_CERT NGX_KEY
+    render_template "$TEMPLATE_DIR/site.conf" "$file" 0644 root:root || rc=$?
+    ((rc == 0 || rc == 10)) || exit "$rc"
+    if ((rc == 0)) && ! nginx_reload; then
+        if [[ -n "$backup" ]]; then cp -p "$backup" "$dest"; else rm -f "$dest"; fi
+        [[ -z "$backup" ]] || rm -f "$backup"
+        die "$EXIT_VERIFY" "nginx refused the configuration for the site $name, change reverted"
+    fi
+    [[ -z "$backup" ]] || rm -f "$backup"
+    state_write "$NAME" "$(state_read "$NAME" | jq --arg n "$name" --arg u "$url" --arg f "$file" --arg sp "$SITE_PORT" '{
+        name: .name, type: .type,
+        params: ((.params // {}) + { "site-port": $sp }),
+        listen: ((.listen // {}) + { site_port: ($sp | tonumber) }),
+        sites: (((.sites // []) | map(select(.name != $n))) + [{ name: $n, url: $u }]),
+        files: (((.files // []) + [$f]) | unique)
+      }')"
+    log_info "site $name now fronts $url"
+    jq -n --arg u "$(site_url)" '{ url: $u }'
+}
+
+cmd_add_site() {
+    check_upstream_name "${POSITIONAL[0]:-}"
+    check_site_url "${POSITIONAL[1]:-}"
+    require_root
+    require_installed
+    if is_dry_run; then
+        log_info "dry run: would serve ${POSITIONAL[1]} on https://$SERVER_NAME:$SITE_PORT/"
+        return 0
+    fi
+    with_component_lock "$TYPE" "$NAME" add-site run_logged add-site do_add_site "${POSITIONAL[0]}" "${POSITIONAL[1]}"
+}
+
+do_remove_site() {
+    local name="$1"
+    rm -f "$(root_path "$SITE_DIR/$name.conf")"
+    nginx_reload || die "$EXIT_VERIFY" "nginx did not accept the configuration after removing the site $name"
+    state_write "$NAME" "$(state_read "$NAME" | jq --arg n "$name" --arg f "$SITE_DIR/$name.conf" '{
+        name: .name, type: .type,
+        sites: ((.sites // []) | map(select(.name != $n))),
+        files: ((.files // []) | map(select(. != $f)))
+      }')"
+    log_info "site $name is removed"
+}
+
+cmd_remove_site() {
+    check_upstream_name "${POSITIONAL[0]:-}"
+    require_root
+    require_installed
+    if is_dry_run; then
+        log_info "dry run: would stop serving the site ${POSITIONAL[0]}"
+        return 0
+    fi
+    with_component_lock "$TYPE" "$NAME" remove-site run_logged remove-site do_remove_site "${POSITIONAL[0]}"
+}
+
 # show-key: the only action that prints a secret, on explicit request.
 cmd_show_key() {
     require_root
@@ -889,6 +1005,8 @@ main() {
     status) cmd_status ;;
     add-upstream) cmd_add_upstream ;;
     remove-upstream) cmd_remove_upstream ;;
+    add-site) cmd_add_site ;;
+    remove-site) cmd_remove_site ;;
     show-key) cmd_show_key ;;
     esac
 }
