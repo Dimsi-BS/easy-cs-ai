@@ -12,6 +12,7 @@ This directory contains design decisions and write-ups about the project, comple
 - [Decision: integration order](decision-integration-order.md) — ranking of alternative components per function (inference engine, chat interface)
 - [Decision: TLS certificates of the reverse proxy](decision-nginx-certificates.md) — self-signed by default, certificate provided by the customer, or Let's Encrypt
 - [Decision: how vLLM is installed](decision-vllm-install.md) — Python venv by default, Docker reserved (proposed)
+- [Decision: how LibreChat is installed](decision-librechat-install.md) — Docker from its own apt repository, FerretDB + PostgreSQL stack pinned by digest, web interface served by a second nginx `server`, registration closed by default (proposed)
 - [Decision: VM script generator](decision-vm-generator.md) — one interactive generator for the VM script, none for layer 1; package downloaded from a pinned source, not embedded
 - [Spec: script contract](spec-script-contract.md) — actions, parameters, secrets, output, exit codes and idempotence rules shared by all install scripts
 - [Spec: state format](spec-state-format.md) — layout and JSON schema of `/var/lib/easy-cs-ai/`, feeding `status` and the defaults of `add`
