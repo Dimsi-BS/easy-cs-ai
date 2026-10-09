@@ -845,3 +845,148 @@ systemd_disable_now() {
     systemctl disable --now "$unit" >&2 || log_debug "could not disable $unit (not installed?)"
     return 0
 }
+
+# --- Docker (docs/decision-librechat-install.md, point 1) ---------------------
+# Docker comes from its own apt repository, so the packages have the same names
+# on Debian and Ubuntu. An existing Docker with Compose v2, whatever its origin,
+# is kept. Docker is a shared system package: nothing here is recorded in the
+# pending manifest, so uninstall never removes the packages, the apt source or
+# the signing key.
+
+# Fingerprint of the signing key published by Docker (checked, not trusted blindly).
+readonly DOCKER_KEY_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+readonly DOCKER_APT_KEY=/etc/apt/keyrings/docker.asc
+readonly DOCKER_APT_LIST=/etc/apt/sources.list.d/docker.list
+readonly DOCKER_PACKAGES=(docker-ce docker-ce-cli containerd.io docker-compose-plugin)
+
+# _docker_bin: the docker command. EASY_CS_AI_DOCKER replaces it, for the tests.
+_docker_bin() { printf '%s\n' "${EASY_CS_AI_DOCKER:-docker}"; }
+
+# docker_ready: Docker and the Compose v2 plugin are installed.
+docker_ready() {
+    local bin
+    bin="$(_docker_bin)"
+    command -v "$bin" >/dev/null 2>&1 && "$bin" compose version >/dev/null 2>&1
+}
+
+# _docker_repo <os-release-file>: print "<distro> <codename>" of Docker's repository
+# for this system (ubuntu or debian, a derivative follows its parent).
+_docker_repo() {
+    local file="$1" id like codename ubuntu_codename distro
+    [[ -r "$file" ]] || die "$EXIT_UNSUPPORTED" "cannot read $file: Debian or Ubuntu expected"
+    id="$(sed -n 's/^ID=//p' "$file" | tr -d '"')"
+    like="$(sed -n 's/^ID_LIKE=//p' "$file" | tr -d '"')"
+    codename="$(sed -n 's/^VERSION_CODENAME=//p' "$file" | tr -d '"')"
+    ubuntu_codename="$(sed -n 's/^UBUNTU_CODENAME=//p' "$file" | tr -d '"')"
+    case " $id $like " in
+    *" ubuntu "*)
+        codename="${ubuntu_codename:-$codename}"
+        distro=ubuntu
+        ;;
+    *" debian "*) distro=debian ;;
+    *) die "$EXIT_UNSUPPORTED" "unsupported distribution '${id:-unknown}': Debian or Ubuntu expected" ;;
+    esac
+    [[ -n "$codename" ]] ||
+        die "$EXIT_UNSUPPORTED" "no release codename in $file: Docker's repository needs a stable Debian or Ubuntu release"
+    printf '%s %s\n' "$distro" "$codename"
+}
+
+# _docker_arch: the Debian architecture name Docker's repository uses.
+_docker_arch() {
+    case "$(uname -m)" in
+    x86_64) printf 'amd64\n' ;;
+    aarch64) printf 'arm64\n' ;;
+    *) die "$EXIT_UNSUPPORTED" "unsupported architecture '$(uname -m)': x86_64 or aarch64 expected" ;;
+    esac
+}
+
+# _docker_fetch_key <distro> <destination>: download the signing key, check its
+# fingerprint, install it atomically (mode 0644).
+_docker_fetch_key() {
+    local distro="$1" dest="$2" tmp fingerprint
+    tmp="$(mktemp "${dest%/*}/.${dest##*/}.XXXXXX")"
+    if ! curl -fsSL --retry 3 --max-time 60 "https://download.docker.com/linux/$distro/gpg" -o "$tmp"; then
+        rm -f "$tmp"
+        die "$EXIT_NETWORK" "could not download the Docker signing key from download.docker.com"
+    fi
+    fingerprint="$(gpg --show-keys --with-colons "$tmp" 2>/dev/null | awk -F: '/^fpr:/ { print $10; exit }')"
+    if [[ "$fingerprint" != "$DOCKER_KEY_FINGERPRINT" ]]; then
+        rm -f "$tmp"
+        die "$EXIT_NETWORK" "the Docker signing key has an unexpected fingerprint '${fingerprint:-none}', refusing it"
+    fi
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$dest"
+}
+
+# _docker_write_source <distro> <codename> <arch>: the apt source, written only
+# when it differs.
+_docker_write_source() {
+    local list tmp line
+    list="$(root_path "$DOCKER_APT_LIST")"
+    line="deb [arch=$3 signed-by=$DOCKER_APT_KEY] https://download.docker.com/linux/$1 $2 stable"
+    mkdir -p "${list%/*}"
+    tmp="$(mktemp "${list%/*}/.${list##*/}.XXXXXX")"
+    printf '%s\n' "$line" >"$tmp"
+    if [[ -f "$list" ]] && cmp -s "$tmp" "$list"; then
+        rm -f "$tmp"
+        return 0
+    fi
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$list"
+}
+
+# _docker_daemon_up: start the Docker service when the daemon does not answer,
+# then wait for it (30 s). Skipped in test mode.
+_docker_daemon_up() {
+    local bin deadline
+    if is_test_root; then
+        return 0
+    fi
+    bin="$(_docker_bin)"
+    if "$bin" info >/dev/null 2>&1; then
+        return 0
+    fi
+    _systemctl enable --now docker.service
+    deadline=$((SECONDS + 30))
+    until "$bin" info >/dev/null 2>&1; do
+        if ((SECONDS >= deadline)); then
+            die "$EXIT_VERIFY" "the Docker daemon does not answer after 30 s (journalctl -u docker)"
+        fi
+        sleep 1
+    done
+}
+
+# ensure_docker: make sure Docker and Compose v2 are installed and running. Does
+# nothing when they are. Exit 3 on an unsupported distribution or architecture,
+# 5 when Docker's repository or key cannot be reached or the key does not match.
+# In test mode it writes the apt source under EASY_CS_AI_ROOT, and only logs the
+# download, the packages and the service.
+ensure_docker() {
+    if docker_ready; then
+        log_debug "Docker and Compose are already installed"
+        _docker_daemon_up
+        return 0
+    fi
+    local repo distro codename arch key
+    repo="$(_docker_repo "$(root_path /etc/os-release)")" || exit "$?"
+    distro="${repo% *}"
+    codename="${repo#* }"
+    arch="$(_docker_arch)" || exit "$?"
+    log_info "installing Docker from its apt repository ($distro $codename, $arch)"
+    apt_install ca-certificates curl gnupg
+    key="$(root_path "$DOCKER_APT_KEY")"
+    mkdir -p "${key%/*}"
+    chmod 0755 "${key%/*}"
+    if is_test_root; then
+        log_info "(test mode) would download and check the signing key of download.docker.com"
+    else
+        _docker_fetch_key "$distro" "$key"
+    fi
+    _docker_write_source "$distro" "$codename" "$arch"
+    apt_install "${DOCKER_PACKAGES[@]}"
+    _systemctl enable --now docker.service
+    _docker_daemon_up
+    if ! is_test_root && ! docker_ready; then
+        die "$EXIT_VERIFY" "Docker is installed but 'docker compose version' fails"
+    fi
+}
