@@ -122,8 +122,8 @@ The default component of a type is **explicit**: it is the one whose file has `"
 ### Type-specific fields
 
 - **`engine`**: `models`, each with `name`, `added_at`, `exposed_via` (name of the `proxy` component, or `null` when the engine is `protected` or the model is not exposed) and `linked_to` (names of `chat-interface` components). The model list is the single source: `status` and `add` read it here, the chat interface and proxy hold no copy. For an engine running **one instance per model** (vLLM, see the [script contract](spec-script-contract.md#engines-with-one-instance-per-model)), each model also has `unit` (its systemd unit, e.g. `vllm@llama3-8b.service`) and `port`, the instance being an internal detail of the engine, not a separate component. `models` may be empty (installed, no model yet), and the component-level `service` and `endpoint` are then absent for such an engine: each model carries its own.
-- **`proxy`**: `upstreams`, array of `{ "name", "url" }` with the engine models they front, and `listen` (`{ "address", "port", "tls": "letsencrypt" | "self-signed" | "provided", "certificate" }`, `certificate` being the path of the certificate nginx serves; the strategy is decided in [decision: certificates](decision-nginx-certificates.md)).
-- **`chat-interface`**: `endpoints`, array of `{ "name", "url" }` declared in its configuration (for LibreChat, the entries of `librechat.yaml`), and `url` of the web site.
+- **`proxy`**: `upstreams`, array of `{ "name", "url" }` with the engine models they front, `sites`, array of `{ "name", "url" }` with the web sites it serves for browsers (`add-site`), and `listen` (`{ "address", "port", "site_port", "tls": "letsencrypt" | "self-signed" | "provided", "certificate" }`, `certificate` being the path of the certificate nginx serves; the strategy is decided in [decision: certificates](decision-nginx-certificates.md)).
+- **`chat-interface`**: `endpoints`, array of `{ "name", "url", "model" }` declared in its configuration (for LibreChat, the entries of `librechat.yaml`; `model` is absent when none was given), and `url` of the web site. A component that keeps data in a Docker volume lists it in `data_dirs` as `docker-volume:<name>`, which is not a path.
 - **`provisioning`**: none beyond the common fields.
 
 ## Pending manifest
@@ -160,7 +160,7 @@ The default component of a type is **explicit**: it is the one whose file has `"
 COMPONENT     TYPE            VERSION   DEFAULT  RUNNING  HEALTHY  MODELS
 ollama        engine          0.5.7     yes      yes      yes      llama3.2:3b
 nginx         proxy           1.24.0    yes      yes      yes      -
-librechat     chat-interface  0.7.5     yes      yes      yes      -
+librechat     chat-interface  0.8.7     yes      yes      yes      -
 ```
 
 A component with a state file but a failing probe is shown as installed and not healthy, never silently hidden. A component running on the machine but absent from the state is not reported: the state only covers what the tool installed.

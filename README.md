@@ -126,7 +126,7 @@ Planned work, in dependency order:
 | Install scripts | vLLM install script              | Not started |
 | Install scripts | llmfit install script            | Written, unit-tested, run against the real binary (CPU-only), not tested on a VM |
 | Install scripts | Reverse proxy (HTTPS + API key)  | nginx written and unit-tested (self-signed, provided or Let's Encrypt certificate), not tested on a VM |
-| Install scripts | LibreChat install script         | Not started |
+| Install scripts | LibreChat install script         | Written and unit-tested; the stack it generates was run for real (Docker, 3 containers, endpoint, registration closing); the script itself is not yet run as root on a VM |
 | Package / CLI   | CLI dispatcher + tarball/deb/rpm | Dispatcher and tarball written and unit-tested; `.deb`/`.rpm` definition and release workflow written, not run yet |
 | Package / CLI   | `status` command                 | Written, unit-tested |
 | Package / CLI   | `install` command                | Written, unit-tested |
