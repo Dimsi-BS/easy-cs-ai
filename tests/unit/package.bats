@@ -74,3 +74,16 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
     grep -q 'dst: /usr/bin/easy-cs-ai' "$ROOT/package/nfpm.yaml"
     grep -q 'dst: /usr/lib/easy-cs-ai' "$ROOT/package/nfpm.yaml"
 }
+
+@test "the component scripts and the generator are executable in the stage, whatever the checkout" {
+    tree="$BATS_TEST_TMPDIR/tree"
+    mkdir "$tree"
+    cp -a "$ROOT/package" "$ROOT/install_scripts" "$ROOT/vm_script" "$tree/"
+    find "$tree" -name '*.sh' -exec chmod 0644 {} +
+    bash "$tree/package/build.sh" --output "$DIST" >/dev/null
+    [ -x "$DIST/stage/lib/easy-cs-ai/engine/ollama.sh" ]
+    [ -x "$DIST/stage/lib/easy-cs-ai/proxy/nginx.sh" ]
+    [ -x "$DIST/stage/lib/easy-cs-ai/chat-interface/librechat.sh" ]
+    [ -x "$DIST/stage/lib/easy-cs-ai/provisioning/llmfit.sh" ]
+    [ -x "$DIST/stage/lib/easy-cs-ai/vm_script/generate.sh" ]
+}

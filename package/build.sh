@@ -41,6 +41,8 @@ cp -a "$root/install_scripts/." "$stage/lib/easy-cs-ai/"
 mkdir -p "$stage/lib/easy-cs-ai/vm_script"
 cp -a "$root/vm_script/." "$stage/lib/easy-cs-ai/vm_script/"
 find "$stage" -name 'README.md' -delete
+# The entry scripts are run standalone too: executable whatever the checkout (Windows, archive) made of them.
+chmod 0755 "$stage"/lib/easy-cs-ai/{engine,proxy,chat-interface,provisioning}/*.sh "$stage/lib/easy-cs-ai/vm_script/generate.sh"
 
 tarball="easy-cs-ai-$version.tar.gz"
 # Reproducible: sorted names, fixed owner and time (the commit date when known).
