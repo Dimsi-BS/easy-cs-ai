@@ -2,7 +2,7 @@
 # llmfit install script, see docs/spec-script-contract.md and search/llmfit.md.
 #
 #   llmfit.sh <action> [options]
-#   actions: install uninstall status describe recommend check
+#   actions: install uninstall status describe recommend check size
 set -euo pipefail
 
 readonly NAME=llmfit
