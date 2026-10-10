@@ -332,3 +332,53 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
     run --separate-stderr bash "$CLI" --dry-run generate --config cfg.json --package-sha256 "$SHA" --output vm2.sh
     [ ! -e vm2.sh ]
 }
+
+# --- --json (docs/spec-ai-interface.md) ---------------------------------------------------
+
+@test "--json needs --config: a session is interactive" {
+    gen --json
+    [ "$status" -eq 2 ]
+    [ -z "$output" ]
+}
+
+@test "--config --json: the validation document extended with the script, one document on stdout" {
+    valid_config
+    gen --config cfg.json --json "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 0 ]
+    [ "$(jq -s 'length' <<<"$output")" = 1 ]
+    run jq -c '[.ok, .target, .errors, .script.path, .script.written, .script.package_version, .script.package_format, (.script.bytes > 0), (.plan.components | length > 0)]' <<<"$output"
+    [ "$output" = '[true,"fresh",[],"vm.sh",true,"0.1.0","deb",true,true]' ]
+    [ -x vm.sh ]
+}
+
+@test "--config --json --dry-run writes nothing and says so" {
+    valid_config
+    gen --config cfg.json --json --dry-run "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.script.written' <<<"$output")" = "false" ]
+    [ ! -e vm.sh ]
+}
+
+@test "--config --json of an invalid or incomplete file: the document with its errors, exit 2, no script" {
+    echo '{"schema_version":1,"components":[{"type":"chat-interface","name":"chat"}]}' >cfg.json
+    gen --config cfg.json --json "${PKG[@]}" --output vm.sh
+    [ "$status" -eq 2 ]
+    run jq -c '[.ok, .errors[0].code, .script, .plan]' <<<"$output"
+    [ "$output" = '[false,"missing_requirement",null,null]' ]
+    [ ! -e vm.sh ]
+    echo '{nope' >cfg.json
+    gen --config cfg.json --json "${PKG[@]}"
+    [ "$status" -eq 2 ]
+    [ "$(jq -r '.errors[0].code' <<<"$output")" = "not_json" ]
+}
+
+@test "easy-cs-ai generate forwards --json, before or after the command" {
+    valid_config
+    ln -s "${BATS_TEST_DIRNAME}/../../vm_script" "$BATS_TEST_TMPDIR/vm_script"
+    run --separate-stderr bash "$CLI" --json generate --config cfg.json --dry-run "${PKG[@]}"
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.ok' <<<"$output")" = "true" ]
+    run --separate-stderr bash "$CLI" generate --config cfg.json --json --dry-run "${PKG[@]}"
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.script.written' <<<"$output")" = "false" ]
+}

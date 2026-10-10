@@ -221,15 +221,15 @@ describe() {
         platforms: ["debian", "ubuntu"], health_timeout: $ht,
         native: { command: "docker compose -f {compose_file}" },
         options: [
-          { name: "port", env: "EASY_CS_AI_LIBRECHAT_PORT", default: $port, secret: false, description: "Listening port of LibreChat on the machine (nginx serves it over HTTPS)" },
+          { name: "port", env: "EASY_CS_AI_LIBRECHAT_PORT", default: $port, secret: false, type: "integer", min: 1, max: 65535, description: "Listening port of LibreChat on the machine (nginx serves it over HTTPS)" },
           { name: "bind", env: "EASY_CS_AI_LIBRECHAT_BIND", default: "127.0.0.1", secret: false, description: "Listening address of LibreChat" },
-          { name: "db-port", env: "EASY_CS_AI_LIBRECHAT_DB_PORT", default: $dbport, secret: false, description: "Loopback port of the database (FerretDB)" },
-          { name: "allow-registration", env: "EASY_CS_AI_LIBRECHAT_ALLOW_REGISTRATION", default: "true", secret: false,
+          { name: "db-port", env: "EASY_CS_AI_LIBRECHAT_DB_PORT", default: $dbport, secret: false, type: "integer", min: 1, max: 65535, description: "Loopback port of the database (FerretDB)" },
+          { name: "allow-registration", env: "EASY_CS_AI_LIBRECHAT_ALLOW_REGISTRATION", default: "true", secret: false, type: "boolean",
             description: "Whether anyone who reaches the site can create an account (true or false)",
             warn: { when: "true", message: $warn } },
           { name: "version", env: "EASY_CS_AI_LIBRECHAT_VERSION", default: $cv, secret: false, description: "LibreChat version to install" },
-          { name: "health-timeout", env: "EASY_CS_AI_LIBRECHAT_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, description: "Seconds to wait for LibreChat after start" },
-          { name: "lock-timeout", env: "EASY_CS_AI_LIBRECHAT_LOCK_TIMEOUT", default: "0", secret: false, description: "Seconds to wait for a busy component lock" }
+          { name: "health-timeout", env: "EASY_CS_AI_LIBRECHAT_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, type: "integer", min: 0, description: "Seconds to wait for LibreChat after start" },
+          { name: "lock-timeout", env: "EASY_CS_AI_LIBRECHAT_LOCK_TIMEOUT", default: "0", secret: false, type: "integer", min: 0, description: "Seconds to wait for a busy component lock" }
         ],
         actions: ($actions | split(" "))
       }'

@@ -35,6 +35,8 @@ source "$EASY_CS_AI_LIB/cli-base.sh"
 source "$EASY_CS_AI_LIB/cli-models.sh"
 # shellcheck source=../../install_scripts/lib/cli-apply.sh
 source "$EASY_CS_AI_LIB/cli-apply.sh"
+# shellcheck source=../../install_scripts/lib/cli-ai.sh
+source "$EASY_CS_AI_LIB/cli-ai.sh"
 
 DRY=0
 GFLAGS=()
@@ -56,7 +58,14 @@ Commands:
   remove <model> [--engine <n>]            remove --all [--engine <n>]
   apply <file|-> [--prune]                 make the machine match a configuration file
   generate [--config-only] [--config <file>] [options]   VM post-install script generator
+  catalog                                  what can be installed (components, options, ranks)
+  host                                     this machine: platform, CPU, memory, disk, GPU
+  config schema                            the configuration format, as a JSON Schema
+  config validate <file|-> [--target this|fresh]   check a configuration, show its plan
+  guide                                    how an AI agent should use this CLI
   help, version
+
+--json prints one JSON document on stdout instead of the human output (for programs).
 
 Types: provisioning, proxy, engine, chat-interface
 EOF
@@ -84,10 +93,13 @@ resolve_script() {
 
 # run_script <type> <name> <args…>: run a script, passing streams through.
 run_script() {
-    local path
+    local path rc=0 label
     path="$(resolve_script "$1" "$2")"
+    label="${3:-} $1 $2"
     shift 2
-    bash "$path" "$@" "${GFLAGS[@]}"
+    bash "$path" "$@" "${GFLAGS[@]}" || rc=$?
+    record_step "$label" "$rc"
+    return "$rc"
 }
 
 # --- status -----------------------------------------------------------------------
@@ -394,7 +406,9 @@ cmd_uninstall() {
         local t n list
         list="$(uninstall_order "$type")"
         if ((DRY)); then
-            [[ -z "$list" ]] || printf '%s\n' "$list" >&2
+            while read -r t n; do
+                [[ -z "$n" ]] || log_info "plan: uninstall $t $n"
+            done <<<"$list"
             return 0
         fi
         while read -r t n; do
@@ -472,11 +486,24 @@ cmd_generate() {
     export EASY_CS_AI_HOME="$HOME_DIR" EASY_CS_AI_CLI_VERSION="$CLI_VERSION"
     local flags=()
     ((DRY)) && flags+=(--dry-run)
+    ((_OPT_JSON)) && flags+=(--json)
     [[ "${EASY_CS_AI_VERBOSE:-0}" != 1 ]] || flags+=(--verbose)
     exec bash "$generator" "${flags[@]}" "$@"
 }
 
 # --- main -------------------------------------------------------------------------
+
+# changing <command> <function> <args…>: a command that changes the machine; with
+# --json it prints a result document at the end (see lib/cli-ai.sh).
+changing() {
+    local command="$1" fn="$2"
+    shift 2
+    if ((_OPT_JSON)); then
+        run_with_result "$command" "$fn" "$@"
+    else
+        "$fn" "$@"
+    fi
+}
 
 main() {
     while [[ $# -gt 0 ]]; do
@@ -494,18 +521,52 @@ main() {
         usage >&2
         return "$EXIT_USAGE"
     fi
-    local command="$1"
+    local command="$1" a rest=()
     shift
+    case "$command" in
+    status | add | remove | apply | config | catalog | host | guide)
+        # the general options are also accepted after these commands
+        for a in "$@"; do
+            case "$a" in
+            --json) _OPT_JSON=1; GFLAGS+=(--json) ;;
+            --dry-run) DRY=1; GFLAGS+=(--dry-run) ;;
+            --verbose) export EASY_CS_AI_VERBOSE=1; GFLAGS+=(--verbose) ;;
+            *) rest+=("$a") ;;
+            esac
+        done
+        set -- "${rest[@]}"
+        ;;
+    esac
+    case "$command" in
+    install | uninstall)
+        # --json is the CLI's; --dry-run stays with the components, which print their own plan
+        for a in "$@"; do
+            case "$a" in
+            --json) _OPT_JSON=1; GFLAGS+=(--json) ;;
+            --dry-run) PLAN_ONLY=1; rest+=("$a") ;;
+            *) rest+=("$a") ;;
+            esac
+        done
+        set -- "${rest[@]}"
+        ;;
+    esac
     case "$command" in
     help) usage ;;
     version) printf '%s\n' "$CLI_VERSION" ;;
     status) cmd_status "$@" ;;
-    install) cmd_install "$@" ;;
-    uninstall) cmd_uninstall "$@" ;;
-    add) cmd_add "$@" ;;
-    remove) cmd_remove "$@" ;;
-    apply) cmd_apply "$@" ;;
+    install) changing install cmd_install "$@" ;;
+    uninstall) changing uninstall cmd_uninstall "$@" ;;
+    add) changing add cmd_add "$@" ;;
+    remove) changing remove cmd_remove "$@" ;;
+    apply)
+        # the dry run of apply prints the document of config validate itself
+        if ((DRY)); then cmd_apply "$@"; else changing apply cmd_apply "$@"; fi
+        ;;
     generate) cmd_generate "$@" ;;
+    catalog) cmd_catalog "$@" ;;
+    host) cmd_host "$@" ;;
+    config) cmd_config "$@" ;;
+    guide) cmd_guide "$@" ;;
     *)
         if is_type "$command"; then
             cmd_component "$command" "$@"

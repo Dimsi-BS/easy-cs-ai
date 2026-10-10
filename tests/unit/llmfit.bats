@@ -16,6 +16,8 @@ setup() {
     cat >"$BATS_TEST_TMPDIR/bin/llmfit" <<'FAKE'
 #!/usr/bin/env bash
 echo "llmfit $*" >>"${CALLS:-/dev/null}"
+# the hardware overrides are global options, before the subcommand
+while [[ "${1:-}" == --ram || "${1:-}" == --memory || "${1:-}" == --cpu-cores ]]; do shift 2; done
 case "$1" in
 --version) echo "llmfit 1.1.16" ;;
 info)
@@ -196,4 +198,61 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [[ "$stderr" == *"does not know 'nosuchmodel'"*"--force"* ]]
     llmfit check
     [ "$status" -eq 2 ]
+}
+
+# --- sizing for another machine (docs/spec-ai-interface.md) ------------------------------------------
+
+@test "recommend sizes for another machine: the --target-* options become llmfit's global options, before the subcommand" {
+    llmfit install
+    : >"$CALLS"
+    llmfit recommend --target-ram 8 --target-vram=24 --target-cpu-cores 4 -n 3
+    [ "$status" -eq 0 ]
+    grep -qx 'llmfit --ram 8 --memory 24 --cpu-cores 4 recommend --json --no-dashboard -n 3' "$CALLS"
+}
+
+@test "check sizes for another machine, by Hugging Face name and by Ollama tag" {
+    llmfit install
+    : >"$CALLS"
+    llmfit check meta-llama/Llama-3.2-3B-Instruct --target-ram 8
+    [ "$status" -eq 0 ]
+    grep -qx 'llmfit --ram 8 info meta-llama/Llama-3.2-3B-Instruct --json --no-dashboard' "$CALLS"
+    : >"$CALLS"
+    llmfit check llama3.2:3b --target-ram 8 --target-cpu-cores 2
+    [ "$status" -eq 0 ]
+    grep -qx 'llmfit --ram 8 --cpu-cores 2 fit --json -n 100000 --no-dashboard' "$CALLS"
+}
+
+@test "without --target-* llmfit is called as before" {
+    llmfit install
+    : >"$CALLS"
+    llmfit check meta-llama/Llama-3.2-3B-Instruct
+    grep -qx 'llmfit info meta-llama/Llama-3.2-3B-Instruct --json --no-dashboard' "$CALLS"
+}
+
+@test "--target-* needs a positive whole number and only applies to recommend and check" {
+    llmfit install
+    llmfit recommend --target-ram 0
+    [ "$status" -eq 2 ]
+    llmfit recommend --target-ram eight
+    [ "$status" -eq 2 ]
+    llmfit recommend --target-ram
+    [ "$status" -eq 2 ]
+    llmfit status --target-ram 8
+    [ "$status" -eq 2 ]
+    llmfit install --target-vram 8
+    [ "$status" -eq 2 ]
+}
+
+@test "a missing llmfit is exit 4 with the command that installs it" {
+    llmfit recommend --target-ram 8
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"easy-cs-ai install provisioning llmfit"* ]]
+}
+
+@test "describe declares the target options of recommend and check, apart from the install options" {
+    llmfit describe
+    run jq -r '(.action_options.recommend | map(.name) | join(" ")), (.action_options.check | map(.name) | join(" ")), (.options | map(.name) | join(" "))' <<<"$output"
+    [ "${lines[0]}" = "target-ram target-vram target-cpu-cores" ]
+    [ "${lines[1]}" = "target-ram target-vram target-cpu-cores" ]
+    [[ "${lines[2]}" != *target* ]]
 }

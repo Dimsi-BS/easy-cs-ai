@@ -12,6 +12,7 @@ See also: [spec: script contract](../docs/spec-script-contract.md), the rules ev
 - `lib/cli-base.sh` — helpers shared by the CLI and the VM script generator (types, ranks, component lookup)
 - `lib/cli-apply.sh` — `apply` of the CLI (validation of the configuration file, order, install, add, prune)
 - `lib/cli-models.sh` — `add` and `remove` of the CLI, sourced by `package/bin/easy-cs-ai`
+- `lib/cli-ai.sh` — the machine interface of the CLI for programs and AI agents (`catalog`, `host`, `config schema` / `validate`, `guide`, the `--json` result documents), sourced by the CLI and by the generator
 - `provisioning/llmfit.sh` — llmfit: installs the pinned release binary, `recommend` and `check <model>`
 - `proxy/nginx.sh` — nginx: HTTPS (self-signed, provided or Let's Encrypt certificate) and an API key (Bearer), `add-upstream`, `remove-upstream`, `add-site`, `remove-site` (a web site for browsers on its own port, without the key), `show-key`
 - `engine/ollama.sh` — Ollama; version and archive checksums pinned in the script

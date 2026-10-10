@@ -26,6 +26,9 @@ source "$LIB_DIR/common.sh"
 
 ACTION="" FORCE=0 MAKE_DEFAULT=0
 POSITIONAL=()
+# Hardware to size for instead of this machine (recommend and check), as llmfit's own
+# global options, which go before its subcommand.
+TARGET_ARGS=()
 
 usage() {
     cat <<EOF
@@ -34,6 +37,11 @@ Usage: llmfit.sh <action> [options]
 Actions: $ACTIONS
   recommend [args]        llmfit's own recommendations for this machine (JSON)
   check <model>           {"fits": true|false, "reason": "…"} for a model
+
+Options of recommend and check, to size for another machine:
+  --target-ram <GB>       RAM of the machine to size for (llmfit --ram)
+  --target-vram <GB>      GPU memory of the machine to size for (llmfit --memory)
+  --target-cpu-cores <n>  CPU cores of the machine to size for (llmfit --cpu-cores)
 
 Options:
   --version <x.y.z>       llmfit version (default $DEFAULT_VERSION, EASY_CS_AI_LLMFIT_VERSION)
@@ -97,6 +105,23 @@ parse_args() {
             opt="${opt%%=*}"
             set_option "$NAME" "${opt#--}" "$value"
             ;;
+        --target-ram | --target-vram | --target-cpu-cores | --target-ram=* | --target-vram=* | --target-cpu-cores=*)
+            if [[ "$opt" == *=* ]]; then
+                value="${opt#*=}"
+                opt="${opt%%=*}"
+            else
+                [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$opt needs a value"
+                value="$1"
+                shift
+            fi
+            [[ "$ACTION" == recommend || "$ACTION" == check ]] || die "$EXIT_USAGE" "$opt only applies to recommend and check"
+            [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "$EXIT_USAGE" "$opt needs a positive whole number, got '$value'"
+            case "$opt" in
+            --target-ram) TARGET_ARGS+=(--ram "$value") ;;
+            --target-vram) TARGET_ARGS+=(--memory "$value") ;;
+            --target-cpu-cores) TARGET_ARGS+=(--cpu-cores "$value") ;;
+            esac
+            ;;
         --default) MAKE_DEFAULT=1 ;;
         --force) FORCE=1 ;;
         # `uninstall --all --purge` forwards --purge to every component: llmfit keeps no data, nothing to purge
@@ -134,10 +159,22 @@ describe() {
         native: { command: "llmfit" },
         options: [
           { name: "version", env: "EASY_CS_AI_LLMFIT_VERSION", default: $cv, secret: false, description: "llmfit version to install" },
-          { name: "health-timeout", env: "EASY_CS_AI_LLMFIT_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, description: "Seconds allowed to the verification (llmfit recommend --json)" },
-          { name: "lock-timeout", env: "EASY_CS_AI_LLMFIT_LOCK_TIMEOUT", default: "0", secret: false, description: "Seconds to wait for a busy component lock" }
+          { name: "health-timeout", env: "EASY_CS_AI_LLMFIT_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, type: "integer", min: 0, description: "Seconds allowed to the verification (llmfit recommend --json)" },
+          { name: "lock-timeout", env: "EASY_CS_AI_LLMFIT_LOCK_TIMEOUT", default: "0", secret: false, type: "integer", min: 0, description: "Seconds to wait for a busy component lock" }
         ],
-        actions: ($actions | split(" "))
+        actions: ($actions | split(" ")),
+        action_options: {
+          recommend: [
+            { name: "target-ram", type: "integer", min: 1, description: "RAM in GB of the machine to size for, instead of this one" },
+            { name: "target-vram", type: "integer", min: 1, description: "GPU memory in GB of the machine to size for, instead of this one" },
+            { name: "target-cpu-cores", type: "integer", min: 1, description: "CPU cores of the machine to size for, instead of this one" }
+          ],
+          check: [
+            { name: "target-ram", type: "integer", min: 1, description: "RAM in GB of the machine to size for, instead of this one" },
+            { name: "target-vram", type: "integer", min: 1, description: "GPU memory in GB of the machine to size for, instead of this one" },
+            { name: "target-cpu-cores", type: "integer", min: 1, description: "CPU cores of the machine to size for, instead of this one" }
+          ]
+        }
       }'
 }
 
@@ -339,7 +376,7 @@ cmd_status() {
 # --- recommend and check ----------------------------------------------------------------
 
 require_installed() {
-    state_read "$NAME" >/dev/null 2>&1 || die "$EXIT_PRECONDITION" "$NAME is not installed"
+    state_read "$NAME" >/dev/null 2>&1 || die "$EXIT_PRECONDITION" "$NAME is not installed, run: easy-cs-ai install provisioning llmfit"
     llmfit_bin >/dev/null || die "$EXIT_PRECONDITION" "the llmfit binary is missing, run: easy-cs-ai install provisioning llmfit"
 }
 
@@ -348,7 +385,7 @@ cmd_recommend() {
     local bin
     require_installed
     bin="$(llmfit_bin)"
-    "$bin" recommend --json --no-dashboard "${POSITIONAL[@]}" ||
+    "$bin" "${TARGET_ARGS[@]}" recommend --json --no-dashboard "${POSITIONAL[@]}" ||
         die "$EXIT_ERROR" "llmfit recommend failed"
 }
 
@@ -359,11 +396,11 @@ cmd_recommend() {
 # which lists the models that fit this machine.
 fit_entry() {
     local bin="$1" model="$2" out entry
-    if out="$("$bin" info "$model" --json --no-dashboard 2>/dev/null)" && entry="$(jq -ce '.models[0] // empty' <<<"$out")" && [[ -n "$entry" ]]; then
+    if out="$("$bin" "${TARGET_ARGS[@]}" info "$model" --json --no-dashboard 2>/dev/null)" && entry="$(jq -ce '.models[0] // empty' <<<"$out")" && [[ -n "$entry" ]]; then
         printf '%s\n' "$entry"
         return 0
     fi
-    if out="$("$bin" fit --json -n 100000 --no-dashboard 2>/dev/null)" &&
+    if out="$("$bin" "${TARGET_ARGS[@]}" fit --json -n 100000 --no-dashboard 2>/dev/null)" &&
         entry="$(jq -ce --arg m "$model" '[.models[] | select(.ollama_name == $m)] | max_by(.score) // empty' <<<"$out")" &&
         [[ -n "$entry" ]]; then
         printf '%s\n' "$entry"

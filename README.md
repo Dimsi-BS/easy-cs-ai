@@ -55,6 +55,8 @@ curl -k -H "Authorization: Bearer $KEY" "https://$(hostname)/ollama-llama3.2-3b/
 
 For a fleet of VMs, `easy-cs-ai generate` asks a few questions and writes a post-install script that installs the package and the chosen stack on a new VM (`--config-only` writes the [configuration file](docs/spec-config.md) alone). All commands are in [docs/cli-commands](docs/cli-commands.md).
 
+An AI agent with a shell can drive all of this for you: `easy-cs-ai guide` tells it how, `easy-cs-ai catalog --json`, `host --json` and `config validate <file> --json` give it what it needs, and `--json` always means one JSON document on stdout for programs, the human output otherwise (see [docs/spec-ai-interface](docs/spec-ai-interface.md)).
+
 ## Requirements
 
 Targeting Ubuntu/Debian, primarily for provisioning fleets of VMs sized with just the necessary resources. Other Linux distributions (`.rpm`, or the tarball with `bash` and `curl`) may work but are not a design target yet. Scripts are written in bash, see [docs/decision-scripting-language](docs/decision-scripting-language.md). Other design choices are listed in [docs](docs/README.md).
@@ -142,6 +144,7 @@ Extra commands :
 - `add`, adding a new model in an inference engine, wrapping it with the reverse proxy if needed and adding it to the chat interface website
 - `apply`, interpreting a [configuration file](docs/spec-config.md) (components, options, models) to make the machine match it
 - `generate`, the interactive generator of the layer 3 (VM post-install) script; `generate --config-only` writes the configuration file only
+- `catalog`, `host`, `config schema`, `config validate` and `guide`, read-only commands that let an AI agent (or any program) discover what can be installed, what the machine is, what a configuration must look like and whether one is valid; with `--json`, one JSON document on stdout
 
 See [docs/cli-commands](docs/cli-commands.md) for the full command reference and [docs/decision-packaging](docs/decision-packaging.md) for the packaging choices.
 

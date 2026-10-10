@@ -17,7 +17,7 @@ Overview of the commands exposed by the `easy-cs-ai` CLI (see [packaging](decisi
 - `remove <model-name> [--engine <engine-name>]`: the reverse of `add`, unlinks the model from the chat interface and the proxy, then removes it from the inference engine. `remove --all` removes every model (of the given engine, or of all)
 - `install --defaults` or `install <component-type> --defaults`: installs the default choices (rank 1 of each type, see [integration order](decision-integration-order.md)). With the whole stack, it also adds the default model of each engine it installs (see [default model](spec-cli.md#default-model)). The CLI never takes a default choice without this explicit option
 
-- `catalog`, `host`, `config schema`, `config validate <file|->`, `guide`: read-only commands that make the CLI self-describing for programs and AI agents (proposed, see [spec: machine interface](spec-ai-interface.md)). **`--json` is for programs, no `--json` is for humans**: with it, stdout is exactly one JSON document
+- `catalog`, `host`, `config schema`, `config validate <file|->`, `guide`: read-only commands that make the CLI self-describing for programs and AI agents (see [spec: machine interface](spec-ai-interface.md)). **`--json` is for programs, no `--json` is for humans**: with it, stdout is exactly one JSON document
 
 The detailed behaviour (dispatch, dependencies, `add` steps and rollback, exit codes) is in [spec: CLI](spec-cli.md).
 

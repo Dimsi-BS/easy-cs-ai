@@ -41,6 +41,7 @@ Takes the [configuration](spec-config.md) from a file instead of a session: **no
 - A session can be done once by hand with `--config-only`, the file reviewed or edited, then turned into a script with `--config`.
 - The summary is printed on stderr and **not** asked for confirmation.
 - Incompatible with `--config-only` (it would only copy the file): exit 2.
+- `--json` (only with `--config`, a session is interactive: exit 2) prints one JSON document on stdout instead of the human output: the validation document of `config validate --target fresh` extended with a `script` entry, see [spec: machine interface](spec-ai-interface.md#commands). An invalid file prints the document with its errors, `script: null` and exits 2.
 
 ## Implementation notes
 

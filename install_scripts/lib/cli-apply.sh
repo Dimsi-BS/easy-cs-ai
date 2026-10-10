@@ -7,68 +7,92 @@
 readonly APPLY_SCHEMA_VERSION=1
 
 # The validation program. Input: the configuration. Arguments: $desc (describe
-# of every listed component, keyed "type/name") and $installed (installed
-# component names by type). Output: one "<json path>: <problem>" per line.
+# of every listed component, keyed "type/name"), $installed (installed
+# component names by type), $reqs (also report the requirements nothing
+# satisfies) and $hostids (the ids of this platform, [] to skip the platform
+# check). Output: one {path, code, message} object per problem, see
+# docs/spec-ai-interface.md for the codes.
 # shellcheck disable=SC2016
 readonly APPLY_VALIDATE_JQ='. as $cfg |
 def types: ["engine", "chat-interface", "proxy", "provisioning"];
-def only_keys($allowed; $p): to_entries[] | select(.key | IN($allowed[]) | not) | "\($p).\(.key): unknown key";
+def e($p; $c; $m): {path: $p, code: $c, message: $m};
+def only_keys($allowed; $p): to_entries[] | select(.key | IN($allowed[]) | not) | e("\($p).\(.key)"; "unknown_key"; "unknown key");
 def listed($t): [(.components // [])[] | select(type == "object" and .type == $t) | .name];
 def pick($t): (listed($t)) as $l
   | if ($l | length) == 1 then $l[0]
     else ([(.components // [])[] | select(type == "object" and .type == $t and .default == true) | .name][0]) end;
 def known($t; $n): (($cfg | listed($t)) + ($installed[$t] // [])) | index($n) != null;
+def satisfied($r): ((($cfg.components // []) | map(select(type == "object")) | any(.name == $r or .type == $r))
+  or (([$installed[]?[]]) | index($r) != null) or (($installed[$r] // []) | length > 0));
+def int_of($v): if ($v | type) == "number" and $v == ($v | floor) then $v
+  elif ($v | type) == "string" and ($v | test("^-?[0-9]+$")) then ($v | tonumber) else null end;
+def typed($o; $v): ($o.type // "string") as $t
+  | if $t == "integer" then
+      (int_of($v)) as $n
+      | if $n == null or ($o.min != null and $n < $o.min) or ($o.max != null and $n > $o.max)
+        then "an integer\(if $o.min != null and $o.max != null then " between \($o.min) and \($o.max)" elif $o.min != null then " of at least \($o.min)" elif $o.max != null then " of at most \($o.max)" else "" end) is expected"
+        else empty end
+    elif $t == "boolean" then (if ($v | type) == "boolean" or (($v | type) == "string" and ($v | IN("true", "false"))) then empty else "true or false is expected" end)
+    elif $t == "enum" then (if ($v | tostring) | IN(($o.values // [])[]) then empty else "one of \(($o.values // []) | join(", ")) is expected" end)
+    else empty end;
 
-if type != "object" then "$: an object is expected" else
+if type != "object" then e("$"; "wrong_type"; "an object is expected") else
   (only_keys(["schema_version", "components", "models"]; "$")),
-  (if has("schema_version") | not then "$.schema_version: required"
-   elif (.schema_version | type) != "number" then "$.schema_version: a number is expected"
-   elif .schema_version > '"$APPLY_SCHEMA_VERSION"' then "$.schema_version: \(.schema_version) is newer than the supported version '"$APPLY_SCHEMA_VERSION"'"
+  (if has("schema_version") | not then e("$.schema_version"; "wrong_type"; "required")
+   elif (.schema_version | type) != "number" then e("$.schema_version"; "wrong_type"; "a number is expected")
+   elif .schema_version > '"$APPLY_SCHEMA_VERSION"' then e("$.schema_version"; "unsupported_schema_version"; "\(.schema_version) is newer than the supported version '"$APPLY_SCHEMA_VERSION"'")
    else empty end),
-  (if has("components") and (.components | type) != "array" then "$.components: an array is expected" else empty end),
-  (if has("models") and (.models | type) != "array" then "$.models: an array is expected" else empty end),
+  (if has("components") and (.components | type) != "array" then e("$.components"; "wrong_type"; "an array is expected") else empty end),
+  (if has("models") and (.models | type) != "array" then e("$.models"; "wrong_type"; "an array is expected") else empty end),
   (if (.components | type) == "array" then
     (.components | to_entries[] | .key as $i | .value as $c | "$.components[\($i)]" as $p
-     | if ($c | type) != "object" then "\($p): an object is expected" else
+     | if ($c | type) != "object" then e($p; "wrong_type"; "an object is expected") else
          ($c | only_keys(["type", "name", "default", "options"]; $p)),
-         (if ($c.type | type) != "string" or ($c.type | IN(types[]) | not) then "\($p).type: one of \(types | join(", ")) is expected"
-          elif ($c.name | type) != "string" then "\($p).name: a string is expected"
-          elif $desc[$c.type + "/" + $c.name] == null then "\($p).name: unknown \($c.type) \"\($c.name)\""
+         (if ($c.type | type) != "string" or ($c.type | IN(types[]) | not) then e("\($p).type"; "unknown_type"; "one of \(types | join(", ")) is expected")
+          elif ($c.name | type) != "string" then e("\($p).name"; "wrong_type"; "a string is expected")
+          elif $desc[$c.type + "/" + $c.name] == null then e("\($p).name"; "unknown_component"; "unknown \($c.type) \"\($c.name)\"")
           else
-            ($desc[$c.type + "/" + $c.name].options // []) as $opts
-            | (($c.options // {}) | if type != "object" then "\($p).options: an object is expected" else
+            $desc[$c.type + "/" + $c.name] as $d
+            | ($d.options // []) as $opts
+            | (if ($hostids | length) > 0 and (($d.platforms // []) | length) > 0 and ((($d.platforms // []) - (($d.platforms // []) - $hostids)) | length) == 0
+               then e("\($p).name"; "unsupported_platform"; "\($c.name) supports \(($d.platforms) | join(", ")), this machine is \($hostids | join("/"))") else empty end),
+              (if $reqs then ($d.requires // [])[] | . as $r | select(satisfied($r) | not)
+                 | e($p; "missing_requirement"; "\($r) is required by \($c.name) and is neither installed nor in the file") else empty end),
+              (($c.options // {}) | if type != "object" then e("\($p).options"; "wrong_type"; "an object is expected") else
                 to_entries[] | .key as $k | .value as $v | ($opts | map(select(.name == $k))[0]) as $o
-                | if $o == null then "\($p).options.\($k): unknown option (known: \($opts | map(.name) | join(", ")))"
+                | if $o == null then e("\($p).options.\($k)"; "unknown_option"; "unknown option (known: \($opts | map(.name) | join(", ")))")
                   elif $o.secret == true then
-                    (if ($v | type) != "object" then "\($p).options.\($k): a secret is given as {\"file\": …}, {\"env\": …} or {\"generate\": true}, never as a plain value"
+                    (if ($v | type) != "object" then e("\($p).options.\($k)"; "secret_literal"; "a secret is given as {\"file\": …}, {\"env\": …} or {\"generate\": true}, never as a plain value")
                      elif ($v | keys) == ["file"] and ($v.file | type) == "string" then empty
                      elif ($v | keys) == ["env"] and ($v.env | type) == "string" then empty
                      elif ($v | keys) == ["generate"] and $v.generate == true then empty
-                     else "\($p).options.\($k): exactly one of file, env or generate is expected" end)
-                  elif ($v | type | IN("string", "number", "boolean") | not) then "\($p).options.\($k): a string, number or boolean is expected"
-                  else empty end
+                     else e("\($p).options.\($k)"; "secret_source"; "exactly one of file, env or generate is expected") end)
+                  elif ($v | type | IN("string", "number", "boolean") | not) then e("\($p).options.\($k)"; "wrong_type"; "a string, number or boolean is expected")
+                  else (typed($o; $v) | e("\($p).options.\($k)"; "invalid_value"; .)) end
               end)
           end),
-         (if ($c | has("default")) and ($c.default | type) != "boolean" then "\($p).default: a boolean is expected" else empty end)
+         (if ($c | has("default")) and ($c.default | type) != "boolean" then e("\($p).default"; "wrong_type"; "a boolean is expected") else empty end)
        end),
-    ([.components[] | select(type == "object") | "\(.type)/\(.name)"] | group_by(.)[] | select(length > 1) | "$.components: \(.[0]) is listed more than once"),
-    ([.components[] | select(type == "object" and .default == true) | .type] | group_by(.)[] | select(length > 1) | "$.components: several defaults of type \(.[0])")
+    ([.components[] | select(type == "object") | "\(.type)/\(.name)"] | group_by(.)[] | select(length > 1) | e("$.components"; "duplicate_component"; "\(.[0]) is listed more than once")),
+    ([.components[] | select(type == "object" and .default == true) | .type] | group_by(.)[] | select(length > 1) | e("$.components"; "several_defaults"; "several defaults of type \(.[0])"))
    else empty end),
   (if (.models | type) == "array" then
     (.models | to_entries[] | .key as $i | .value as $m | "$.models[\($i)]" as $p
-     | if ($m | type) != "object" then "\($p): an object is expected" else
+     | if ($m | type) != "object" then e($p; "wrong_type"; "an object is expected") else
          ($m | only_keys(["name", "engine", "chat_interface", "force"]; $p)),
-         (if ($m.name | type) != "string" or $m.name == "" then "\($p).name: a model name is expected" else empty end),
-         (if ($m | has("force")) and ($m.force | type) != "boolean" then "\($p).force: a boolean is expected" else empty end),
+         (if ($m.name | type) != "string" or $m.name == "" then e("\($p).name"; "wrong_type"; "a model name is expected") else empty end),
+         (if ($m | has("force")) and ($m.force | type) != "boolean" then e("\($p).force"; "wrong_type"; "a boolean is expected") else empty end),
          (if ($m | has("engine")) then
-            (if ($m.engine | type) != "string" or (known("engine"; $m.engine) | not) then "\($p).engine: \"\($m.engine)\" is neither listed in components nor installed" else empty end)
-          elif ($cfg | pick("engine")) == null then "\($p).engine: several engines and none is the default, name one"
+            (if ($m.engine | type) != "string" or (known("engine"; $m.engine) | not) then e("\($p).engine"; "unresolved_engine"; "\"\($m.engine)\" is neither listed in components nor installed") else empty end)
+          elif ($cfg | pick("engine")) == null then
+            (if (($cfg | listed("engine")) | length) == 0 then e("\($p).engine"; "unresolved_engine"; "no engine is listed in components, name one")
+             else e("\($p).engine"; "ambiguous_engine"; "several engines and none is the default, name one") end)
           else empty end),
          (if ($m | has("chat_interface")) then
             (if $m.chat_interface == null then empty
-             elif ($m.chat_interface | type) != "string" or (known("chat-interface"; $m.chat_interface) | not) then "\($p).chat_interface: \"\($m.chat_interface)\" is neither listed in components nor installed"
+             elif ($m.chat_interface | type) != "string" or (known("chat-interface"; $m.chat_interface) | not) then e("\($p).chat_interface"; "unresolved_chat_interface"; "\"\($m.chat_interface)\" is neither listed in components nor installed")
              else empty end)
-          elif (($cfg | listed("chat-interface")) | length) > 1 and ($cfg | pick("chat-interface")) == null then "\($p).chat_interface: several chat interfaces and none is the default, name one or null"
+          elif (($cfg | listed("chat-interface")) | length) > 1 and ($cfg | pick("chat-interface")) == null then e("\($p).chat_interface"; "ambiguous_chat_interface"; "several chat interfaces and none is the default, name one or null")
           else empty end)
        end)
    else empty end)
@@ -101,10 +125,19 @@ installed_by_type() {
     printf '%s\n' "$out"
 }
 
+# apply_problems <config> <desc> [<reqs> [<hostids>]]: the problems as a JSON
+# array of {path, code, message}. <reqs> (true or false, default false) also
+# reports the requirements nothing satisfies, which `apply` and the generator
+# check later with their own exit code (apply_order).
+apply_problems() {
+    jq -c --argjson desc "$2" --argjson installed "$(installed_by_type)" --argjson reqs "${3:-false}" \
+        --argjson hostids "${4:-[]}" "$APPLY_VALIDATE_JQ" <<<"$1" | jq -sc .
+}
+
 # apply_validate <config> <desc>: print the problems, exit 2 when any.
 apply_validate() {
-    local problems
-    problems="$(jq -r --argjson desc "$2" --argjson installed "$(installed_by_type)" "$APPLY_VALIDATE_JQ" <<<"$1")"
+    local problems line
+    problems="$(apply_problems "$1" "$2" | jq -r '.[] | "\(.path): \(.message)"')"
     if [[ -n "$problems" ]]; then
         while IFS= read -r line; do log_error "$line"; done <<<"$problems"
         fail "$EXIT_USAGE" "the configuration is invalid"
@@ -231,13 +264,20 @@ cmd_apply() {
         esac
     done
     [[ -n "$source" ]] || fail "$EXIT_USAGE" "apply needs a configuration file" "easy-cs-ai apply <file|->"
-    if [[ "$source" == "-" ]]; then
-        config="$(cat)"
-    else
-        [[ -r "$source" ]] || fail "$EXIT_USAGE" "cannot read $source"
-        config="$(cat "$source")"
+    read_config "$source"
+    config="$CONFIG_TEXT"
+    if ((DRY && _OPT_JSON)); then
+        # the document of `config validate --target this`; a requirement nothing satisfies keeps the exit code 4
+        local doc
+        if ((CONFIG_NOT_JSON)); then
+            doc="$(not_json_document this)"
+        else
+            doc="$(config_report "$config" this "$( ((prune)) && printf true || printf false)")"
+        fi
+        printf '%s\n' "$doc"
+        return "$(config_exit_code "$doc" "$EXIT_PRECONDITION")"
     fi
-    jq -e . >/dev/null 2>&1 <<<"$config" || fail "$EXIT_USAGE" "the configuration is not valid JSON"
+    ((!CONFIG_NOT_JSON)) || fail "$EXIT_USAGE" "the configuration is not valid JSON"
     desc="$(apply_describes "$config")"
     apply_validate "$config" "$desc"
     order="$(apply_order "$config" "$desc")"
@@ -252,6 +292,9 @@ cmd_apply() {
             [[ -n "$model" ]] && log_info "plan: add $model to $engine (chat interface: $chat)"
         done <<<"$models"
         ((prune)) && log_info "plan: prune what the file does not name"
+        while IFS= read -r line; do
+            log_warn "$line"
+        done < <(jq -r --argjson desc "$desc" "$CONFIG_WARNINGS_JQ | .[] | \"\\(.component.name) --\\(.option)=\\(.value): \\(.message)\"" <<<"$config")
         return 0
     fi
     log_event "apply start components=$(jq '(.components // []) | length' <<<"$config") models=$(jq '(.models // []) | length' <<<"$config") prune=$( ((prune)) && printf true || printf false)"

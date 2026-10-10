@@ -133,6 +133,6 @@ easy-cs-ai apply <file|-> [--prune] [--dry-run]
 
 ## Open questions
 
-- **Literal secrets in the file.** Proposed answer: forbidden, see [spec: machine interface](spec-ai-interface.md#secrets-decision-proposed). The file is embedded in the generated VM script, so a literal would sit in the script and, on CloudStack, in the user-data, which is not confidential (see [contract](spec-script-contract.md#secrets)). Options: forbid literals (only `file`, `env`, `generate`), or allow them with a `WARN`. Same question as in [spec: VM script generator](spec-vm-generator.md#open-questions), to be settled together.
+- **Literal secrets in the file.** Answer: forbidden, see [spec: machine interface](spec-ai-interface.md#secrets). The file is embedded in the generated VM script, so a literal would sit in the script and, on CloudStack, in the user-data, which is not confidential (see [contract](spec-script-contract.md#secrets)). Options: forbid literals (only `file`, `env`, `generate`), or allow them with a `WARN`. Same question as in [spec: VM script generator](spec-vm-generator.md#open-questions), to be settled together.
 - **Several instances of one component** (e.g. two engines with different ports) are not expressible while the state has one entry per component.
 - **Schema evolution**: how a new `schema_version` is migrated, once a second version exists.

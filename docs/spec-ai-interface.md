@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed
+**Status:** accepted, implemented (`install_scripts/lib/cli-ai.sh`, tested in `tests/unit/cli_ai.bats`)
 
 ## Purpose
 
@@ -27,6 +27,8 @@ It builds on the [CLI spec](spec-cli.md), the [script contract](spec-script-cont
 - **Read-only commands need no root and no installed state**: they run on the administrator's machine as well as on the target, which is what the agent needs to prepare a fleet.
 - Everything is derived from the shipped scripts (their `describe`, `ranks.conf`, `default-models.conf`), never hardcoded, as for [dispatch](spec-cli.md#dispatch).
 
+- **Where `--json` goes.** Before the command (`easy-cs-ai --json status`) for every command; after it for `status`, `add`, `remove`, `apply`, `catalog`, `host`, `config` and `guide` (the CLI takes it, as it takes `--dry-run` and `--verbose` there), for `install` and `uninstall` (the CLI takes `--json`; `--dry-run` stays with the components, see [Result of the changing commands](#result-of-the-changing-commands)) and for `generate` (the generator takes it, with `--config`). A component command (`engine ollama list-models`) is forwarded as it is, and prints the JSON of the script.
+
 ## Commands
 
 | Command | Role | Root |
@@ -37,7 +39,7 @@ It builds on the [CLI spec](spec-cli.md), the [script contract](spec-script-cont
 | `config validate <file\|-> [--target this\|fresh] [--json]` | Validate a configuration and show its plan, without side effect | no |
 | `guide` | The recommended procedure for an agent, as text | no |
 | `apply <file\|-> --dry-run --json` | The same document as `config validate --target this` | no |
-| `generate --config <file> --dry-run --json` | Validation (target `fresh`) and the summary of the script that would be written | no |
+| `generate --config <file> [--dry-run] --json` | Validation (target `fresh`), then the script: the document of `config validate` with a `script` entry (`path`, `bytes`, `written`, `package_version`, `package_format`), `null` when the file is not valid. `--json` needs `--config` (a session is interactive, exit 2) | no |
 
 `catalog`, `host`, `config` and `guide` join the reserved words of [spec: CLI](spec-cli.md#command-line).
 
@@ -65,7 +67,7 @@ Without `--json`, a table (type, name, rank, description, platforms, requires). 
 - `components` lists the scripts **shipped** (`<libdir>/<type>/<name>.sh`). A component that has a rank in `ranks.conf` but no script (vLLM, AnythingLLM today) is absent: the catalog is what can be installed now.
 - `rank` is the position in `ranks.conf` within its type (1 = what `install --defaults` picks), `null` when not ranked. `default_model` is present for engines with a line in `default-models.conf`.
 - `describe` is the script's own output, so options, `secret`, `warn`, `requires`, `platforms` and `provides` have one source ([contract](spec-script-contract.md#describe)).
-- The order is the default install order: by `requires`, then rank.
+- The order is the types in install order (`provisioning`, `proxy`, `engine`, `chat-interface`), then by rank. The `rank` counts the shipped components of the type only, so a ranked component that has no script yet leaves no hole.
 - The catalog says nothing about the machine: whether a component is installed is `status --json`, and whether a model fits is [model fit](#model-fit-for-a-machine-that-is-not-this-one).
 
 ### `host`
@@ -144,8 +146,10 @@ Without `--json`, the problems and the plan in human form (the lines `apply --dr
 
 - `errors` lists **every** problem at once, each with its JSON `path` (the same paths as today), a stable `code` and the `message` (the text the human form prints). `plan` is `null` when there is an error: nothing is planned from a file that is not valid.
 - `warnings` are the `warn` entries of `describe` whose condition holds for the **effective** value (a default included), as in the summary of the generator, so that the agent can relay them to the user before anything is applied. They do not change the exit code.
-- `plan.components` is in install order, with the options as written in the file, a secret shown as its source; each entry also says what `apply` would do when the target is `this`: `"state": "install" | "reconfigure" | "unchanged"` (absent for `fresh`). `plan.models` has the names already resolved (`engine`, `chat_interface`).
-- **Codes** (closed list, a new one is not a bump of `schema_version`): `not_json`, `wrong_type`, `unknown_key`, `unknown_type`, `unknown_component`, `unknown_option`, `secret_literal`, `secret_source`, `unsupported_schema_version`, `duplicate_component`, `several_defaults`, `unresolved_engine`, `unresolved_chat_interface`, `ambiguous_engine`, `ambiguous_chat_interface`, `missing_requirement`, `unsupported_platform`, `invalid_value` (an option outside `values`, not an integer…). The implementation attaches a code to each message of the validation program; the human text does not change.
+- `plan.components` is in install order, with the options as written in the file, a secret shown as its source; when the target is `this`, each entry also says whether it is already installed (`"installed": true | false`, absent for `fresh`); whether an installed one is left alone or reconfigured is the script's own [idempotence](spec-script-contract.md#idempotence), which the CLI does not compare. The order is the install order of `apply`: a component comes after the ones it requires, otherwise in the order of the file. `plan.models` has the names already resolved (`engine`, `chat_interface`).
+- **Codes** (closed list, a new one is not a bump of `schema_version`): `not_json`, `wrong_type`, `unknown_key`, `unknown_type`, `unknown_component`, `unknown_option`, `secret_literal`, `secret_source`, `unsupported_schema_version`, `duplicate_component`, `several_defaults`, `unresolved_engine`, `unresolved_chat_interface`, `ambiguous_engine`, `ambiguous_chat_interface`, `missing_requirement`, `unsupported_platform`, `invalid_value` (an option outside `values`, not an integer…), `circular_requirement`. The implementation attaches a code to each message of the validation program; the human text does not change.
+- `unsupported_platform` compares the `platforms` of the component with `ID` and `ID_LIKE` of `/etc/os-release`, only for `--target this`, and not in test mode (`EASY_CS_AI_ROOT`), as the scripts' own platform check. `EASY_CS_AI_HOST_IDS` (space separated) replaces the detection, for the tests.
+- With `apply`, a requirement that nothing satisfies keeps its exit code 4 (see [spec: config](spec-config.md#semantics-converge)): `apply --dry-run --json` prints the same document and exits 4 when `missing_requirement` is the only kind of error, 2 otherwise. `config validate` and `generate --config` exit 2 for it.
 - Not covered, as today: a `file` secret whose path is checked at run time only.
 
 ### `guide`
@@ -175,6 +179,8 @@ Prints, as plain text, the procedure of the [next section](#procedure-for-an-age
 
 - `exit` is the process exit code, `message` the first stderr line of the failure, `failed_step` and `message` are `null` on success, `rollback_complete` is `false` for exit 7 (see [spec: CLI](spec-cli.md#exit-codes)). `steps` lists what ran, in order, with the labels the journal uses.
 - With `--dry-run`, these commands print their **plan** as the document: `{ "schema_version": 1, "command": "...", "dry_run": true, "plan": [ { "step": "…" } ] }`; for `apply` it is the `config validate` document.
+- `steps` are the actions run on the components (what `run_script` ran, labelled `<action> <type> <name>`, e.g. `add-upstream proxy nginx`), recorded as they run. A failure that happens outside a component action (a missing requirement of `add`) names, for `apply`, the step of the file that failed (`add m1`) in `failed_step`.
+- The dry-run plan is made of the plan lines of the CLI and of the components (`plan: …`, `dry run: …`). `--dry-run` given **after** `install` or `uninstall` is the components' own (they print their own plan); given before the command, or after the other commands, it is the CLI's.
 - Interruption (130, 143) prints the same document with `ok: false`.
 - Not changed: a component action keeps the JSON of the script (`status`, `list-models`…), and `status --json` stays as specified.
 
@@ -188,7 +194,7 @@ Prints, as plain text, the procedure of the [next section](#procedure-for-an-age
 | `--target-vram <GB>` | GPU memory of the machine to size for | `--memory` |
 | `--target-cpu-cores <n>` | CPU cores of the machine to size for | `--cpu-cores` |
 
-With none of them, behaviour is unchanged (local hardware). They are declared in `describe` of the llmfit script like any other option, therefore also in `catalog`. The options are read-only and need no engine; llmfit itself must be installed, otherwise the action exits 4 with the command that installs it (`easy-cs-ai install provisioning llmfit`), and the agent asks the user before running it (it is a change on the machine).
+With none of them, behaviour is unchanged (local hardware). They are declared in the `describe` of the llmfit script under `action_options`, keyed by action (`recommend`, `check`), and not in `options`, which are the options of `install` and of the configuration; they are therefore in `catalog` too. The options are read-only and need no engine; llmfit itself must be installed, otherwise the action exits 4 with the command that installs it (`easy-cs-ai install provisioning llmfit`), and the agent asks the user before running it (it is a change on the machine).
 
 The configuration still does not store the target specs: the fit is checked **at run time on the target** (`add`, as before), and what the agent asks llmfit while preparing is only an early opinion. A model the agent proposed that does not fit on the target is refused at `apply` (or accepted with `force`).
 
@@ -204,7 +210,7 @@ The configuration still does not store the target specs: the fit is checked **at
 
 The scripts already validate these values at run time; `type` makes it available beforehand to `catalog`, `config schema` and `config validate` (code `invalid_value`). Every shipped script gets its options typed with this change. In the configuration, a typed option accepts the JSON type that matches (`11434` or `"11434"` for an integer, `true` or `"true"` for a boolean): the CLI passes the text.
 
-## Secrets (decision proposed)
+## Secrets
 
 For the agent, and for the fleet: **a literal secret is never allowed in a configuration**. Only the three sources of [spec: config](spec-config.md#secrets) exist (`file`, `env`, `generate`); a plain value is the validation error `secret_literal`, as it is today, and this becomes the rule rather than the open question. It settles in the same way the [question of the generator](spec-vm-generator.md#open-questions), and the user-data caveat of the [contract](spec-script-contract.md#secrets): what the agent writes into a script is readable by anyone who reads the user-data.
 
@@ -235,7 +241,7 @@ What `guide` prints, in substance:
 | Fit of a model can only be asked for the local hardware | [`--target-*`](#model-fit-for-a-machine-that-is-not-this-one) |
 | Option types are not declared | [typed options](#contract-addition-typed-options-in-describe) |
 | Outcome of `apply` / `install` / `add` is only on stderr | [result document](#result-of-the-changing-commands) |
-| Literal secrets undecided | [Secrets](#secrets-decision-proposed) |
+| Literal secrets undecided | [Secrets](#secrets) |
 | The agent does not know the procedure nor the safety rules | [`guide`](#guide) |
 
 ## Definition of done

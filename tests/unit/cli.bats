@@ -287,7 +287,7 @@ with_fit_stack() {
     cli install --defaults
     cli --dry-run uninstall --all
     [ "$status" -eq 0 ]
-    [[ "$stderr" == "chat-interface chat"* ]]
+    [[ "$stderr" == "[INFO] plan: uninstall chat-interface chat"* ]]
     installed eng
 }
 

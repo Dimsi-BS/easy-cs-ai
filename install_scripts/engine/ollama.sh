@@ -162,11 +162,11 @@ describe() {
         platforms: ["debian", "ubuntu"], health_timeout: $ht,
         native: { command: "ollama", env: { OLLAMA_HOST: "{bind}:{port}" } },
         options: [
-          { name: "port", env: "EASY_CS_AI_OLLAMA_PORT", default: "11434", secret: false, description: "Listening port" },
+          { name: "port", env: "EASY_CS_AI_OLLAMA_PORT", default: "11434", secret: false, type: "integer", min: 1, max: 65535, description: "Listening port" },
           { name: "bind", env: "EASY_CS_AI_OLLAMA_BIND", default: "127.0.0.1", secret: false, description: "Listening address" },
           { name: "version", env: "EASY_CS_AI_OLLAMA_VERSION", default: $cv, secret: false, description: "Ollama version to install" },
-          { name: "health-timeout", env: "EASY_CS_AI_OLLAMA_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, description: "Seconds to wait for the API after start" },
-          { name: "lock-timeout", env: "EASY_CS_AI_OLLAMA_LOCK_TIMEOUT", default: "0", secret: false, description: "Seconds to wait for a busy component lock" }
+          { name: "health-timeout", env: "EASY_CS_AI_OLLAMA_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, type: "integer", min: 0, description: "Seconds to wait for the API after start" },
+          { name: "lock-timeout", env: "EASY_CS_AI_OLLAMA_LOCK_TIMEOUT", default: "0", secret: false, type: "integer", min: 0, description: "Seconds to wait for a busy component lock" }
         ],
         actions: ($actions | split(" "))
       }'

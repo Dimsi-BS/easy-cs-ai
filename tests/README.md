@@ -8,7 +8,7 @@ See also: [.github/workflows](../.github/workflows/README.md), which runs these 
 
 ## Unit tests
 
-`bats --recursive tests/unit`, in `EASY_CS_AI_ROOT` mode (no root, no package, service or Docker change). Run by CI with `shellcheck`.
+`bats --recursive tests/unit`, in `EASY_CS_AI_ROOT` mode (no root, no package, service or Docker change). Run by CI with `shellcheck`. `cli_ai.bats` covers the machine interface of the CLI (`catalog`, `host`, `config schema` / `validate`, `guide`, the `--json` result documents, see [docs/spec-ai-interface](../docs/spec-ai-interface.md)).
 
 ## Packaging tests
 

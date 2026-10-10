@@ -34,11 +34,14 @@ source "$EASY_CS_AI_LIB/common.sh"
 source "$EASY_CS_AI_LIB/cli-base.sh"
 # shellcheck source=../install_scripts/lib/cli-apply.sh
 source "$EASY_CS_AI_LIB/cli-apply.sh"
+# shellcheck source=../install_scripts/lib/cli-ai.sh
+source "$EASY_CS_AI_LIB/cli-ai.sh"
 # shellcheck source=lib/questions.sh
 source "$HERE/lib/questions.sh"
 
 DRY=0
 CONFIG_FILE="" CONFIG_ONLY=0 OUTPUT=""
+REPORT_DOC="" SCRIPT_BYTES=0
 PACKAGE_URL="" PACKAGE_VERSION="" PACKAGE_FORMAT=deb PACKAGE_SHA256="" PACKAGE_FILE="" PACKAGE_EXT=deb
 
 usage() {
@@ -57,6 +60,8 @@ interactive session or from a configuration file.
   --package-sha256 <hex>   checksum the script verifies
   --package-file <path>    compute the checksum from a local copy of the package
   --dry-run                run everything, print the result on stderr, write nothing
+  --json                   with --config: print one JSON document on stdout (validation,
+                           warnings, plan, script written) instead of the human output
   --help --version --verbose
 
 Without --package-sha256 or --package-file, the checksum is read from <url>.sha256.
@@ -73,6 +78,7 @@ parse_args() {
         --version) printf '%s\n' "$GENERATOR_VERSION"; exit 0 ;;
         --verbose) export EASY_CS_AI_VERBOSE=1 ;;
         --dry-run) DRY=1 ;;
+        --json) _OPT_JSON=1 ;;
         --config-only) CONFIG_ONLY=1 ;;
         --config | --output | --package-url | --package-version | --package-format | --package-sha256 | --package-file)
             [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$arg needs a value"
@@ -92,6 +98,9 @@ parse_args() {
     done
     if [[ -n "$CONFIG_FILE" ]] && ((CONFIG_ONLY)); then
         die "$EXIT_USAGE" "--config and --config-only cannot be combined"
+    fi
+    if ((_OPT_JSON)) && [[ -z "$CONFIG_FILE" ]]; then
+        die "$EXIT_USAGE" "--json needs --config: a session is interactive"
     fi
     case "$PACKAGE_FORMAT" in deb | rpm | tarball) ;; *) die "$EXIT_USAGE" "unknown package format '$PACKAGE_FORMAT' (deb, rpm or tarball)" ;; esac
 }
@@ -163,6 +172,7 @@ emit_script() {
     local size
     size="$(printf '%s
 ' "$tpl" | wc -c)"
+    SCRIPT_BYTES="$size"
     ((DRY)) || log_info "script written to $out ($size bytes)"
     if ((size > SCRIPT_SIZE_LIMIT)); then
         log_warn "the script is larger than $SCRIPT_SIZE_LIMIT bytes, check the user-data limit of the target cloud"
@@ -185,10 +195,30 @@ write_output() {
 
 # --- Main ------------------------------------------------------------------------------
 
+# json_result <document> <script-json>: print the validation document with the script written.
+json_result() {
+    jq -c --argjson s "$2" '. + {script: $s}' <<<"$1"
+}
+
 load_config() {
-    local config desc
+    local config desc doc rc
     [[ -r "$CONFIG_FILE" ]] || die "$EXIT_USAGE" "cannot read $CONFIG_FILE"
     config="$(cat "$CONFIG_FILE")"
+    if ((_OPT_JSON)); then
+        # the document of `config validate --target fresh`, extended with the script
+        if jq -e . >/dev/null 2>&1 <<<"$config"; then
+            doc="$(config_report "$config" fresh)"
+        else
+            doc="$(not_json_document fresh)"
+        fi
+        rc="$(config_exit_code "$doc")"
+        if ((rc != 0)); then
+            json_result "$doc" null
+            config_report_text "$doc"
+            exit "$rc"
+        fi
+        REPORT_DOC="$doc"
+    fi
     jq -e . >/dev/null 2>&1 <<<"$config" || die "$EXIT_USAGE" "$CONFIG_FILE is not valid JSON"
     desc="$(apply_describes "$config")"
     apply_validate "$config" "$desc"
@@ -214,7 +244,11 @@ main() {
         return 0
     fi
     resolve_package_source
-    emit_script "$SESSION_CONFIG" "${OUTPUT:-./easy-cs-ai-vm.sh}"
+    out="${OUTPUT:-./easy-cs-ai-vm.sh}"
+    emit_script "$SESSION_CONFIG" "$out"
+    if ((_OPT_JSON)); then
+        json_result "$REPORT_DOC" "$(jq -nc --arg p "$out" --argjson b "$SCRIPT_BYTES" --argjson w "$((DRY ? 0 : 1))"             '{path: $p, bytes: $b, written: ($w == 1), package_version: $v, package_format: $f}' --arg v "$PACKAGE_VERSION" --arg f "$PACKAGE_FORMAT")"
+    fi
 }
 
 main "$@"

@@ -267,18 +267,18 @@ describe() {
         platforms: ["debian", "ubuntu"], health_timeout: $ht,
         native: { command: "nginx" },
         options: [
-          { name: "port", env: "EASY_CS_AI_NGINX_PORT", default: "443", secret: false, description: "HTTPS port" },
+          { name: "port", env: "EASY_CS_AI_NGINX_PORT", default: "443", secret: false, type: "integer", min: 1, max: 65535, description: "HTTPS port" },
           { name: "bind", env: "EASY_CS_AI_NGINX_BIND", default: "0.0.0.0", secret: false, description: "Listening address" },
-          { name: "site-port", env: "EASY_CS_AI_NGINX_SITE_PORT", default: "8443", secret: false, description: "HTTPS port of the web site added with add-site (a chat interface for browsers, no API key)" },
+          { name: "site-port", env: "EASY_CS_AI_NGINX_SITE_PORT", default: "8443", secret: false, type: "integer", min: 1, max: 65535, description: "HTTPS port of the web site added with add-site (a chat interface for browsers, no API key)" },
           { name: "server-name", env: "EASY_CS_AI_NGINX_SERVER_NAME", default: "hostname", secret: false, description: "Name in the certificate and in the public URLs" },
-          { name: "tls", env: "EASY_CS_AI_NGINX_TLS", default: "self-signed", secret: false, description: "Certificate strategy: self-signed, provided or letsencrypt" },
+          { name: "tls", env: "EASY_CS_AI_NGINX_TLS", default: "self-signed", secret: false, type: "enum", values: ["self-signed", "provided", "letsencrypt"], description: "Certificate strategy: self-signed, provided or letsencrypt" },
           { name: "tls-cert", env: "EASY_CS_AI_NGINX_TLS_CERT", default: "", secret: false, description: "provided: path of the certificate (PEM, full chain first)" },
           { name: "tls-key", env: "EASY_CS_AI_NGINX_TLS_KEY", default: "", secret: true, description: "provided: the private key of the certificate (PEM, not encrypted)" },
           { name: "tls-email", env: "EASY_CS_AI_NGINX_TLS_EMAIL", default: "", secret: false, description: "letsencrypt: contact address for expiry notices" },
-          { name: "tls-accept-terms", env: "EASY_CS_AI_NGINX_TLS_ACCEPT_TERMS", default: "false", secret: false, description: "letsencrypt: accept the Lets Encrypt subscriber agreement (required)" },
+          { name: "tls-accept-terms", env: "EASY_CS_AI_NGINX_TLS_ACCEPT_TERMS", default: "false", secret: false, type: "boolean", description: "letsencrypt: accept the Lets Encrypt subscriber agreement (required)" },
           { name: "api-key", env: "EASY_CS_AI_NGINX_API_KEY", default: "generated", secret: true, description: "API key clients send as a Bearer token" },
-          { name: "health-timeout", env: "EASY_CS_AI_NGINX_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, description: "Seconds to wait for the proxy after a change" },
-          { name: "lock-timeout", env: "EASY_CS_AI_NGINX_LOCK_TIMEOUT", default: "0", secret: false, description: "Seconds to wait for a busy component lock" }
+          { name: "health-timeout", env: "EASY_CS_AI_NGINX_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, type: "integer", min: 0, description: "Seconds to wait for the proxy after a change" },
+          { name: "lock-timeout", env: "EASY_CS_AI_NGINX_LOCK_TIMEOUT", default: "0", secret: false, type: "integer", min: 0, description: "Seconds to wait for a busy component lock" }
         ],
         actions: ($actions | split(" "))
       }'
