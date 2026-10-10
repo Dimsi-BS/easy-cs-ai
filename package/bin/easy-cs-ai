@@ -7,7 +7,7 @@ set -euo pipefail
 
 readonly CLI_VERSION=0.1.0-rc1
 readonly CHANGING_ACTIONS=" install uninstall add-model remove-model add-upstream remove-upstream add-site remove-site add-endpoint remove-endpoint "
-readonly CONTRACT_ACTIONS=" install uninstall status describe add-model remove-model list-models add-upstream remove-upstream add-site remove-site show-key add-endpoint remove-endpoint recommend check "
+readonly CONTRACT_ACTIONS=" install uninstall status describe add-model remove-model list-models add-upstream remove-upstream add-site remove-site show-key add-endpoint remove-endpoint recommend check size "
 
 # --- Locating the tree ----------------------------------------------------------
 

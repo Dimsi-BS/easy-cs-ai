@@ -329,6 +329,15 @@ with_fit_stack() {
     grep -q 'eng list-models --json' "$CALLS"
 }
 
+@test "size is a contract action: forwarded to the script, not to the component's own program" {
+    cli install engine eng
+    cli engine eng size m1
+    [ "$status" -eq 0 ]
+    grep -q 'eng size m1' "$CALLS"
+    # the native program of the fake is `echo`: it would have printed the arguments
+    [ "$output" != "size m1" ]
+}
+
 @test "global options are forwarded to the script" {
     cli --verbose install engine eng
     grep -q 'eng install --verbose' "$CALLS"

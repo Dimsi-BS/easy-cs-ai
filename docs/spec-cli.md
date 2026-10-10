@@ -62,6 +62,7 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 | `uninstall engine ollama --purge` | `engine/ollama.sh uninstall --purge` |
 | `engine ollama list-models` | `engine/ollama.sh list-models` |
 | `proxy nginx show-key` | `proxy/nginx.sh show-key` |
+| `provisioning llmfit size llama3.2:3b` | `provisioning/llmfit.sh size llama3.2:3b` (a contract action, not llmfit's own command line) |
 | `engine` | lists the engines shipped and, for each, whether it is installed (no script call except `describe`) |
 
 - `install` and `uninstall` add the CLI-level steps described below (dependencies, `--default`); everything else after the component name is forwarded untouched. The script is the judge of its own options (unknown option → exit 2 from the script).
