@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted on 2026-10-09 (points 1 to 5). The open questions at the end are deferred and do not block the implementation.
+**Status:** accepted on 2026-10-09 (points 1 to 5); point 5 amended on 2026-10-10 (the registration closes by itself after the first account, specified here, **not implemented yet**). The open questions at the end are deferred and do not block the implementation.
 
 ## Context
 
@@ -90,14 +90,31 @@ LibreChat and the engines run on the **same machine**, so the link between them 
 
 Accepted. The target use is an administrator who creates the VM with the post-install script, tries the product with `--defaults`, and is **the first to connect**, on a VM and a network they manage. Installing must stay simple, so there is no account step in the install.
 
-- `ALLOW_REGISTRATION=true` **by default** (`--allow-registration false` closes it). In the FerretDB test the first registered account became `ADMIN` and the next ones are plain users (to re-check in the host-network test), so the account created first by the administrator is the administrator of LibreChat, and nothing has to be created by the script: no `--admin-email`, no generated password, no `show-admin-password`.
-- **The risk is written down, not hidden.** With an open registration, anybody who reaches the web site can create an account and use the models, and the first registrant is the administrator. It is acceptable because the administrator owns the VM and its network, but it must be seen:
+- `ALLOW_REGISTRATION=true` at install (`--allow-registration false` installs it closed). In the FerretDB test the first registered account became `ADMIN` and the next ones are plain users (to re-check in the host-network test), so the account created first by the administrator is the administrator of LibreChat, and nothing has to be created by the script: no `--admin-email`, no generated password, no `show-admin-password`.
+- **The registration closes by itself after the first account** (amended 2026-10-10, see [below](#closing-after-the-first-account)). `install --defaults` is how an administrator **tries the product** (a proof of concept on a VM they manage): the first person to connect becomes the administrator, and nobody else can sign up afterwards, with no command to remember.
+- **The risk is written down, not hidden.** Until the first account exists, anybody who reaches the web site can create it and becomes the administrator; this window stays, and it is the reason for the install-time and generation-time warnings. It is acceptable because the administrator owns the VM and its network and connects right after the install, but it must be seen:
   - **at generation time**: the [VM script generator](spec-vm-generator.md) shows the warning in its summary when the effective value is `true`, so the administrator reads it before creating any VM. This comes from the `describe` of the script (an option can carry a `warn` entry, see [`describe`](spec-script-contract.md#describe)), not from code specific to LibreChat in the generator;
-  - **at install time**: `install` logs a `WARN` on stderr (`registration is open: the first account created becomes the administrator, and anyone who reaches the site can sign up; close it with: easy-cs-ai install chat-interface librechat --allow-registration false`).
-- **After the first connection**, the administrator has two ways, both with what exists:
-  1. connect to the VM and run the LibreChat commands they need: close the registration (`install … --allow-registration false`, idempotent, recreates only the `api` container), or create accounts with the native command (`easy-cs-ai exec chat-interface librechat exec api npm run create-user`, which asks for an email, a password of at least 8 characters, and optionally a name of at least 3 characters and a user name, interactively);
-  2. generate a new VM script with the options they want (`--allow-registration false`) and start a new VM.
+  - **at install time**: `install` logs a `WARN` on stderr while the registration is open (`registration is open until the first account is created: that account becomes the administrator, and whoever reaches the site first can create it; then the registration closes by itself`).
+- **After the first connection**, the registration is closed, and the administrator has two ways to add people, both with what exists:
+  1. connect to the VM and create accounts with the native command (`easy-cs-ai exec chat-interface librechat exec api npm run create-user`, which asks for an email, a password of at least 8 characters, and optionally a name of at least 3 characters and a user name, interactively);
+  2. generate a new VM script with the options they want and start a new VM.
 - Tested with the host-network stack: the native command works **with the registration closed** and reads the password from a **piped stdin**, so a later unattended option (`--admin-email` with a password channel) is possible without a command-line password. It is left out of the first version on purpose, see the open questions.
+
+#### Closing after the first account
+
+- **Option** `--close-registration-after-first-account <b>` (env `EASY_CS_AI_LIBRECHAT_CLOSE_REGISTRATION_AFTER_FIRST_ACCOUNT`, `true` by default, in the `describe`, so that `apply` and the generator validate it). `--allow-registration` keeps its meaning (registration open at install, `true` by default). Combinations:
+
+  | `allow-registration` | `close-registration-after-first-account` | Effect |
+  | --- | --- | --- |
+  | `true` | `true` (default) | Open until the first account exists, then closed |
+  | `true` | `false` | Open for good (the former default; the warning stays) |
+  | `false` | any | Closed from the install; the other option has nothing to wait for |
+
+- **Mechanism**: a systemd timer and its oneshot service, installed with the stack, only when the registration is open with `close-registration-after-first-account` true. Each run counts the accounts of LibreChat; at the first one it runs the existing close path (`install … --allow-registration false`, idempotent, recreates only the `api` container), records the result in the state and disables the timer. The timer is persistent, so it survives a reboot, and `uninstall` removes both units. How the accounts are counted (a query on the FerretDB database, or a command in the `api` container) and the polling interval (a few seconds to a minute) are to be measured on the VM before the implementation; the check must not need a secret on a command line.
+- **Idempotence**: a re-run of the install with default options **never reopens** a closed registration. If an account already exists when the install runs (a reinstall that kept the data, a re-run after the first connection), the registration is closed at once instead of being opened and watched. Opening it again takes both explicit options: `--allow-registration true --close-registration-after-first-account false`.
+- **State**: `params` gain `close-registration-after-first-account`, and a `registration` field of the component tells what is true now: `open`, `closed` (with `closed_by`: `option` or `first-account`). `status` shows it, so that an administrator can see whether the window is still open. Never a secret.
+- **Purge**: `uninstall --purge` removes the data, so the next install finds no account and opens the registration again, as a first install.
+- **Not covered, on purpose**: closing the window before the first connection (the administrator connects right after the install, see the risk above), an invitation or a first-login token, and the creation of other accounts by the product (the native command stays the way). E-mail based sign-up is planned separately, see the open questions.
 
 ## Consequences
 
@@ -108,12 +125,16 @@ Accepted. The target use is an administrator who creates the VM with the post-in
 - **State**: `service.compose_file` filled, `endpoints`, `url`, `requires: ["nginx"]`, `params` with `port`, `bind`, `allow-registration` (never a secret), `secrets` listing `librechat.env` (JWT and credentials keys, database URI) and `librechat-db.env` (database password), `endpoints` entries `{ name, url, model }`, `url` the public URL given by `proxy add-site`. The `status` example of the [state format](spec-state-format.md) shows `0.7.5` for LibreChat and must read `0.8.7`.
 - **Uninstall**: stops and removes the containers, the unit and the generated files, then calls `proxy remove-site` (best effort), and keeps **the volume, the secrets** and Docker; `--purge` removes the volume, the images of the stack and the secrets. The secrets stay with the volume on purpose: a reinstall finds the database again only with its password.
 - **`install --defaults`** can now install the whole default stack (nginx, Ollama, LibreChat) without a MongoDB exception; the [CLI spec](spec-cli.md) note on the "LibreChat/MongoDB question" can be removed.
+- **To amend when the closing is implemented** (point 5, 2026-10-10): the `describe` of the LibreChat script (the new option, and the `warn` message of `allow-registration`), the [state format](spec-state-format.md) (`params`, `registration`), `status`, the [config spec](spec-config.md) and the [AI interface](spec-ai-interface.md) examples that show `allow-registration`, the README (Getting started tells the administrator to close the registration by hand), and the unit and VM tests (the registration is closed after the first account, a re-run keeps it closed, a purge opens it again).
 - **Tests**: `bats` covers options, templates (compose, `librechat.yaml`, `librechat.env`), idempotence, state, the loopback preflight and the endpoint edit. The real install is covered by the integration tests on a VM, as the other scripts.
 
 ## Open questions
 
-- **Closing the registration automatically** once the first account exists (the administrator would no longer have to do it), left out to keep the install simple; to reconsider if open registrations are found in the field.
-- **Allowed e-mail domains** (`registration.allowedDomains` of `librechat.yaml`, to check in this version) as a middle way between open and closed, only useful with an e-mail service.
+- **Self-service sign-up for a domain, with e-mail verification** (planned, in steps, **not part of `install --defaults`**): the administrator, once connected, opens the sign-up to their own e-mail domain and turns the verification on. It cannot be a default because it depends on what the installer cannot know: a relay or an outbound path for the mail (port 25 is often blocked), the public URL that goes into the verification link (`DOMAIN_CLIENT`, today the host name and the site port), and a recipient mail server that accepts the VM. Planned order:
+  1. an optional `mail` component (Postfix, send-only, on the loopback, never an open relay, with a relay-host option and a test action), installed on request;
+  2. `--registration-domains` (`registration.allowedDomains` of `librechat.yaml`, to check in 0.8.7) and a `--public-url`, refused unless the mail is installed and a test mail succeeded. Without verification a domain list only checks the text of the address, anybody can type one: it is never offered as a protection.
+
+  To test before specifying them: how LibreChat treats the administrator account created before the verification is on, which settings need a recreation of the `api` container, and the verification link behind a self-signed certificate.
 - **Default endpoint for a new account**: a new account must pick the model once (otherwise the first message fails with `agent_id is required`). A default `modelSpecs` entry or a default endpoint in `librechat.yaml` may avoid it; to test when the script writes `librechat.yaml`. Without a model the selector is empty anyway: `install --defaults` now adds a [default model](spec-cli.md#default-model).
 - **Offline VMs**: the apt repository of Docker and the three images come from the Internet. A mirror option (like the package mirror of the [VM script generator](decision-vm-generator.md)) and an `--image-archive` to load images offline are not designed.
 - **`--site-port` and the browser**: 8443 avoids a clash with the API `server`, but a deployment that wants the interface on 443 needs another `server_name` for it, which `self-signed` on an IP address cannot give.
