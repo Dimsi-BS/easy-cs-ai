@@ -443,7 +443,7 @@ size_info() {
 }
 
 cmd_size() {
-    local model="${POSITIONAL[0]:-}" bin entry name best_cpu best_gpu def_cpu def_gpu
+    local model="${POSITIONAL[0]:-}" bin entry name best_cpu best_gpu def_cpu def_gpu tmp
     [[ -n "$model" ]] || die "$EXIT_USAGE" "size needs a model name"
     require_installed
     bin="$(llmfit_bin)"
@@ -452,12 +452,20 @@ cmd_size() {
     entry="$(fit_entry "$bin" "$model")" ||
         die "$EXIT_ERROR" "llmfit does not know '$model'. It knows Hugging Face names and the Ollama tags of the models that fit a large machine"
     name="$(jq -r '.name' <<<"$entry")"
-    if ! { best_cpu="$(size_info "$bin" "$name" "$SIZE_BIG")" &&
-        best_gpu="$(size_info "$bin" "$name" "$SIZE_BIG" "$SIZE_BIG")" &&
-        def_cpu="$(size_info "$bin" "$name" "$SIZE_TINY")" &&
-        def_gpu="$(size_info "$bin" "$name" "$SIZE_TINY" "$SIZE_TINY")"; }; then
+    # The four calls are independent and read-only, and each takes a few seconds (llmfit loads its
+    # catalogue every time): they run together.
+    tmp="$(mktemp -d)"
+    size_info "$bin" "$name" "$SIZE_BIG" >"$tmp/best_cpu" &
+    size_info "$bin" "$name" "$SIZE_BIG" "$SIZE_BIG" >"$tmp/best_gpu" &
+    size_info "$bin" "$name" "$SIZE_TINY" >"$tmp/def_cpu" &
+    size_info "$bin" "$name" "$SIZE_TINY" "$SIZE_TINY" >"$tmp/def_gpu" &
+    wait
+    # A failed call leaves its file empty.
+    best_cpu="$(<"$tmp/best_cpu")" best_gpu="$(<"$tmp/best_gpu")"
+    def_cpu="$(<"$tmp/def_cpu")" def_gpu="$(<"$tmp/def_gpu")"
+    rm -rf "$tmp"
+    [[ -n "$best_cpu" && -n "$best_gpu" && -n "$def_cpu" && -n "$def_gpu" ]] ||
         die "$EXIT_ERROR" "llmfit could not size '$name'"
-    fi
     jq -n --argjson bc "$best_cpu" --argjson bg "$best_gpu" --argjson dc "$def_cpu" --argjson dg "$def_gpu" '
         def q($c; $g): {quant: $c.best_quant, disk_gb: $c.disk_size_gb, cpu_gb: $c.memory_required_gb, gpu_gb: $g.memory_required_gb};
         {name: $bc.name, ollama_name: $bc.ollama_name, moe: ($bc.is_moe // false),

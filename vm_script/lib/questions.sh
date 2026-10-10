@@ -249,10 +249,13 @@ _read_order() {
 # _size_models <script>: what each model of the session needs, from `llmfit size`. A model
 # llmfit cannot size is kept apart: it is reported as not estimated, never guessed.
 _size_models() {
-    local script="$1" m out
+    local script="$1" m out n=0
     SESSION_SIZING='[]'
     SESSION_UNSIZED=()
     for m in "${SESSION_MODELS[@]}"; do
+        # llmfit takes several seconds per model: say what is going on.
+        n=$((n + 1))
+        printf '  sizing %s with llmfit (%d/%d), a few seconds...\n' "$m" "$n" "${#SESSION_MODELS[@]}" >&2
         if out="$(bash "$script" size "$m" 2>/dev/null)" &&
             jq -e '[.best.cpu_gb, .best.gpu_gb, .best.disk_gb, .default.cpu_gb, .default.gpu_gb, .default.disk_gb] | all(. != null)' <<<"$out" >/dev/null 2>&1; then
             SESSION_SIZING="$(jq -c --arg t "$m" --argjson e "$out" '. + [$e + {typed: $t}]' <<<"$SESSION_SIZING")"

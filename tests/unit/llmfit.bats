@@ -267,6 +267,8 @@ info)
         quant=Q4_K_M disk=4.66 req=6.16 gpu=6.46
     fi
     ((mem > 0)) && req=$gpu
+    # one of the four calls fails
+    [[ "${FAKE_SIZE_FAIL:-}" == tiny-gpu ]] && ((ram == 1 && mem > 0)) && { echo '{"error":{"kind":"x","message":"x"}}'; exit 1; }
     jq -n --arg q "$quant" --argjson d "$disk" --argjson r "$req" \
         '{models: [{name: "hf/m", ollama_name: "m:8b", is_moe: false, best_quant: $q, disk_size_gb: $d, memory_required_gb: $r, estimate_basis: {assumed_context: 8192}}]}' ;;
 esac
@@ -288,6 +290,17 @@ FAKE
     grep -qx 'llmfit --ram 1024 --memory 1024 info hf/m --json --no-dashboard' "$CALLS"
     grep -qx 'llmfit --ram 1 info hf/m --json --no-dashboard' "$CALLS"
     grep -qx 'llmfit --ram 1 --memory 1 info hf/m --json --no-dashboard' "$CALLS"
+}
+
+@test "size: one of the four llmfit calls failing is exit 1 and leaves no temporary file" {
+    llmfit install
+    make_sizing_llmfit
+    export FAKE_SIZE_FAIL=tiny-gpu TMPDIR="$BATS_TEST_TMPDIR/tmp"
+    mkdir -p "$TMPDIR"
+    llmfit size hf/m
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"llmfit could not size 'hf/m'"* ]]
+    [ -z "$(ls -A "$TMPDIR")" ]
 }
 
 @test "size by Ollama tag: found on a large machine, then sized by its Hugging Face name" {

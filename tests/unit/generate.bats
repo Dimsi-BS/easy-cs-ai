@@ -591,6 +591,8 @@ FAKE
     [[ "$stderr" == *"RAM 11 GB (11264 MB) = 9 model + 2 estimated margin"* ]]
     [[ "$stderr" == *"disk: 31 GB = 11 models + 20 estimated"* ]]
     [[ "$stderr" == *"m2: best Q8_0 4 GB"* ]]
+    # llmfit is slow: each model is announced before it is sized
+    [[ "$stderr" == *"sizing m1 with llmfit (1/2)"*"sizing m2 with llmfit (2/2)"* ]]
 }
 
 @test "models first: a chat interface in the stack adds its share to the estimated margin" {
