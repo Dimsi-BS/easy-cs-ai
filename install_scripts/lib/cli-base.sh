@@ -38,7 +38,7 @@ component_names() {
 }
 
 # rank_lookup <type>: the rank 1 component of a type, empty when none.
-rank_lookup() { awk -v t="$1" '$1 == t { print $2; exit }' "$HOME_DIR/ranks.conf" 2>/dev/null || true; }
+rank_lookup() { awk -v t="$1" '{ sub(/\r$/, "") } $1 == t { print $2; exit }' "$HOME_DIR/ranks.conf" 2>/dev/null || true; }
 
 # rank_one <type>: same, but a usage error when none.
 rank_one() {
@@ -50,7 +50,7 @@ rank_one() {
 
 # default_model <engine>: the model `install --defaults` adds to an engine,
 # empty when the engine has none (default-models.conf, next to ranks.conf).
-default_model() { awk -v e="$1" '$1 == e { print $2; exit }' "$HOME_DIR/default-models.conf" 2>/dev/null || true; }
+default_model() { awk -v e="$1" '{ sub(/\r$/, "") } $1 == e { print $2; exit }' "$HOME_DIR/default-models.conf" 2>/dev/null || true; }
 
 # type_of <name>: the type of an installed or shipped component.
 type_of() {

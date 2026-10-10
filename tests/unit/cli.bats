@@ -353,3 +353,12 @@ with_fit_stack() {
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"available: eng eng2"* ]]
 }
+
+@test "install --defaults reads CRLF data files without a stray CR in the model name" {
+    with_fit_stack
+    printf 'eng llama-test\r\n' >"$EASY_CS_AI_HOME/default-models.conf"
+    cli install --defaults
+    [ "$status" -eq 0 ]
+    grep -qx 'eng add-model llama-test.*' "$CALLS"
+    run ! grep -q $'\r' "$CALLS"
+}

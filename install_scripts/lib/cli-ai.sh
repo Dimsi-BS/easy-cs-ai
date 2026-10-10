@@ -134,6 +134,7 @@ rank_of() {
     local t n r=0
     [[ -r "$HOME_DIR/ranks.conf" ]] || return 0
     while read -r t n _; do
+        n="${n%$'\r'}"
         [[ -n "$n" && "$t" != "#"* && "$t" == "$1" && -f "$(script_path "$t" "$n")" ]] || continue
         r=$((r + 1))
         if [[ "$n" == "$2" ]]; then
