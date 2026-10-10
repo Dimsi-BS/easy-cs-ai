@@ -3,7 +3,8 @@
 # documents), see docs/spec-ai-interface.md. Sourced by package/bin/easy-cs-ai,
 # and by vm_script/generate.sh for config_report. Needs common.sh, cli-base.sh
 # and cli-apply.sh. With --json (_OPT_JSON) stdout is exactly one JSON
-# document; without it the output is for humans.
+# document; without it a command with a human rendering prints that, one that
+# only returns data prints JSON anyway.
 
 readonly AI_SCHEMA_VERSION=1
 
@@ -394,9 +395,11 @@ cmd_guide() {
     cat <<'EOF'
 easy-cs-ai: guide for an AI agent (or any program) acting for a user
 
-Rule: with --json, stdout is exactly one JSON document and stderr holds the
-logs; without it, the output is for humans and is not a stable interface. The
-exit code is the first success signal (0 = ok, 2 = usage or invalid input,
+Rule: --json is accepted by every command that outputs data; with it, stdout
+is exactly one JSON document and stderr holds the logs. A command that only
+returns data (config schema, the actions of a component) prints JSON without
+it; one with a human rendering (tables, plans) prints that, and it is not a
+stable interface. The exit code is the first success signal (0 = ok, 2 = usage or invalid input,
 3 platform, 4 precondition, 5 network, 6 verification, 7 incomplete rollback).
 
 Procedure

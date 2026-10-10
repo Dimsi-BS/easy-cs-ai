@@ -10,8 +10,10 @@ An AI agent, with a shell on a machine where **only the installed package exists
 
 The rule that governs all of it:
 
-> **`--json` is for programs, no `--json` is for humans.**
-> With `--json`, stdout carries **one JSON document** and nothing else. Without it, the output is the human one (tables, plans, hints) and is not a stable interface.
+> **`--json` is accepted by every command that outputs data, and then stdout carries one JSON document and nothing else.**
+> A command that only returns a data structure (`config schema`, the component actions `status`, `list-models`, `recommend`…) prints JSON by default and takes `--json` as a no-op. A command with a human rendering (tables, plans, hints) prints it without `--json`, and that rendering is not a stable interface.
+
+Why the rule is not "no `--json` is always for humans": [decision](decision-json-output-rule.md).
 
 The agent builds on what exists: the [configuration file](spec-config.md) is the single target it produces (JSON, never bash), `apply --dry-run` is its validator, `generate --config` turns the file into a script. This spec fills what it cannot do today, see [Gaps closed](#gaps-closed).
 
