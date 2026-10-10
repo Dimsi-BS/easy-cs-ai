@@ -19,3 +19,4 @@ This directory contains design decisions and write-ups about the project, comple
 - [Spec: CLI](spec-cli.md) — dispatch, `status`, `install`, `uninstall`, `add` orchestration with rollback, CLI exit codes
 - [Spec: configuration file and `apply`](spec-config.md) — declarative JSON deployment description, interpreted by `apply`, written by the generator (`--config-only`) and read back with `--config`
 - [Spec: VM script generator](spec-vm-generator.md) — interactive session, package source, shape of the generated VM script
+- [Spec: machine interface of the CLI](spec-ai-interface.md) — `--json` for programs and AI agents: `catalog`, `host`, `config schema` / `validate`, result documents, typed options, procedure for an agent (proposed)

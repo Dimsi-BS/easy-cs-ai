@@ -44,11 +44,12 @@ easy-cs-ai [global options] <command> [arguments…]
 | `remove --all [--engine <name>]` | Remove every model (of one engine, or of all) |
 | `apply <file\|-> [--prune]` | Make the machine match a configuration file |
 | `generate [--config-only] [parameters…]` | Produce the parameterless VM post-install script, or only its configuration file |
+| `catalog`, `host`, `config schema`, `config validate`, `guide` | Read-only discovery and validation for programs and AI agents, see [spec: machine interface](spec-ai-interface.md) |
 | `<type> <name> <action> [arguments…]` | Component command, forwarded to the script |
 
 - `<type>` is one of `engine`, `chat-interface`, `proxy`, `provisioning` (the contract types). `install` accepts all four, since `proxy` and `provisioning` are required by other commands (see [Dependencies](#dependencies)).
 - **Global options**, accepted before the command: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`. After the command they are forwarded as they are, since scripts accept the same ones.
-- **General commands and component commands are kept apart.** A component is always addressed by its type followed by its name (`engine ollama`), never by its name alone. The first word of the command line is therefore either a general command (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`, `help`, `version`) or a component type (`engine`, `chat-interface`, `proxy`, `provisioning`): these two sets are the reserved words, so a component name can never clash with a general command.
+- **General commands and component commands are kept apart.** A component is always addressed by its type followed by its name (`engine ollama`), never by its name alone. The first word of the command line is therefore either a general command (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`, `catalog`, `host`, `config`, `guide`, `help`, `version`) or a component type (`engine`, `chat-interface`, `proxy`, `provisioning`): these two sets are the reserved words, so a component name can never clash with a general command.
 - Like the scripts, the CLI **never prompts**. Unknown commands, unknown types, unknown component names and missing arguments are usage errors (exit 2) with a message listing the valid values.
 
 ### Dispatch
