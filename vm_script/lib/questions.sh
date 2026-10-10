@@ -212,7 +212,7 @@ run_session() {
         5)
             SESSION_CONFIG="$(session_config)"
             print_summary "$SESSION_CONFIG"
-            _read "Confirm (y), cancel (n) or redo a step (c components, o options, m models)" y
+            _read "Confirm (y), cancel (n) or redo a step: components (c), options (o), models (m)" y
             answer="$REPLY"
             case "$answer" in
             y | Y) return 0 ;;
