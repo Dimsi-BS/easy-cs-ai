@@ -32,7 +32,7 @@ source "\$EASY_CS_AI_LIB/common.sh"
 action="\$1"; shift
 echo "$2 \$action \$*" >>"\$CALLS"
 case "\$action" in
-describe) jq -n '{name: "$2", type: "$1", requires: $3, native: {command: "echo", env: {FAKE_HOST: "{bind}:{port}"}}}' ;;
+describe) jq -n '{name: "$2", type: "$1", requires: $3, actions: ["install", "uninstall", "status", "describe", "add-model", "list-models", "check", "size", "add-upstream", "remove-upstream", "add-endpoint", "remove-endpoint"], native: {command: "echo", env: {FAKE_HOST: "{bind}:{port}"}}}' ;;
 install)
     [[ "\${FAKE_FAIL:-}" == "$2" ]] && exit 5
     state_write $2 '{"name":"$2","type":"$1","version":"1.0","requires":$3,"params":{"bind":"127.0.0.1","port":"1234"},"models":[]}' ;;
@@ -343,18 +343,79 @@ with_fit_stack() {
     grep -q 'eng install --verbose' "$CALLS"
 }
 
-@test "a native action runs the component's program with the recorded environment" {
+@test "exec runs the component's program with its arguments untouched and the recorded environment" {
     cli install engine eng
-    cli engine eng hello world
+    cli exec engine eng hello world
     [ "$status" -eq 0 ]
     [ "$output" = "hello world" ]
-    cli engine eng -- status
+    cli exec engine eng status
     [ "$output" = "status" ]
+    cli exec engine eng -t
+    [ "$output" = "-t" ]
 }
 
-@test "a native action on a component that is not installed exits 4" {
-    cli engine eng hello
+@test "exec exports describe.native.env" {
+    cli install engine eng
+    sed -i 's/command: "echo"/command: "printenv"/' "$EASY_CS_AI_HOME/engine/eng.sh"
+    cli exec engine eng FAKE_HOST
+    [ "$output" = "127.0.0.1:1234" ]
+}
+
+@test "exec shows the resolved command with --verbose and plans it with --dry-run" {
+    cli install engine eng
+    cli --verbose exec engine eng hello
+    [ "$output" = "hello" ]
+    [[ "$stderr" == *"exec: FAKE_HOST=127.0.0.1:1234 echo hello"* ]]
+    cli --dry-run exec engine eng hello
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"plan: exec FAKE_HOST=127.0.0.1:1234 echo hello"* ]]
+}
+
+@test "exec refusals: usage errors exit 2, a missing install or program exits 4" {
+    cli exec
+    [ "$status" -eq 2 ]
+    cli exec engine
+    [ "$status" -eq 2 ]
+    cli exec engine eng
+    [ "$status" -eq 2 ]
+    cli exec plugin eng ps
+    [ "$status" -eq 2 ]
+    cli exec engine nope ps
+    [ "$status" -eq 2 ]
+    cli exec engine eng hello
     [ "$status" -eq 4 ]
+    [[ "$stderr" == *"not installed"* ]]
+    cli install engine eng
+    cli --json exec engine eng hello
+    [ "$status" -eq 2 ]
+    sed -i 's/command: "echo"/command: "no-such-program"/' "$EASY_CS_AI_HOME/engine/eng.sh"
+    cli exec engine eng hello
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"no-such-program is not found"* ]]
+    sed -i "s/, native: .*}}}'/}'/" "$EASY_CS_AI_HOME/engine/eng.sh"
+    cli exec engine eng hello
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"no program of its own"* ]]
+}
+
+@test "a word that is no action is a usage error pointing to exec, with or without --" {
+    cli install engine eng
+    cli engine eng hello world
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"unknown action 'hello'"* && "$stderr" == *"actions: install uninstall"* && "$stderr" == *"exec engine eng hello"* ]]
+    cli engine eng -- status
+    [ "$status" -eq 2 ]
+    cli engine eng -t
+    [ "$status" -eq 2 ]
+}
+
+@test "an action added to describe is accepted without a change of the CLI" {
+    cli install engine eng
+    sed -i 's/"size",/"size", "brand-new",/' "$EASY_CS_AI_HOME/engine/eng.sh"
+    cli engine eng brand-new x
+    [ "$status" -eq 0 ]
+    grep -q 'eng brand-new x' "$CALLS"
 }
 
 @test "an unknown component name is a usage error listing the choices" {

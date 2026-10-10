@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted (specified in [spec: CLI](spec-cli.md#native-tool-commands), not implemented yet)
+**Status:** accepted and implemented (see [spec: CLI](spec-cli.md#native-tool-commands))
 
 ## Context
 

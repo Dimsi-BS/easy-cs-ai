@@ -427,8 +427,9 @@ Procedure
  7. Read the result document of the command and `easy-cs-ai status --json`,
     and report in plain words. A failure is reported with its "message" and
     "failed_step"; a second apply resumes where it stopped, do not retry blindly.
- 8. Never run uninstall, remove, apply --prune, --purge or
-    `proxy nginx show-key` on your own initiative.
+ 8. Never run uninstall, remove, apply --prune, --purge, `exec` or
+    `proxy nginx show-key` on your own initiative: exec runs any command of a
+    component's program, outside the state, the lock and the journal.
 EOF
 }
 

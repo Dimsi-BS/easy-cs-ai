@@ -2,12 +2,11 @@
 # easy-cs-ai: dispatcher over the layer 1 install scripts, see docs/spec-cli.md.
 # Implemented: help, version, status, install, uninstall, add, remove (in
 # lib/cli-models.sh), apply (lib/cli-apply.sh), component commands (contract
-# actions and native tool commands), generate (hands over to vm_script/).
+# actions), exec (native tool commands), generate (hands over to vm_script/).
 set -euo pipefail
 
 readonly CLI_VERSION=0.1.0-rc1
 readonly CHANGING_ACTIONS=" install uninstall add-model remove-model add-upstream remove-upstream add-site remove-site add-endpoint remove-endpoint "
-readonly CONTRACT_ACTIONS=" install uninstall status describe add-model remove-model list-models add-upstream remove-upstream add-site remove-site show-key add-endpoint remove-endpoint recommend check size "
 
 # --- Locating the tree ----------------------------------------------------------
 
@@ -51,8 +50,8 @@ Commands:
   install [<type>] --defaults              install the default choices
   uninstall <type> <name> [--purge] [--force]
   uninstall [<type>] --all [--purge] [--force]
-  <type> <name> <action> [arguments]       component command (engine ollama list-models)
-  <type> <name> -- <native command>        run the component's own program
+  <type> <name> <action> [arguments]       component action of the contract (engine ollama list-models)
+  exec <type> <name> <command> [arguments] run the component's own program (exec engine ollama ps)
   <type>                                   list the components of a type
   add <model> [--engine <n>] [--chat-interface <n>] [--no-chat-interface] [--defaults] [--force]
   remove <model> [--engine <n>]            remove --all [--engine <n>]
@@ -426,22 +425,42 @@ cmd_uninstall() {
 
 # --- component commands -----------------------------------------------------------
 
-cmd_native() {
-    local type="$1" name="$2" script desc state params env cmd
-    shift 2
+# cmd_exec <type> <name> <command> [arguments…]: run the component's own program as it
+# is, with the environment of describe.native.env. What runs is shown on stderr
+# (--verbose) or planned (--dry-run), see docs/spec-cli.md#native-tool-commands.
+cmd_exec() {
+    local type="${1:-}" name="${2:-}" script desc state params env cmd line envs=() shown
+    [[ -n "$type" ]] || fail "$EXIT_USAGE" "exec needs a component type, a name and a command" "easy-cs-ai exec <type> <name> <command> [arguments]"
+    is_type "$type" || fail "$EXIT_USAGE" "unknown component type '$type'" "types: ${TYPES[*]}"
+    [[ -n "$name" ]] || fail "$EXIT_USAGE" "exec needs a component name" "easy-cs-ai exec $type <name> <command> [arguments]"
     script="$(resolve_script "$type" "$name")"
+    shift 2
+    [[ $# -gt 0 ]] || fail "$EXIT_USAGE" "exec needs a command to run" "easy-cs-ai exec $type $name <command> [arguments]"
+    ((!_OPT_JSON)) || fail "$EXIT_USAGE" "--json does not apply to exec: the output is the tool's" "the options of the CLI go before the command, without --json"
     desc="$(bash "$script" describe)"
     cmd="$(jq -r '.native.command // empty' <<<"$desc")"
-    [[ -n "$cmd" ]] || fail "$EXIT_USAGE" "$name has no program of its own, unknown action '$1'"
+    [[ -n "$cmd" ]] || fail "$EXIT_USAGE" "$name has no program of its own to run"
     state="$(state_read "$name" 2>/dev/null)" || fail "$EXIT_PRECONDITION" "$name is not installed"
     params="$(jq -c '(.params // {}) + { compose_file: (.service.compose_file // "") }' <<<"$state")"
-    while IFS= read -r env; do
-        [[ -z "$env" ]] || export "${env?}"
+    while IFS= read -r line; do
+        [[ -z "$line" ]] || envs+=("$line")
     done < <(jq -r --argjson p "$params" '(.native.env // {}) | to_entries[]
         | "\(.key)=" + (reduce ($p | to_entries[]) as $e (.value; gsub("\\{" + $e.key + "\\}"; $e.value | tostring)))' <<<"$desc")
     cmd="$(jq -rn --arg c "$cmd" --argjson p "$params" 'reduce ($p | to_entries[]) as $e ($c; gsub("\\{" + $e.key + "\\}"; $e.value | tostring))')"
-    # shellcheck disable=SC2086
-    exec $cmd "$@"
+    # the program is the first word of the command (the rest is its fixed arguments)
+    local -a words
+    read -r -a words <<<"$cmd"
+    shown="${envs[*]:+${envs[*]} }$cmd $*"
+    if ((DRY)); then
+        log_info "plan: exec $shown"
+        return 0
+    fi
+    command -v "${words[0]}" >/dev/null 2>&1 || fail "$EXIT_PRECONDITION" "${words[0]} is not found on this machine" "is $name installed and ${words[0]} in the PATH?"
+    log_debug "exec: $shown"
+    for env in "${envs[@]}"; do
+        export "${env?}"
+    done
+    exec "${words[@]}" "$@"
 }
 
 cmd_component() {
@@ -449,28 +468,29 @@ cmd_component() {
     if [[ -z "$name" ]]; then
         local n
         for n in $(component_names "$type"); do
-            printf '%s\t%s\n' "$n" "$(is_installed "$n" && printf installed || printf 'not installed')"
+            printf '%s	%s
+' "$n" "$(is_installed "$n" && printf installed || printf 'not installed')"
         done
         return 0
     fi
-    resolve_script "$type" "$name" >/dev/null
+    local script actions
+    script="$(resolve_script "$type" "$name")"
     shift 2 || true
     if [[ -z "$action" ]]; then
         run_script "$type" "$name" --help
         return
     fi
-    if [[ "$action" == "--" ]]; then
-        shift
-        cmd_native "$type" "$name" "$@"
-    fi
-    if [[ "$CONTRACT_ACTIONS" == *" $action "* || "$action" == --* ]]; then
-        if [[ "$CHANGING_ACTIONS" == *" $action "* ]] && ((!DRY)); then
-            need_root "$type" "$name" "$action"
+    if [[ "$action" != --* || "$action" == -- ]]; then
+        # the actions come from the describe of the component, not from a list here
+        actions="$(bash "$script" describe | jq -r '(.actions // []) | join(" ")')"
+        if [[ " $actions " != *" $action "* ]]; then
+            fail "$EXIT_USAGE" "unknown action '$action' for $type $name"                 "actions: $actions; to run the program of the component: easy-cs-ai exec $type $name $action …"
         fi
-        run_script "$type" "$name" "$@"
-        return
     fi
-    cmd_native "$type" "$name" "$@"
+    if [[ "$CHANGING_ACTIONS" == *" $action "* ]] && ((!DRY)); then
+        need_root "$type" "$name" "$action"
+    fi
+    run_script "$type" "$name" "$@"
 }
 
 # --- generate ---------------------------------------------------------------------
@@ -562,6 +582,7 @@ main() {
         # the dry run of apply prints the document of config validate itself
         if ((DRY)); then cmd_apply "$@"; else changing apply cmd_apply "$@"; fi
         ;;
+    exec) cmd_exec "$@" ;;
     generate) cmd_generate "$@" ;;
     catalog) cmd_catalog "$@" ;;
     host) cmd_host "$@" ;;
