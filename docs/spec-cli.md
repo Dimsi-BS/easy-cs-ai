@@ -6,7 +6,7 @@
 
 ## Purpose
 
-The `easy-cs-ai` CLI is the layer 2 entry point. It is a thin `git`-style dispatcher over the layer 1 scripts (see [packaging](decision-packaging.md)), plus three commands that do their own work: `status`, `add` and `uninstall`, which combine several scripts. This spec fixes how a command line is resolved, what each command does step by step, how failures are reported and what is undone on error.
+The `easy-cs-ai` CLI is the layer 2 entry point. It is a thin `git`-style dispatcher over the layer 1 scripts (see [packaging](decision-packaging.md)), plus the commands that do their own work (`status`, `install`, `uninstall`, `add`, `remove`, `apply`), which combine several scripts. This spec fixes how a command line is resolved, what each command does step by step, how failures are reported and what is undone on error.
 
 It builds on the [script contract](spec-script-contract.md) (actions, `describe`, exit codes) and the [state format](spec-state-format.md); it does not repeat them. [CLI commands](cli-commands.md) stays the short overview.
 
@@ -45,11 +45,12 @@ easy-cs-ai [global options] <command> [arguments…]
 | `apply <file\|-> [--prune]` | Make the machine match a configuration file |
 | `generate [--config-only] [parameters…]` | Produce the parameterless VM post-install script, or only its configuration file |
 | `catalog`, `host`, `config schema`, `config validate`, `guide` | Read-only discovery and validation for programs and AI agents, see [spec: machine interface](spec-ai-interface.md) |
-| `<type> <name> <action> [arguments…]` | Component command, forwarded to the script |
+| `exec <type> <name> <command> [arguments…]` | Run the component's own program (`ollama`, `nginx`…) as it is, see [Native tool commands](#native-tool-commands) |
+| `<type> <name> <action> [arguments…]` | Component command: an action of the contract, forwarded to the script |
 
 - `<type>` is one of `engine`, `chat-interface`, `proxy`, `provisioning` (the contract types). `install` accepts all four, since `proxy` and `provisioning` are required by other commands (see [Dependencies](#dependencies)).
-- **Global options**, accepted before the command: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`. After the command they are forwarded as they are, since scripts accept the same ones.
-- **General commands and component commands are kept apart.** A component is always addressed by its type followed by its name (`engine ollama`), never by its name alone. The first word of the command line is therefore either a general command (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`, `catalog`, `host`, `config`, `guide`, `help`, `version`) or a component type (`engine`, `chat-interface`, `proxy`, `provisioning`): these two sets are the reserved words, so a component name can never clash with a general command.
+- **Global options**, accepted before the command: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`. After the command, `status`, `add`, `remove`, `apply`, `config`, `catalog`, `host` and `guide` accept the last three too; for `install` and `uninstall`, `--json` is the CLI's and `--dry-run` goes to the components, which print their own plan; after a component command or `generate` they are forwarded as they are, since the scripts and the generator accept the same ones; after `exec` they belong to the tool, so they go **before** `exec`.
+- **General commands and component commands are kept apart.** A component is always addressed by its type followed by its name (`engine ollama`), never by its name alone. The first word of the command line is therefore either a general command (`status`, `install`, `uninstall`, `exec`, `add`, `remove`, `apply`, `generate`, `catalog`, `host`, `config`, `guide`, `help`, `version`) or a component type (`engine`, `chat-interface`, `proxy`, `provisioning`): these two sets are the reserved words, so a component name can never clash with a general command.
 - Like the scripts, the CLI **never prompts**. Unknown commands, unknown types, unknown component names and missing arguments are usage errors (exit 2) with a message listing the valid values.
 
 ### Dispatch
@@ -68,33 +69,38 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 - `install` and `uninstall` add the CLI-level steps described below (dependencies, `--default`); everything else after the component name is forwarded untouched. The script is the judge of its own options (unknown option → exit 2 from the script).
 - A component command forwards stdout, stderr and exit code as they are. Type-specific actions that change the component's own models or endpoints (`engine ollama add-model`, `chat-interface librechat add-endpoint`) are available this way for expert use, but do **not** do the wiring that `add` does.
 - `easy-cs-ai <type> <name> --help` shows the script's help, generated from its `describe`.
+- `<type> <name> <action>` is valid only if the action is listed in `actions` of the component's `describe` (see the [contract](spec-script-contract.md#describe)), or is an option such as `--help`. The CLI keeps no list of actions of its own for this, so an action added to a script needs no CLI change, like a new component. Any other word is a usage error (exit 2) that lists the actions of the component and points to `exec`: it is never taken for a command of the component's program, see [Native tool commands](#native-tool-commands).
 
 ### Native tool commands
 
-**Principle: what a tool already does is executed by the tool, never reimplemented.** The CLI and the scripts only add what the project's conventions require around the call (root check, lock, state, journal, JSON on stdout, exit codes).
+**Principle: what a tool already does is executed by the tool, never reimplemented.** The CLI and the scripts only add what the project's conventions require around the call (root check, lock, state, journal, JSON on stdout, exit codes). Why the program is reached through an explicit command and not by any word that is no action: [decision](decision-explicit-native-commands.md).
 
-- Any action after `<type> <name>` that is **not** one of the contract actions (`install`, `uninstall`, `status`, `describe` and the type-specific ones) is run **as is by the component's own program**, declared in `describe` as `native.command` (`ollama`, `nginx`, `llmfit`…):
+- `exec <type> <name> <command> [arguments…]` runs **as is by the component's own program**, declared in `describe` as `native.command` (`ollama`, `nginx`, `llmfit`…), with the command and the arguments as the tool receives them:
 
   | Command line | Executed |
   | --- | --- |
-  | `engine ollama run llama3.2:3b` | `ollama run llama3.2:3b` |
-  | `engine ollama ps` | `ollama ps` |
-  | `proxy nginx -t` | `nginx -t` |
-  | `provisioning llmfit recommend --json` | `llmfit recommend --json` |
+  | `exec engine ollama run llama3.2:3b` | `ollama run llama3.2:3b` |
+  | `exec engine ollama ps` | `ollama ps` |
+  | `exec proxy nginx -t` | `nginx -t` |
+  | `exec provisioning llmfit system` | `llmfit system` |
 
-  Arguments, streams, TTY and exit code are the tool's own (it is `exec`'d, nothing is parsed or filtered). The CLI does not check root here: the tool decides.
-- The CLI only prepares the environment so that the tool talks to the instance the project installed: it exports the variables listed in `describe.native.env` (e.g. `OLLAMA_HOST`), built from the `params` recorded in the state.
-- The contract actions win when a name is shared. `--` before the action forces the native tool: `engine ollama -- status`.
-- Components without a program of their own (Docker Compose-based chat interfaces) declare `native.command` as `docker compose -f <compose_file>` (from the state `service`), so `chat-interface librechat logs -f` is `docker compose -f … logs -f`. A component with nothing to run natively leaves `native` out, and an unknown action is then a usage error.
+  Arguments, streams, TTY and exit code are the tool's own (it is `exec`'d, nothing is parsed or filtered). The CLI does not check root here: the tool decides. Everything after `<name>` belongs to the tool, so the global options of the CLI go **before** the command (`easy-cs-ai --dry-run exec engine ollama ps`).
+- **Explicit, never guessed.** The verb comes first, as for `install` and `uninstall`, and `<type> <name> <action>` is only ever an action of the contract. A word that is not one is a usage error that points to `exec`, it no longer falls through to the tool. Otherwise a contract action added later would silently take over the same name of the tool, and a typo would reach the tool instead of being reported. The old forms `<type> <name> <tool command>` and `<type> <name> -- <tool command>` are gone, `--` included: it was the explicit form of this.
+- **What runs is shown, not implied.** The name of a component is not always the name of its program (a Docker Compose component has none of its own), so the CLI states the resolved command, on stderr, never on stdout, which belongs to the tool: `--verbose` logs `exec: OLLAMA_HOST=127.0.0.1:11434 ollama ps` before running it, and `--dry-run` logs `plan: exec OLLAMA_HOST=127.0.0.1:11434 ollama ps`, with the variables it would export, and runs nothing, as the plans of `install` and `uninstall` do.
+- The CLI only prepares the environment so that the tool talks to the instance the project installed: it exports the variables listed in `describe.native.env` (e.g. `OLLAMA_HOST`), built from the `params` recorded in the state. The component must therefore be installed (exit 4 otherwise).
+- Components without a program of their own (Docker Compose-based chat interfaces) declare `native.command` as `docker compose -f <compose_file>` (from the state `service`), so `exec chat-interface librechat logs -f` is `docker compose -f … logs -f`, and `exec chat-interface librechat exec api npm run create-user` runs Compose's own `exec`. A component with nothing to run natively leaves `native` out, and `exec` on it is a usage error.
+- **Refusals.** Exit 2 (usage): no command, no component name, an unknown type or component, a component that declares no `native`, and `--json` before `exec` (the output is the tool's, it is not turned into JSON). Exit 4 (precondition): the component is not installed, or its program is not found on the machine (checked before running, instead of the shell's 127). Otherwise the exit code is the tool's own.
 - The type-specific actions of the contract are themselves **thin wrappers** over native commands (`list-models` reads the engine's API, as `ollama list` is a table, `remove-model` runs `ollama rm`, `provisioning recommend` runs `llmfit recommend --json`). They exist only to add the convention-mandated parts: JSON on stdout, state update, journal, a size-aware wait. See the [contract](spec-script-contract.md#wrapping-native-tools).
 
 ### Privileges
 
 `install`, `uninstall`, `add`, `remove`, `apply` (except with `--dry-run`) and the changing component actions require root. The CLI checks it first and fails with exit 4 and a message suggesting `sudo`; it never re-executes itself through `sudo`. `status`, `--help`, `describe` and the read-only actions run unprivileged (the state is world-readable, see [state format](spec-state-format.md#layout)).
 
+`exec` is not checked for root: the tool decides. It is also outside the state, the lock and the journal: a model pulled or removed with `exec engine ollama pull` / `rm` is unknown to `status` and `apply`, as with the expert actions of [Dispatch](#dispatch) that do not do the wiring of `add`. It is for expert use, and an agent never runs it on its own initiative (see [spec: machine interface](spec-ai-interface.md#procedure-for-an-agent)).
+
 ## Implementation status
 
-Implemented: dispatch, `status`, `install` (dependencies, `--defaults`, default stack), `uninstall` (single, `--all`, wiring clean-up), component and native commands. `add` and `remove` are implemented (in `lib/cli-models.sh`) and tested with fake components; they cannot succeed on a real machine before the proxy, llmfit and a chat interface exist (a missing one is the documented exit 4). The signal handling (SIGINT/SIGTERM, rollback, 130/143) is written but not covered by tests yet. `apply` is implemented (in `lib/cli-apply.sh`, see [spec: config](spec-config.md)) and tested with fake components. `generate` hands over to `vm_script/generate.sh` (`$HOME_DIR/vm_script`, else `../vm_script`), exporting `EASY_CS_AI_HOME` and `EASY_CS_AI_CLI_VERSION`, and forwarding `--dry-run` and `--verbose`.
+Implemented: dispatch, `status`, `install` (dependencies, `--defaults`, default stack), `uninstall` (single, `--all`, wiring clean-up), component commands. `exec` is specified here but **not implemented yet**: the CLI still passes a word that is no action of the contract to the component's own program, still accepts `--` for it, and still checks the action against a list of its own (`CONTRACT_ACTIONS`) instead of the `describe` of the component. `add` and `remove` are implemented (in `lib/cli-models.sh`) and tested with fake components; they cannot succeed on a real machine before the proxy, llmfit and a chat interface exist (a missing one is the documented exit 4). The signal handling (SIGINT/SIGTERM, rollback, 130/143) is written but not covered by tests yet. `apply` is implemented (in `lib/cli-apply.sh`, see [spec: config](spec-config.md)) and tested with fake components. `generate` hands over to `vm_script/generate.sh` (`$HOME_DIR/vm_script`, else `../vm_script`), exporting `EASY_CS_AI_HOME` and `EASY_CS_AI_CLI_VERSION`, and forwarding `--dry-run` and `--verbose`.
 
 ## `status`
 
@@ -296,7 +302,7 @@ The CLI uses the **script contract codes** with the same meaning, and passes the
 | 1 | Unexpected error, unreadable state |
 | 2 | Usage error: unknown command, type or component, missing argument, bad option |
 | 3 | Unsupported platform |
-| 4 | Precondition not met: not root, nothing to act on (no engine, model does not fit, unknown default), component required by another |
+| 4 | Precondition not met: not root, nothing to act on (no engine, model does not fit, unknown default), component required by another, a component to `exec` that is not installed or whose program is not found |
 | 5 | Network or download failure |
 | 6 | Verification failed, or `status` found an unhealthy component |
 | 7 | **CLI only**: the command failed and its rollback is incomplete, see stderr for what is left |
@@ -333,6 +339,7 @@ This spec relies on four points that are specified in the [script contract](spec
 - `add` tested for each rollback row with a fake failing step, and for resume; `remove` tested for each failing step and resume.
 - `install` tested with and without `--defaults` (missing requirement, type only, default stack, re-run).
 - `uninstall --all` and `remove --all` tested for order (dependents first), resume, a type-scoped run (`uninstall <type> --all`), nothing to remove, leftovers of a failed install (pending manifest only), and the usage errors (`--all` with a name, `--defaults` on `uninstall` or `remove`).
+- `exec` tested with fake components: the command and its arguments reach the program untouched (options such as `-t` included), the environment of `native.env`, `--verbose` and `--dry-run` showing the resolved command (and `--dry-run` running nothing), each refusal (no command, no component name, no `native`, not installed, program not found, `--json`), and the old forms (`<type> <name> <tool command>` and `--`) refused with a message that points to `exec`. An action added to the `describe` of a fake script is accepted with no change of the CLI, and one that is not listed is refused with the list of the actions.
 - `apply`: see the definition of done of [spec: config](spec-config.md#definition-of-done).
 - `shellcheck` clean; `--help` text consistent with this spec.
 - Integration test on a fresh VM: `install engine ollama`, `add llama3.2:3b`, `status` healthy, `uninstall`. Round trip for repeated tests: `install --defaults`, `add`, `remove --all`, `uninstall --all`, then the system is back as found (except shared packages).
@@ -341,3 +348,4 @@ This spec relies on four points that are specified in the [script contract](spec
 
 - Whether `status` should probe in parallel once the number of components grows (sequential and bounded by 15 s per component today).
 - Shell completion (bash/zsh) built from `describe`: wanted, not specified.
+- Which actions change the machine, and so need root: still a list in the CLI (`CHANGING_ACTIONS`), whereas the actions themselves now come from `describe`. A field per action in `describe` would remove the last list.

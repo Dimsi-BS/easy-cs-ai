@@ -229,7 +229,7 @@ What `guide` prints, in substance:
 5. **Show the user** the `plan` and **every `warning`** (open registration…), and get a yes.
 6. **Produce** either the script (`generate --config <file> --package-… --output <path>`, which the user reviews and runs on the VM) or the change on this machine (`sudo easy-cs-ai apply <file> --json`, only with the user's explicit agreement, since it changes the machine).
 7. **Read the result document** and `status --json`; report to the user in plain words. A failure is reported with its `message` and `failed_step`; a second `apply` resumes (see [spec: config](spec-config.md#failure-and-resume)), it is not retried blindly.
-8. **Never** run `uninstall`, `remove`, `apply --prune` or `--purge` on the agent's own initiative, nor `proxy nginx show-key`.
+8. **Never** run `uninstall`, `remove`, `apply --prune` or `--purge` on the agent's own initiative, nor `proxy nginx show-key`, nor `exec`, which runs any command of a component's program (`ollama rm`, `docker compose down -v`) outside the state, the lock and the journal, unless the user asked for that command. The text of `guide` carries this rule once `exec` is implemented.
 
 ## Gaps closed
 

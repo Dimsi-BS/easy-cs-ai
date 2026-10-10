@@ -14,6 +14,7 @@ This directory contains design decisions and write-ups about the project, comple
 - [Decision: how vLLM is installed](decision-vllm-install.md) — Python venv by default, Docker reserved (proposed)
 - [Decision: how LibreChat is installed](decision-librechat-install.md) — Docker from its own apt repository, FerretDB + PostgreSQL stack pinned by digest, web interface served by a second nginx `server`, registration open by default with a warning, models reached on the loopback
 - [Decision: VM script generator](decision-vm-generator.md) — one interactive generator for the VM script, none for layer 1; package downloaded from a pinned source, not embedded
+- [Decision: explicit native tool commands](decision-explicit-native-commands.md) — `easy-cs-ai exec <type> <name> <command>` runs a component's own program; a word that is no action of the contract is an error, not a fallback
 - [Spec: script contract](spec-script-contract.md) — actions, parameters, secrets, output, exit codes and idempotence rules shared by all install scripts
 - [Spec: state format](spec-state-format.md) — layout and JSON schema of `/var/lib/easy-cs-ai/`, feeding `status` and the defaults of `add`
 - [Spec: CLI](spec-cli.md) — dispatch, `status`, `install`, `uninstall`, `add` orchestration with rollback, CLI exit codes

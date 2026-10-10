@@ -8,6 +8,7 @@ Overview of the commands exposed by the `easy-cs-ai` CLI (see [packaging](decisi
   - component-type:
     - engine
     - chat-interface
+- `exec <component-type> <component-name> <command> …`: runs the component's own program as it is (e.g. `exec engine ollama ps` runs `ollama ps`); it is the only way to reach it, see the [CLI spec](spec-cli.md#native-tool-commands)
 - `<component-type> <component-name> <action> …`: mirrors the component's commands (e.g. `engine ollama list-models`). A component is always addressed with its type, which keeps the general commands (`status`, `install`, `add`…) clearly apart from the component ones
 - `add <model-name> [--engine <engine-name>] [--chat-interface <interface-name>]`: uses llmfit to check if the model can be installed, adds the model to the inference engine, wraps it with HTTPS and API Key if not included in the inference engine and links it to the chat interface. Defaults to the currently installed inference engine and the currently installed chat web interface.
 - `generate [--config-only] [parameters…]`: calls the [generator](../vm_script/README.md), interactive, or taking a configuration with `--config <file>` instead of a session. It produces the layer 3 VM post-install script, which downloads the package from a pinned source, embeds a configuration and runs `apply`. With `--config-only`, it writes only the [configuration file](spec-config.md) at the end of the session

@@ -91,7 +91,7 @@ These are the "component commands" mirrored by `easy-cs-ai <type> <name> <action
 | `proxy` configuration check | `nginx -t` before every reload | exit code 6 on failure |
 
 - When the tool's output is already in the required form, it is passed through untouched. Parsing is limited to `jq` over the tool's JSON.
-- Native commands that match no contract action are reachable as they are through the CLI, see [spec: CLI](spec-cli.md#native-tool-commands). `describe` declares the program (`native.command`) and the variables to export (`native.env`).
+- The component's own commands are reachable as they are through `easy-cs-ai exec <type> <name> <command>`, see [spec: CLI](spec-cli.md#native-tool-commands). `describe` declares the program (`native.command`) and the variables to export (`native.env`).
 
 ### Secrets
 
@@ -151,7 +151,7 @@ easy-cs-ai: ollama install end exit=0 duration=48s
 - An option may carry an optional `warn` entry, `{ "when": "true", "message": "…" }`: the message to show when the option's effective value equals `when` (the default included). The VM script generator shows it in its summary, and the script logs it as a `WARN` at `install`, so a risk that comes with a default (LibreChat's open registration) is read before the VM exists and again when it is installed. Adding the entry is not a bump of `schema_version`.
 - An option may also carry a `type` (`string`, the default when absent, `integer`, `boolean` or `enum`), `values` (the allowed values of an `enum`) and `min` / `max` (the bounds of an `integer`), so that a program can check a value before running the script: `catalog`, `config schema` and `config validate` use them (see [spec: machine interface](spec-ai-interface.md#contract-addition-typed-options-in-describe)). The default stays a string. Adding them is not a bump of `schema_version`.
 - `action_options` is optional: the options of an action other than `install`, keyed by action, in the same form as `options` (`provisioning llmfit` declares there the `--target-*` options of `recommend` and `check`). They are not options of the configuration.
-- `native` is optional: `command` is the component's own program, run as is by the CLI for actions that match no contract action (see [spec: CLI](spec-cli.md#native-tool-commands)); `env` maps variables to export to templates over the recorded `params` (`{bind}`, `{port}`…), so the program reaches the instance the project installed. For a Docker Compose component, `command` is `docker compose -f {compose_file}` (from the state `service`). Omitted when the component has nothing to run natively.
+- `native` is optional: `command` is the component's own program, run as is by `easy-cs-ai exec <type> <name> <command>` (see [spec: CLI](spec-cli.md#native-tool-commands)); `env` maps variables to export to templates over the recorded `params` (`{bind}`, `{port}`…), so the program reaches the instance the project installed. For a Docker Compose component, `command` is `docker compose -f {compose_file}` (from the state `service`). Omitted when the component has nothing to run natively.
 
 ### `status`
 
