@@ -136,14 +136,26 @@ cmd_status() {
     if ((_OPT_JSON)); then
         printf '%s\n' "$all"
     else
-        printf '%-14s%-16s%-10s%-9s%-9s%-9s%s\n' COMPONENT TYPE VERSION DEFAULT RUNNING HEALTHY MODELS
+        local bold='' reset='' red='' green=''
+        if use_color 1; then
+            bold="$(_color_code bold)" red="$(_color_code red)" green="$(_color_code green)" reset=$'\033[0m'
+        fi
+        printf '%s%-14s%-16s%-10s%-9s%-9s%-9s%s%s\n' "$bold" COMPONENT TYPE VERSION DEFAULT RUNNING HEALTHY MODELS "$reset"
         jq -r '.[] | [.name, .type // "?", .version // "?",
             (if .default then "yes" else "no" end),
             (if .running == null then "?" elif .running then "yes" else "no" end),
             (if .healthy == null then "?" elif .healthy then "yes" else "no" end),
             (if (.models | length) > 0 then (.models | join(",")) else "-" end)] | @tsv' <<<"$all" |
             while IFS=$'\t' read -r c t v d r h m; do
-                printf '%-14s%-16s%-10s%-9s%-9s%-9s%s\n' "$c" "$t" "$v" "$d" "$r" "$h" "$m"
+                # pad before coloring: escape codes would count in the width
+                local pr ph
+                printf -v pr '%-9s' "$r"
+                printf -v ph '%-9s' "$h"
+                if [[ -n "$green" ]]; then
+                    case "$r" in yes) pr="$green$pr$reset" ;; no) pr="$red$pr$reset" ;; esac
+                    case "$h" in yes) ph="$green$ph$reset" ;; no) ph="$red$ph$reset" ;; esac
+                fi
+                printf '%-14s%-16s%-10s%-9s%s%s%s\n' "$c" "$t" "$v" "$d" "$pr" "$ph" "$m"
             done
     fi
     if [[ -z "$names" ]]; then

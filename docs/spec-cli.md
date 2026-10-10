@@ -314,6 +314,7 @@ The CLI uses the **script contract codes** with the same meaning, and passes the
 ## Output
 
 - **stderr**: logs, same `[LEVEL] message` format as the scripts, whose stderr is passed through. `--verbose` is forwarded.
+- **Colors**: the logs (`ERROR` whole line red, `WARN` whole line yellow, `DEBUG` whole line dim, `INFO` only its green tag, so that routine output stays readable) and the `status` table (bold header, `yes`/`no` of `RUNNING` and `HEALTHY` green/red) are colored, and only when the stream is a terminal. `NO_COLOR` or `TERM=dumb` turns them off; `EASY_CS_AI_COLOR=always|never` overrides the detection. Output that is piped, captured or `--json` is never colored.
 - **stdout**: only machine-readable output (`status --json`, forwarded script JSON), except the `status` table, which is the result of the command. With `--json`, tables and plans are replaced by JSON.
 - Secrets are never printed, as for the scripts (`proxy nginx show-key` is the explicit exception, forwarded).
 

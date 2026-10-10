@@ -24,10 +24,41 @@ readonly EXIT_VERIFY=6
 # Logs go to stderr, one line each, "[LEVEL] message". stdout is reserved for
 # machine-readable output. DEBUG lines appear only when EASY_CS_AI_VERBOSE=1.
 
+# use_color <fd>: succeeds when output on that file descriptor may be colored.
+# Never for NO_COLOR (https://no-color.org), TERM=dumb or a pipe or file, so
+# captured and parsed output stays plain; EASY_CS_AI_COLOR=always forces it on
+# and =never forces it off.
+use_color() {
+    case "${EASY_CS_AI_COLOR:-auto}" in
+    always) return 0 ;;
+    never) return 1 ;;
+    esac
+    [[ -z "${NO_COLOR:-}" && "${TERM:-}" != dumb && -t "${1:-2}" ]]
+}
+
+# _color_code <level|style>: the ANSI sequence of a log level or style.
+_color_code() {
+    case "$1" in
+    ERROR | red) printf '\033[1;31m' ;;
+    WARN | yellow) printf '\033[1;33m' ;;
+    INFO | green) printf '\033[32m' ;;
+    DEBUG | dim) printf '\033[2m' ;;
+    bold) printf '\033[1m' ;;
+    esac
+}
+
 _log() {
     local level="$1"
     shift
-    printf '[%s] %s\n' "$level" "$*" >&2
+    if use_color 2; then
+        case "$level" in
+        # lines to notice or to ignore are colored whole, routine ones by their tag only
+        ERROR | WARN | DEBUG) printf '%b[%s] %s\033[0m\n' "$(_color_code "$level")" "$level" "$*" >&2 ;;
+        *) printf '[%b%s\033[0m] %s\n' "$(_color_code "$level")" "$level" "$*" >&2 ;;
+        esac
+    else
+        printf '[%s] %s\n' "$level" "$*" >&2
+    fi
 }
 
 log_info() { _log INFO "$@"; }
