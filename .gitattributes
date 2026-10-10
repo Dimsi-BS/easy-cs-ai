@@ -1,3 +1,7 @@
+# LF everywhere in the repository, whatever core.autocrlf says on the machine (the scripts, the data files
+# and the templates run on Linux, a stray CR sticks to the last field or breaks the shebang). The
+# rules below stay as the explicit list of what must never become CRLF.
+* text=auto eol=lf
 # Shell scripts and bats tests must keep LF endings (run on Linux)
 *.sh text eol=lf
 *.bats text eol=lf
