@@ -440,6 +440,8 @@ FAKE
     grep -qx 'recommend --target-ram 16 --target-cpu-cores 4 -n 100000' "$CALLS"
     grep -qx 'check big --target-ram 16 --target-cpu-cores 4' "$CALLS"
     grep -qx 'check unknown --target-ram 16 --target-cpu-cores 4' "$CALLS"
+    # the step says what it is doing before each slow llmfit call
+    [[ "$stderr" == *"checking whether llmfit is available"*"asking llmfit for the models that fit"*"checking big with llmfit"* ]]
     # the suggestion was sized already
     ! grep -q 'check llama3.2:3b' "$CALLS"
     [[ "$stderr" == *"may not fit the VM, big: big: fit Too Tight"* ]]

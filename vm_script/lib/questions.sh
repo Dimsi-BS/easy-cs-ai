@@ -209,6 +209,8 @@ _suggest_models() {
     SUGGESTIONS=()
     while IFS= read -r line; do args+=("$line"); done < <(_target_args)
     [[ "${SEL[engine]}" == ollama ]] || { log_info "model suggestions are only available for ollama"; return 0; }
+    printf '  asking llmfit for the models that fit the VM, a few seconds...
+' >&2
     out="$(bash "$script" recommend "${args[@]}" -n 100000 2>/dev/null)" || { log_warn "llmfit could not make suggestions, type the model names"; return 0; }
     while IFS=$'\t' read -r name level need; do
         [[ -n "$name" ]] || continue
@@ -225,6 +227,8 @@ _suggest_models() {
 _check_model() {
     local script="$1" model="$2" args=() line out
     while IFS= read -r line; do args+=("$line"); done < <(_target_args)
+    printf '  checking %s with llmfit, a few seconds...
+' "$model" >&2
     if ! out="$(bash "$script" check "$model" "${args[@]}" 2>/dev/null)"; then
         SESSION_FIT_WARN+=("$model: not known to llmfit, the fit is not checked")
     elif [[ "$(jq -r '.fits' <<<"$out")" != true ]]; then
@@ -311,6 +315,9 @@ step_models() {
     SESSION_UNSIZED=()
     SUGGESTIONS=()
     [[ -n "${SEL[engine]:-}" ]] || return 0
+    # Looking for llmfit and asking its status can take a moment before anything is asked.
+    [[ ! -f "$(script_path provisioning llmfit)" ]] || printf '  checking whether llmfit is available on this machine, a few seconds...
+' >&2
     _llmfit_ready || _offer_llmfit
     if _llmfit_ready; then
         script="$(script_path provisioning llmfit)"
