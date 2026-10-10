@@ -382,3 +382,134 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
     [ "$status" -eq 0 ]
     [ "$(jq -r '.script.written' <<<"$output")" = "false" ]
 }
+
+# --- models: llmfit is optional ------------------------------------------------------------------
+
+# a shipped llmfit (rank 1 of its type) whose recommend and check are logged in $CALLS; it
+# reports itself installed unless FAKE_LLMFIT=missing
+make_llmfit() {
+    mkdir -p "$EASY_CS_AI_HOME/provisioning"
+    printf 'provisioning llmfit\n' >>"$EASY_CS_AI_HOME/ranks.conf"
+    cat >"$EASY_CS_AI_HOME/provisioning/llmfit.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >>"$CALLS"
+case "$1" in
+describe) jq -n '{name: "llmfit", type: "provisioning", component_version: "9.9", requires: [], platforms: ["debian","ubuntu"], options: []}' ;;
+status)
+    if [[ "${FAKE_LLMFIT:-}" == missing ]]; then echo '{"installed":false,"running":false,"healthy":false}'; exit 4; fi
+    echo '{"installed":true,"running":true,"healthy":true}' ;;
+recommend) echo '{"models":[
+  {"name":"hf/a","ollama_name":"small:1b","fit_level":"Perfect","score":70,"memory_required_gb":1.2},
+  {"name":"hf/b","ollama_name":"llama3.2:3b","fit_level":"Good","score":90,"memory_required_gb":2.4},
+  {"name":"hf/c","ollama_name":"huge:70b","fit_level":"Too Tight","score":99,"memory_required_gb":48},
+  {"name":"hf/d","ollama_name":null,"fit_level":"Good","score":95,"memory_required_gb":3}]}' ;;
+check)
+    case "$2" in
+    big) echo '{"fits":false,"reason":"big: fit Too Tight, needs 40 GB of 16 GB available"}' ;;
+    unknown) exit 1 ;;
+    *) echo '{"fits":true,"reason":"ok"}' ;;
+    esac ;;
+esac
+FAKE
+    chmod +x "$EASY_CS_AI_HOME/provisioning/llmfit.sh"
+    make_fake engine ollama '[]' '[]'
+    export CALLS="$BATS_TEST_TMPDIR/llmfit-calls"
+    : >"$CALLS"
+}
+
+@test "with llmfit the models step asks the specs of the VM, suggests models and keeps a bad verdict as a warning" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    # llmfit, proxy, engine, chat; specs (RAM, GPU, cores); models: the first suggestion, then two typed names
+    ask "" none ollama none 16 "" 4 "1, big, unknown" y
+    [ "$status" -eq 0 ]
+    # best score first, only the Ollama tags, nothing that is Too Tight
+    [[ "$stderr" == *" 1) llama3.2:3b"*" 2) small:1b"* ]]
+    [[ "$stderr" != *"huge:70b"* ]]
+    [ "$(jq -c '[.models[].name]' cfg.json)" = '["llama3.2:3b","big","unknown"]' ]
+    grep -qx 'recommend --target-ram 16 --target-cpu-cores 4 -n 100000' "$CALLS"
+    grep -qx 'check big --target-ram 16 --target-cpu-cores 4' "$CALLS"
+    grep -qx 'check unknown --target-ram 16 --target-cpu-cores 4' "$CALLS"
+    # the suggestion was sized already
+    ! grep -q 'check llama3.2:3b' "$CALLS"
+    [[ "$stderr" == *"may not fit the VM, big: big: fit Too Tight"* ]]
+    [[ "$stderr" == *"may not fit the VM, unknown: not known to llmfit"* ]]
+    # llmfit is in the stack: no force, no warning about it
+    [ "$(jq '[.models[] | has("force")] | any' cfg.json)" = "false" ]
+    [[ "$stderr" != *"not checked for fit"* ]]
+}
+
+@test "the specs are optional, and without any there is no suggestion and no check" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none "" "" "" m1 y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"no spec given"* ]]
+    ! grep -q -e recommend -e check "$CALLS"
+    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
+}
+
+@test "a spec that is not a positive whole number is asked again" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none abc 0 8 "" "" "" y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"'abc' is not a positive whole number"* ]]
+    [[ "$stderr" == *"'0' is not a positive whole number"* ]]
+    grep -qx 'recommend --target-ram 8 -n 100000' "$CALLS"
+}
+
+@test "redoing the models offers the specs given before as defaults" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none 16 "" 4 "" m m1 "" "" "" "" y
+    [ "$status" -eq 0 ]
+    [ "$(grep -c '^recommend --target-ram 16 --target-cpu-cores 4 ' "$CALLS")" -eq 2 ]
+    [[ "$stderr" == *"RAM of the VM in GB [16]"* ]]
+}
+
+@test "llmfit shipped but not installed here: one notice with the install command, typed names, never an install" {
+    make_llmfit
+    export FAKE_LLMFIT=missing
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none m1 y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"llmfit is not installed here"*"sudo easy-cs-ai install provisioning llmfit"* ]]
+    ! grep -q -e recommend -e check -e install "$CALLS"
+    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
+    # a redo of the step does not repeat the notice
+    ask "" none ollama none m1 m m2 y
+    [ "$(grep -o 'llmfit is not installed here' <<<"$stderr" | wc -l)" -eq 1 ]
+}
+
+@test "declining llmfit in the stack writes the models with force and the summary warns" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    # llmfit is installed on this machine whatever the stack: the specs are still asked
+    ask none none ollama none "" "" "" m1 y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"with none, the models are added unchecked"* ]]
+    [ "$(jq -c '.models' cfg.json)" = '[{"name":"m1","force":true}]' ]
+    [[ "$stderr" == *"[WARN] to read before creating the VM"* ]]
+    [[ "$stderr" == *"models not checked for fit on the VM: llmfit is not part of the stack"* ]]
+}
+
+@test "no llmfit in the stack and no model: no force, no warning" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask none none ollama none "" "" "" "" y
+    [ "$status" -eq 0 ]
+    [ "$(jq 'has("models")' cfg.json)" = "false" ]
+    [[ "$stderr" != *"not checked for fit"* ]]
+}
+
+@test "--config: the warning follows a model with force and no llmfit, and nothing else changes" {
+    echo '{"schema_version":1,"components":[{"type":"engine","name":"eng"}],"models":[{"name":"m1","force":true}]}' >cfg.json
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"models not checked for fit on the VM: llmfit is not part of the stack"* ]]
+    echo '{"schema_version":1,"components":[{"type":"engine","name":"eng"}],"models":[{"name":"m1"}]}' >cfg.json
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"not checked for fit"* ]]
+}

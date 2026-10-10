@@ -46,6 +46,9 @@ step_components() {
         [[ -n "${names// /}" ]] || continue
         rank="$(rank_lookup "$t")"
         [[ " $names " == *" $rank "* ]] || rank=""
+        if [[ "$t" == provisioning ]]; then
+            printf '  llmfit checks on the VM that each model fits; with none, the models are added unchecked\n' >&2
+        fi
         while :; do
             _read "$t (${names% }, or none)" "${SEL[$t]:-${rank:-none}}"
             if [[ "$REPLY" == none ]]; then
@@ -131,16 +134,114 @@ step_options() {
 
 # --- Step 4: models -------------------------------------------------------------------
 
+# llmfit is optional here (docs/spec-vm-generator.md#llmfit-is-optional): it only helps to
+# choose the models, and the generator never installs it.
+SUGGESTIONS=()         # the models llmfit suggested, numbered in the list
+SESSION_FIT_WARN=()    # "<model>: <reason>", shown in the summary
+TARGET_RAM="" TARGET_VRAM="" TARGET_CORES=""    # the specs of the VM, kept to be offered again
+LLMFIT_NOTICE_GIVEN=0
+
+# _llmfit_ready: the llmfit script is shipped and installed, working, on this machine.
+_llmfit_ready() {
+    local script
+    script="$(script_path provisioning llmfit)"
+    [[ -f "$script" ]] || return 1
+    bash "$script" status 2>/dev/null | jq -e '.installed == true and .healthy == true' >/dev/null 2>&1
+}
+
+# _read_spec <prompt> <variable>: a positive whole number or empty, asked again otherwise.
+# `none` clears an answer kept from a previous pass.
+_read_spec() {
+    local prompt="$1" var="$2"
+    while :; do
+        _read "$prompt" "${!var}"
+        [[ "$REPLY" != none ]] || REPLY=""
+        if [[ -z "$REPLY" || "$REPLY" =~ ^[1-9][0-9]*$ ]]; then
+            printf -v "$var" '%s' "$REPLY"
+            return 0
+        fi
+        log_warn "'$REPLY' is not a positive whole number"
+    done
+}
+
+# _target_args: the --target-* options of the specs given, one per line.
+_target_args() {
+    [[ -z "$TARGET_RAM" ]] || printf '%s\n' --target-ram "$TARGET_RAM"
+    [[ -z "$TARGET_VRAM" ]] || printf '%s\n' --target-vram "$TARGET_VRAM"
+    [[ -z "$TARGET_CORES" ]] || printf '%s\n' --target-cpu-cores "$TARGET_CORES"
+}
+
+# _suggest_models <script>: list, numbered on stderr, the models llmfit finds fitting the
+# VM, in SUGGESTIONS. Only the Ollama tags (llmfit's `ollama_name`) can be added today.
+_suggest_models() {
+    local script="$1" args=() out line name level need n=0
+    SUGGESTIONS=()
+    while IFS= read -r line; do args+=("$line"); done < <(_target_args)
+    [[ "${SEL[engine]}" == ollama ]] || { log_info "model suggestions are only available for ollama"; return 0; }
+    out="$(bash "$script" recommend "${args[@]}" -n 100000 2>/dev/null)" || { log_warn "llmfit could not make suggestions, type the model names"; return 0; }
+    while IFS=$'\t' read -r name level need; do
+        [[ -n "$name" ]] || continue
+        SUGGESTIONS+=("$name")
+        n=$((n + 1))
+        printf '  %2d) %-28s %s, needs %s GB\n' "$n" "$name" "$level" "$need" >&2
+    done < <(jq -r '[.models[]? | select(.ollama_name != null and .fit_level != "Too Tight")]
+        | sort_by(-(.score // 0)) | .[:10][]
+        | [.ollama_name, (.fit_level // "?"), ((.memory_required_gb // "?") | tostring)] | @tsv' <<<"$out")
+    ((n > 0)) || log_info "llmfit finds no model to suggest for these specs"
+}
+
+# _check_model <script> <model>: keep a negative verdict, or an unknown model, as a warning.
+_check_model() {
+    local script="$1" model="$2" args=() line out
+    while IFS= read -r line; do args+=("$line"); done < <(_target_args)
+    if ! out="$(bash "$script" check "$model" "${args[@]}" 2>/dev/null)"; then
+        SESSION_FIT_WARN+=("$model: not known to llmfit, the fit is not checked")
+    elif [[ "$(jq -r '.fits' <<<"$out")" != true ]]; then
+        SESSION_FIT_WARN+=("$model: $(jq -r '.reason' <<<"$out")")
+    fi
+}
+
 step_models() {
-    local m
+    local m s script="" suggested=0 prompt picked
     SESSION_MODELS=()
+    SESSION_FIT_WARN=()
+    SUGGESTIONS=()
     [[ -n "${SEL[engine]:-}" ]] || return 0
-    _read "Models to add on ${SEL[engine]} (comma separated, empty for none)" ""
+    if _llmfit_ready; then
+        script="$(script_path provisioning llmfit)"
+        printf '  llmfit sizes the models for the VM; each answer is optional\n' >&2
+        _read_spec "RAM of the VM in GB" TARGET_RAM
+        _read_spec "GPU memory of the VM in GB (empty for a CPU-only VM)" TARGET_VRAM
+        _read_spec "CPU cores of the VM" TARGET_CORES
+        if [[ -n "$TARGET_RAM$TARGET_VRAM$TARGET_CORES" ]]; then
+            suggested=1
+            _suggest_models "$script"
+        else
+            # Without a spec llmfit would size for this machine, not for the VM.
+            log_info "no spec given, no suggestion and no fit check"
+        fi
+    elif ((! LLMFIT_NOTICE_GIVEN)); then
+        LLMFIT_NOTICE_GIVEN=1
+        log_info "llmfit is not installed here: no model suggestion, no fit check (install it with: sudo easy-cs-ai install provisioning llmfit)"
+    fi
+    prompt="Models to add on ${SEL[engine]} (comma separated, empty for none)"
+    ((${#SUGGESTIONS[@]})) && prompt="Models to add on ${SEL[engine]} (names or numbers of the list, comma separated, empty for none)"
+    _read "$prompt" ""
     local IFS=','
     for m in $REPLY; do
         m="${m#"${m%%[![:space:]]*}"}"
         m="${m%"${m##*[![:space:]]}"}"
-        [[ -z "$m" ]] || SESSION_MODELS+=("$m")
+        [[ -n "$m" ]] || continue
+        picked=0
+        if [[ "$m" =~ ^[1-9][0-9]*$ ]] && ((m <= ${#SUGGESTIONS[@]})); then
+            m="${SUGGESTIONS[m - 1]}"
+            picked=1
+        else
+            for s in "${SUGGESTIONS[@]}"; do [[ "$s" == "$m" ]] && picked=1; done
+        fi
+        SESSION_MODELS+=("$m")
+        # The ones of the list were sized by llmfit already.
+        if ((suggested && ! picked)); then _check_model "$script" "$m"; fi
     done
 }
 
@@ -148,7 +249,10 @@ step_models() {
 
 # session_config: print the configuration JSON of the current selection.
 session_config() {
-    local t name comps='[]' models='[]' m opts
+    local t name comps='[]' models='[]' m opts force=false
+    # No llmfit in the stack: nothing on the VM can check the fit, and `add` would stop on the
+    # missing requirement, so the models are added unchecked (the summary says so).
+    [[ -n "${SEL[provisioning]:-}" ]] || force=true
     for t in "${TYPES[@]}"; do
         name="${SEL[$t]:-}"
         [[ -n "$name" ]] || continue
@@ -158,7 +262,7 @@ session_config() {
             '. + [{type: $t, name: $n} + (if ($o | length) > 0 then {options: $o} else {} end)]' <<<"$comps")"
     done
     for m in "${SESSION_MODELS[@]}"; do
-        models="$(jq -c --arg m "$m" '. + [{name: $m}]' <<<"$models")"
+        models="$(jq -c --arg m "$m" --argjson f "$force" '. + [{name: $m} + (if $f then {force: true} else {} end)]' <<<"$models")"
     done
     jq -n --argjson c "$comps" --argjson m "$models" \
         '{schema_version: 1, components: $c} + (if ($m | length) > 0 then {models: $m} else {} end)'
@@ -181,10 +285,17 @@ summary_warnings() {
 # print_summary <config>: components in install order, options (secrets are
 # generated, so nothing to mask), models, platforms, and the warnings of the options.
 print_summary() {
-    local config="$1" desc order type name warnings
+    local config="$1" desc order type name warnings fit
     desc="$(apply_describes "$config")"
     order="$(apply_order "$config" "$desc")"
     warnings="$(summary_warnings "$config" "$desc")"
+    # Derived from the configuration, so a --config file gets it too.
+    fit="$(jq -r 'if ((.models // []) | any(.force == true)) and ((.components // []) | all(.type != "provisioning"))
+        then "    models not checked for fit on the VM: llmfit is not part of the stack" else empty end' <<<"$config")"
+    [[ -z "$fit" ]] || warnings="${warnings:+$warnings$'\n'}$fit"
+    for fit in "${SESSION_FIT_WARN[@]}"; do
+        warnings="${warnings:+$warnings$'\n'}    may not fit the VM, $fit"
+    done
     {
         printf '\nSummary\n  components, in install order:\n'
         while read -r type name; do

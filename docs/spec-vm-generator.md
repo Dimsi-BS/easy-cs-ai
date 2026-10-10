@@ -92,9 +92,9 @@ A model name is engine-specific and nothing tells the administrator whether it f
 
 Then:
 
-1. It lists what `provisioning llmfit recommend` suggests for those specs, numbered. The administrator picks by number, by name, or types another name; an empty answer adds no model.
-2. Each model chosen by name that is not in the list is submitted to `provisioning llmfit check <model>` with the same specs. A negative verdict is a **warning**, repeated in the summary with llmfit's reason: the administrator knows their VM, the generator never refuses a model on that opinion.
-3. The specs are asked again only when the step is redone (`m` at the summary offers the previous answers as defaults).
+1. With at least one spec, it lists what `provisioning llmfit recommend` suggests for them, numbered: the ten best by score, only the models that carry an Ollama tag (the only names an engine can pull today, so the list is offered for `ollama` only) and none that llmfit judges `Too Tight`. The administrator picks by number, by name, or types another name; an empty answer adds no model. With **no** spec at all, there is no list and no check, because llmfit would size for the machine running the generator, not for the VM; the session says so.
+2. Each model typed that is not in the list is submitted to `provisioning llmfit check <model>` with the same specs. A negative verdict, or a model llmfit does not know (it knows Hugging Face names and the Ollama tags of the models that fit), is a **warning**, repeated in the summary with llmfit's reason: the administrator knows their VM, the generator never refuses a model on that opinion.
+3. The specs are asked again only when the step is redone (`m` at the summary offers the previous answers as defaults; `none` clears one). An answer that is not a positive whole number is asked again.
 
 The specs and the verdicts are **not** stored in the configuration: it stays valid for any VM and the fit is checked on the target at run time (see [model fit](spec-ai-interface.md#model-fit-for-a-machine-that-is-not-this-one)). They are an early opinion, nothing more.
 
@@ -102,10 +102,10 @@ The specs and the verdicts are **not** stored in the configuration: it stays val
 
 llmfit has two roles around the generator, and neither is mandatory.
 
-- **On the machine running the generator** (the administrator's own): it only feeds [Choosing models](#choosing-models). The generator looks for it, and if it is missing the step says so once, with the command that installs it (`sudo easy-cs-ai install provisioning llmfit`), then asks for the model names as free text. It never installs it itself (it changes nothing on the machine) and never fails because of it. `--config` and `--config-only` with a complete file do not need it either.
+- **On the machine running the generator** (the administrator's own): it only feeds [Choosing models](#choosing-models). It is available when `provisioning llmfit status` reports it installed and healthy, whatever the stack chosen for the VM. If it is not, the step says so once, with the command that installs it (`sudo easy-cs-ai install provisioning llmfit`), then asks for the model names as free text. It never installs it itself (it changes nothing on the machine) and never fails because of it. `--config` and `--config-only` with a complete file do not need it either.
 - **On the VM** (the `provisioning llmfit` component of the stack): it checks, at run time, that each model fits. It is a component like the others in step 1: offered with its rank, and the administrator may answer `none`. The prompt says what declining costs. When the session ends with models and **no** llmfit in the stack, the generator writes every model with `"force": true` (the fit check is skipped, as `add --force` does, so `apply` does not stop on the missing requirement) and the summary carries a warning: `models not checked for fit on the VM: llmfit is not part of the stack`. Declining llmfit is therefore a supported, explicit choice, never a late failure of the generated script.
 
-A configuration given with `--config` is validated as ever: a model without `force` and no llmfit in `components` is a missing requirement (exit 2). The generator adds `force` only in the session, where the administrator has been told.
+The warning comes from the configuration (a model with `force` and no provisioning component), so a `--config` file gets it too. The generator adds `force` only in the session, where the administrator has been told; a file is never changed. Note that the validation does not check, today, that a model without `force` has an llmfit to be checked by: `apply` finds out at the model step (exit 4, after the components are installed, see [`add`](spec-cli.md#add)). Making the validation report it beforehand is not part of this change.
 
 ### Package source
 
@@ -156,7 +156,7 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 - `bats` tests with `--config`: valid file, each validation error, incomplete file, a file written by `--config-only` turned into the same script as the interactive session.
 - The generated script checked with `shellcheck`; its embedded configuration extracted and compared with the input (heredoc intact, nothing expanded); run against a fake package source in `EASY_CS_AI_ROOT` mode: checksum mismatch, already-installed version, failure of `apply`; size within the limit for a typical configuration.
 - `bats` tests of the models step with a fake llmfit: specs asked and forwarded as `--target-*`, suggestions picked by number and by name, a negative `check` kept as a warning in the summary, specs offered again as defaults when the step is redone, llmfit absent (one message with the install command, free text, exit 0), and the generator never installing it.
-- `bats` tests of the stack without llmfit: models written with `"force": true` and the summary warning; no models, no warning; `--config` with a model, no `force` and no llmfit is still exit 2.
+- `bats` tests of the stack without llmfit: models written with `"force": true` and the summary warning; no models, no warning; `--config` with a model and `force` and no llmfit gets the warning, and without `force` it does not.
 - Integration test: generate a script, run it on a fresh VM, `status` healthy, run it a second time, nothing changes.
 - `shellcheck` clean on the generator; `--help` text consistent with this spec.
 
