@@ -350,8 +350,8 @@ step_models() {
     done
     IFS=$' \t\n'
     if [[ -n "$script" && "$MODELS_ORDER" == m ]]; then
+        # The recommendation is printed once, in the summary that follows.
         _size_models "$script"
-        _print_vm_recommendation
     fi
 }
 

@@ -576,8 +576,9 @@ FAKE
     [[ "$stderr" == *"VM without GPU: RAM 8 GB (8192 MB) = 6 model + 2 estimated margin"* ]]
     [[ "$stderr" == *"disk: 25 GB = 4.5 models"* ]]
     [[ "$stderr" == *"vCPU: not sized by llmfit"* ]]
-    # at the end of the step and again in the summary
-    [ "$(grep -o 'Recommended VM, from llmfit' <<<"$stderr" | wc -l)" -eq 2 ]
+    # printed once, in the summary, not at the end of the step
+    [ "$(grep -o 'Recommended VM, from llmfit' <<<"$stderr" | wc -l)" -eq 1 ]
+    [[ "${stderr##*Summary}" == *"Recommended VM, from llmfit"* ]]
     # the configuration is valid for any VM: models only
     [ "$(jq -c 'keys' cfg.json)" = '["components","models","schema_version"]' ]
     [ "$(jq -c '.models' cfg.json)" = '[{"name":"m1"}]' ]
