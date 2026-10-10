@@ -196,6 +196,8 @@ Prints, as plain text, the procedure of the [next section](#procedure-for-an-age
 
 With none of them, behaviour is unchanged (local hardware). They are declared in the `describe` of the llmfit script under `action_options`, keyed by action (`recommend`, `check`), and not in `options`, which are the options of `install` and of the configuration; they are therefore in `catalog` too. The options are read-only and need no engine; llmfit itself must be installed, otherwise the action exits 4 with the command that installs it (`easy-cs-ai install provisioning llmfit`), and the agent asks the user before running it (it is a change on the machine).
 
+The interactive generator uses the same two actions to help an administrator without an agent choose models, and treats llmfit as optional: it falls back to typed names when llmfit is missing instead of exiting 4 (see [spec: VM script generator](spec-vm-generator.md#choosing-models)).
+
 The configuration still does not store the target specs: the fit is checked **at run time on the target** (`add`, as before), and what the agent asks llmfit while preparing is only an early opinion. A model the agent proposed that does not fit on the target is refused at `apply` (or accepted with `force`).
 
 ## Contract addition: typed options in `describe`

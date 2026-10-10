@@ -30,7 +30,7 @@ It is reached through `easy-cs-ai generate` (see [CLI](spec-cli.md#generate)), w
 - Every question shows its default (the script's own default from `describe`), what it means (the `description` of `describe`) and is validated before moving on. Invalid input asks again, it never aborts the session.
 - Nothing is chosen silently: a component is part of the output only if the administrator picked it, or accepted a dependency the generator proposed.
 - `--help`, `--version`, `--verbose` are accepted; `--dry-run` runs the whole session and prints the result to stderr without writing it.
-- The generator needs no root and changes nothing on the machine.
+- The generator needs no root and changes nothing on the machine. In particular it never installs llmfit: see [llmfit is optional](#llmfit-is-optional).
 
 ### `--config <file>`
 
@@ -64,6 +64,7 @@ Everything comes from the shipped scripts, nothing is hardcoded (same principle 
 | Platforms | `describe.platforms` |
 | Requirements and the order they impose | `describe.requires` |
 | Ranking of alternatives, used to pre-select | [integration order](decision-integration-order.md), as shipped in `ranks.conf` |
+| Models that fit a machine of given specs, when llmfit is installed on the machine running the generator | `provisioning llmfit recommend` and `check` with the `--target-*` options, see [model fit](spec-ai-interface.md#model-fit-for-a-machine-that-is-not-this-one) |
 
 The generator runs from the installed package (or tarball), so it knows the scripts of that version. The script it emits pins that same version.
 
@@ -74,10 +75,37 @@ It produces a configuration.
 1. **Components**: for each type, list the components shipped, with the rank 1 pre-selected, and let the administrator pick (one engine, one chat interface…, or none).
 2. **Dependencies**: from `requires`, propose the missing components (a type means "any of this type"), and refuse a selection that cannot be satisfied. The administrator confirms or changes them; the generator never adds a component unannounced.
 3. **Options**: for each selected component, ask its `describe.options`, in the order of the script. Options left at their default are not written to the configuration. Secret options are asked as a source, see [Secrets](spec-config.md#secrets).
-4. **Models** (when an engine is selected): ask which models to add, and on which engine and chat interface when there is a choice. Whether a model fits the machine is checked at run time, on the target, not at generation time.
+4. **Models** (when an engine is selected): ask which models to add, and on which engine and chat interface when there is a choice. With llmfit available on the machine running the generator, the step helps to choose, see [Choosing models](#choosing-models); without it, the administrator types the names. The fit is still checked at run time, on the target, when the stack holds llmfit (see [llmfit is optional](#llmfit-is-optional)).
 5. **Summary**: components in install order, options (secrets masked), models, target platforms, and the **warnings** of the options whose effective value matches their `warn` entry in `describe` (a default included), so a risk such as an open registration is read before the VM is created (see [`describe`](spec-script-contract.md#describe)). The administrator confirms, goes back to a step, or cancels.
 
 `--config-only` stops here and writes the file. With `--config`, steps 1 to 5 are replaced by the validation of the file. Otherwise the generator goes on to the package source, then emits the script.
+
+### Choosing models
+
+A model name is engine-specific and nothing tells the administrator whether it fits the VM. When llmfit is available (see below), step 4 asks first for the **specs of the target VM**, each answer optional (empty means "do not size on it"):
+
+| Question | Forwarded as |
+| --- | --- |
+| RAM of the VM, in GB | `--target-ram` |
+| GPU memory of the VM, in GB (empty for a CPU-only VM) | `--target-vram` |
+| CPU cores of the VM | `--target-cpu-cores` |
+
+Then:
+
+1. It lists what `provisioning llmfit recommend` suggests for those specs, numbered. The administrator picks by number, by name, or types another name; an empty answer adds no model.
+2. Each model chosen by name that is not in the list is submitted to `provisioning llmfit check <model>` with the same specs. A negative verdict is a **warning**, repeated in the summary with llmfit's reason: the administrator knows their VM, the generator never refuses a model on that opinion.
+3. The specs are asked again only when the step is redone (`m` at the summary offers the previous answers as defaults).
+
+The specs and the verdicts are **not** stored in the configuration: it stays valid for any VM and the fit is checked on the target at run time (see [model fit](spec-ai-interface.md#model-fit-for-a-machine-that-is-not-this-one)). They are an early opinion, nothing more.
+
+### llmfit is optional
+
+llmfit has two roles around the generator, and neither is mandatory.
+
+- **On the machine running the generator** (the administrator's own): it only feeds [Choosing models](#choosing-models). The generator looks for it, and if it is missing the step says so once, with the command that installs it (`sudo easy-cs-ai install provisioning llmfit`), then asks for the model names as free text. It never installs it itself (it changes nothing on the machine) and never fails because of it. `--config` and `--config-only` with a complete file do not need it either.
+- **On the VM** (the `provisioning llmfit` component of the stack): it checks, at run time, that each model fits. It is a component like the others in step 1: offered with its rank, and the administrator may answer `none`. The prompt says what declining costs. When the session ends with models and **no** llmfit in the stack, the generator writes every model with `"force": true` (the fit check is skipped, as `add --force` does, so `apply` does not stop on the missing requirement) and the summary carries a warning: `models not checked for fit on the VM: llmfit is not part of the stack`. Declining llmfit is therefore a supported, explicit choice, never a late failure of the generated script.
+
+A configuration given with `--config` is validated as ever: a model without `force` and no llmfit in `components` is a missing requirement (exit 2). The generator adds `force` only in the session, where the administrator has been told.
 
 ### Package source
 
@@ -127,6 +155,8 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 - `bats` tests feeding answers on stdin: component selection, dependency proposal, validation loop, cancel, back-navigation, `--dry-run`, the configuration written.
 - `bats` tests with `--config`: valid file, each validation error, incomplete file, a file written by `--config-only` turned into the same script as the interactive session.
 - The generated script checked with `shellcheck`; its embedded configuration extracted and compared with the input (heredoc intact, nothing expanded); run against a fake package source in `EASY_CS_AI_ROOT` mode: checksum mismatch, already-installed version, failure of `apply`; size within the limit for a typical configuration.
+- `bats` tests of the models step with a fake llmfit: specs asked and forwarded as `--target-*`, suggestions picked by number and by name, a negative `check` kept as a warning in the summary, specs offered again as defaults when the step is redone, llmfit absent (one message with the install command, free text, exit 0), and the generator never installing it.
+- `bats` tests of the stack without llmfit: models written with `"force": true` and the summary warning; no models, no warning; `--config` with a model, no `force` and no llmfit is still exit 2.
 - Integration test: generate a script, run it on a fresh VM, `status` healthy, run it a second time, nothing changes.
 - `shellcheck` clean on the generator; `--help` text consistent with this spec.
 
