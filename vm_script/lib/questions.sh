@@ -149,6 +149,34 @@ _llmfit_ready() {
     bash "$script" status 2>/dev/null | jq -e '.installed == true and .healthy == true' >/dev/null 2>&1
 }
 
+# _offer_llmfit: llmfit is not usable here. Once per session, offer to install it now (the
+# administrator's answer is the consent, the default is no), so the session goes on with it.
+# A refusal or a failure is not one: the models are typed.
+_offer_llmfit() {
+    local script
+    ((! LLMFIT_NOTICE_GIVEN)) || return 0
+    LLMFIT_NOTICE_GIVEN=1
+    script="$(script_path provisioning llmfit)"
+    if [[ ! -f "$script" ]]; then
+        log_info "this package ships no llmfit: no model suggestion, no fit check"
+        return 0
+    fi
+    _read "llmfit is not installed here: install it now, to get model suggestions and a fit check? (y/n)" n
+    if [[ "$REPLY" != y && "$REPLY" != Y ]]; then
+        log_info "no model suggestion, no fit check (install llmfit later with: sudo easy-cs-ai install provisioning llmfit)"
+        return 0
+    fi
+    # The generator plans for another machine (ASSUME_EMPTY); the install is for this one.
+    if is_test_root || [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        env -u EASY_CS_AI_ASSUME_EMPTY bash "$script" install >&2
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo env -u EASY_CS_AI_ASSUME_EMPTY bash "$script" install >&2
+    else
+        log_warn "installing llmfit needs root and sudo is not available: run it as root (easy-cs-ai install provisioning llmfit)"
+        return 0
+    fi || log_warn "llmfit could not be installed, type the model names"
+}
+
 # _read_spec <prompt> <variable>: a positive whole number or empty, asked again otherwise.
 # `none` clears an answer kept from a previous pass.
 _read_spec() {
@@ -207,6 +235,7 @@ step_models() {
     SESSION_FIT_WARN=()
     SUGGESTIONS=()
     [[ -n "${SEL[engine]:-}" ]] || return 0
+    _llmfit_ready || _offer_llmfit
     if _llmfit_ready; then
         script="$(script_path provisioning llmfit)"
         printf '  llmfit sizes the models for the VM; each answer is optional\n' >&2
@@ -220,9 +249,6 @@ step_models() {
             # Without a spec llmfit would size for this machine, not for the VM.
             log_info "no spec given, no suggestion and no fit check"
         fi
-    elif ((! LLMFIT_NOTICE_GIVEN)); then
-        LLMFIT_NOTICE_GIVEN=1
-        log_info "llmfit is not installed here: no model suggestion, no fit check (install it with: sudo easy-cs-ai install provisioning llmfit)"
     fi
     prompt="Models to add on ${SEL[engine]} (comma separated, empty for none)"
     ((${#SUGGESTIONS[@]})) && prompt="Models to add on ${SEL[engine]} (names or numbers of the list, comma separated, empty for none)"

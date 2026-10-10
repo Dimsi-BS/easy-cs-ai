@@ -396,8 +396,11 @@ echo "$*" >>"$CALLS"
 case "$1" in
 describe) jq -n '{name: "llmfit", type: "provisioning", component_version: "9.9", requires: [], platforms: ["debian","ubuntu"], options: []}' ;;
 status)
-    if [[ "${FAKE_LLMFIT:-}" == missing ]]; then echo '{"installed":false,"running":false,"healthy":false}'; exit 4; fi
+    if [[ "${FAKE_LLMFIT:-}" == missing && ! -e "$CALLS.installed" ]]; then echo '{"installed":false,"running":false,"healthy":false}'; exit 4; fi
     echo '{"installed":true,"running":true,"healthy":true}' ;;
+install)
+    [[ "${FAKE_LLMFIT_INSTALL:-}" != fail ]] || { echo "fake install failed" >&2; exit 5; }
+    touch "$CALLS.installed" ;;
 recommend) echo '{"models":[
   {"name":"hf/a","ollama_name":"small:1b","fit_level":"Perfect","score":70,"memory_required_gb":1.2},
   {"name":"hf/b","ollama_name":"llama3.2:3b","fit_level":"Good","score":90,"memory_required_gb":2.4},
@@ -468,18 +471,50 @@ FAKE
     [[ "$stderr" == *"RAM of the VM in GB [16]"* ]]
 }
 
-@test "llmfit shipped but not installed here: one notice with the install command, typed names, never an install" {
+@test "llmfit shipped but not installed here: it is offered, declined by default, then typed names" {
     make_llmfit
     export FAKE_LLMFIT=missing
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none m1 y
+    ask "" none ollama none "" m1 y
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"llmfit is not installed here"*"sudo easy-cs-ai install provisioning llmfit"* ]]
+    [[ "$stderr" == *"llmfit is not installed here: install it now"*"(y/n) [n]"* ]]
+    [[ "$stderr" == *"sudo easy-cs-ai install provisioning llmfit"* ]]
     ! grep -q -e recommend -e check -e install "$CALLS"
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
-    # a redo of the step does not repeat the notice
-    ask "" none ollama none m1 m m2 y
-    [ "$(grep -o 'llmfit is not installed here' <<<"$stderr" | wc -l)" -eq 1 ]
+    # a redo of the step does not ask again
+    ask "" none ollama none n m1 m m2 y
+    [ "$(grep -o 'install it now' <<<"$stderr" | wc -l)" -eq 1 ]
+    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m2"]' ]
+}
+
+@test "llmfit installed on the spot: the session goes on with the specs and the suggestions" {
+    make_llmfit
+    export FAKE_LLMFIT=missing
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none y 16 "" "" 1 y
+    [ "$status" -eq 0 ]
+    grep -qx install "$CALLS"
+    grep -qx 'recommend --target-ram 16 -n 100000' "$CALLS"
+    [ "$(jq -c '[.models[].name]' cfg.json)" = '["llama3.2:3b"]' ]
+}
+
+@test "llmfit that cannot be installed: a warning, then typed names" {
+    make_llmfit
+    export FAKE_LLMFIT=missing FAKE_LLMFIT_INSTALL=fail
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none y m1 y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"llmfit could not be installed, type the model names"* ]]
+    ! grep -q recommend "$CALLS"
+    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
+}
+
+@test "a package that ships no llmfit offers nothing to install" {
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask none eng none "" m1 y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"this package ships no llmfit"* ]]
+    [[ "$stderr" != *"install it now"* ]]
 }
 
 @test "declining llmfit in the stack writes the models with force and the summary warns" {
