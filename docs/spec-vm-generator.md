@@ -75,14 +75,21 @@ It produces a configuration.
 1. **Components**: for each type, list the components shipped, with the rank 1 pre-selected, and let the administrator pick (one engine, one chat interface…, or none).
 2. **Dependencies**: from `requires`, propose the missing components (a type means "any of this type"), and refuse a selection that cannot be satisfied. The administrator confirms or changes them; the generator never adds a component unannounced.
 3. **Options**: for each selected component, ask its `describe.options`, in the order of the script. Options left at their default are not written to the configuration. Secret options are asked as a source, see [Secrets](spec-config.md#secrets).
-4. **Models** (when an engine is selected): ask which models to add, and on which engine and chat interface when there is a choice. With llmfit available on the machine running the generator, the step helps to choose, see [Choosing models](#choosing-models); without it, the administrator types the names. The fit is still checked at run time, on the target, when the stack holds llmfit (see [llmfit is optional](#llmfit-is-optional)).
-5. **Summary**: components in install order, options (secrets masked), models, target platforms, and the **warnings** of the options whose effective value matches their `warn` entry in `describe` (a default included), so a risk such as an open registration is read before the VM is created (see [`describe`](spec-script-contract.md#describe)). The administrator confirms, goes back to a step, or cancels.
+4. **Models** (when an engine is selected): ask which models to add, and on which engine and chat interface when there is a choice. With llmfit available on the machine running the generator, the administrator chooses the **order**: the models that fit given hardware, or the hardware that suits given models, see [Choosing models](#choosing-models) and [Recommended VM](#recommended-vm); without it, the administrator types the names. The fit is still checked at run time, on the target, when the stack holds llmfit (see [llmfit is optional](#llmfit-is-optional)).
+5. **Summary**: components in install order, options (secrets masked), models, target platforms, the **recommended VM** when it was computed, and the **warnings** of the options whose effective value matches their `warn` entry in `describe` (a default included), so a risk such as an open registration is read before the VM is created (see [`describe`](spec-script-contract.md#describe)). The administrator confirms, goes back to a step, or cancels.
 
 `--config-only` stops here and writes the file. With `--config`, steps 1 to 5 are replaced by the validation of the file. Otherwise the generator goes on to the package source, then emits the script.
 
 ### Choosing models
 
-A model name is engine-specific and nothing tells the administrator whether it fits the VM. When llmfit is available (see below), step 4 asks first for the **specs of the target VM**, each answer optional (empty means "do not size on it"):
+A model name is engine-specific and nothing tells the administrator whether it fits the VM. When llmfit is available (see below), step 4 asks first **in which order to work**, because an administrator either has a VM imposed or has a model in mind:
+
+| Choice | Meaning |
+| --- | --- |
+| `h` (hardware first, default) | The administrator gives the specs of the VM, the generator suggests the models that fit them (below) |
+| `m` (models first) | The administrator names the models, the generator computes the VM they need, see [Recommended VM](#recommended-vm) |
+
+The two are not exclusive: with `m`, the administrator may still enter specs, which the recommendation is then compared with. The choice is offered again as the default when the step is redone. In the `h` order, the step asks for the **specs of the target VM**, each answer optional (empty means "do not size on it"):
 
 | Question | Forwarded as |
 | --- | --- |
@@ -97,6 +104,40 @@ Then:
 3. The specs are asked again only when the step is redone (`m` at the summary offers the previous answers as defaults; `none` clears one). An answer that is not a positive whole number is asked again.
 
 The specs and the verdicts are **not** stored in the configuration: it stays valid for any VM and the fit is checked on the target at run time (see [model fit](spec-ai-interface.md#model-fit-for-a-machine-that-is-not-this-one)). They are an early opinion, nothing more.
+
+### Recommended VM
+
+In the `m` order, once the models are named, the generator tells the administrator **what to ask for when creating the VM**, from what llmfit reports for each model (`memory_required_gb`, `run_mode`, see [findings](../search/llmfit.md)). It recommends characteristics, it provisions nothing and produces no VM template or image:
+
+| Item | Derived from |
+| --- | --- |
+| Model memory | The largest `memory_required_gb` among the models, assuming they are not loaded at the same time. It already includes the context llmfit assumes (see [checked](#sizing-checked-with-llmfit)) |
+| GPU or CPU only | **Not** derived: `run_mode` only reflects the machine llmfit was told about. Both are shown, RAM for a CPU-only VM (with the estimated tokens per second, `estimated_tps`) and GPU memory for a VM with a GPU, and the administrator picks |
+| Margin | **Estimated**, added on top of the model memory, see [Estimated margin](#estimated-margin) |
+| Disk | The `disk_size_gb` of the models plus that of the system and components |
+| vCPU | An indication only |
+
+Each memory figure is given **twice**, for two quantisations, because the one an engine actually loads depends on the engine and on the model: the **best** one llmfit finds for a large target (usually `Q8_0`), and the **default** one of the model, which llmfit reports for a target too small for anything (`Q4_K_M` for every model checked). The generator does not say which one the engine will use, it shows the two and the administrator decides: the default one is enough when the engine loads the usual 4-bit model, the best one covers an engine that loads more precise weights. The default figure comes from `llmfit info` asked for a **tiny target** (`--ram 1`): llmfit then falls back to that quantisation and its verdict is `Too Tight`, which the generator ignores here. It relies on that fallback, so the tests must catch a change of behaviour of llmfit (see [Definition of done](#definition-of-done)).
+
+The figures are taken so that they do not depend on the machine the generator runs on: llmfit is asked for a **very large target** (`--ram`, and `--memory` for the GPU figure), so that it reports the memory of its best quantisation, and the context is the one llmfit assumes (8192 tokens, shown in the recommendation). A model name is the engine's own: a Hugging Face name (what vLLM takes) is already what `llmfit info` needs, and an Ollama tag is turned into one through the `ollama_name` field of `llmfit fit --json -n 100000`, asked for the same large target. A name that llmfit cannot resolve is `not estimated`. Nothing in the recommendation is specific to an engine: another engine only needs its own way to name a model.
+
+#### Estimated margin
+
+llmfit's figure covers the weights and the cache of its assumed context, not what runs around the model. The generator therefore **adds a margin and says so**: every recommendation is displayed as `<model memory> + <margin> (estimated margin)`, with the breakdown of the margin, never as a single total that looks measured. The margin is a planning estimate, not a measurement:
+
+| Part | Estimate | Basis |
+| --- | --- | --- |
+| GPU memory | model memory ÷ 0.9, plus 1 GB | An engine such as vLLM uses 90 % of the GPU memory by default (0.9, 0.9 to 0.95 deemed safe) and the CUDA context, graphs and buffers come on top (about 0.8 GB measured by one source, 0.5 to 1 GB for the llama.cpp backends) |
+| RAM, VM without GPU | model memory, plus 1 GB for the engine process, 1 GB for the system | Canonical gives 1 GB as the minimum of an Ubuntu 24.04 cloud image, and one measurement 0.3 GB idle |
+| RAM, VM with a GPU | 2 GB for the system and the engine, nothing for the model | The weights live in GPU memory |
+| Chat interface and its databases | 4 GB when a chat interface is in the stack, 0 otherwise | LibreChat 1 to 2 GB, MongoDB about 1 GB with its cache capped, Meilisearch 0.5 to 1 GB, and about 0.5 GB per worker for the embeddings of a RAG interface: 4 to 8 GB for a full stack in one estimate |
+| Rounding | Up to the next whole GB | |
+
+These values come from vendor documentation for some (Ubuntu, MongoDB, Meilisearch, vLLM) and from blogs and forums for the rest (Ollama, LibreChat), none of which measures this project's stack. They are a starting point to calibrate with `docker stats` and `free` on a real VM, see [open questions](#open-questions). The margin is a constant of the generator, not a result of llmfit, and is the same whatever the engine.
+
+It is shown at the end of the step and repeated in the summary, with the equivalent for a CloudStack **compute offering** (vCPU, RAM, GPU) and a disk size, so that it can be typed in as is. A model for which llmfit has no figure (see [open questions](#open-questions)) is listed as `not estimated` and the recommendation says it does not cover it: a value is never invented.
+
+Like the verdicts, the recommendation is **not** stored in the configuration and is only an early opinion; the fit is still checked on the target.
 
 ### llmfit is optional
 
@@ -157,6 +198,8 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 - The generated script checked with `shellcheck`; its embedded configuration extracted and compared with the input (heredoc intact, nothing expanded); run against a fake package source in `EASY_CS_AI_ROOT` mode: checksum mismatch, already-installed version, failure of `apply`; size within the limit for a typical configuration.
 - `bats` tests of the models step with a fake llmfit: specs asked and forwarded as `--target-*`, suggestions picked by number and by name, a negative `check` kept as a warning in the summary, specs offered again as defaults when the step is redone, llmfit absent (one message with the install command, free text, exit 0), and the generator never installing it.
 - `bats` tests of the stack without llmfit: models written with `"force": true` and the summary warning; no models, no warning; `--config` with a model and `force` and no llmfit gets the warning, and without `force` it does not.
+- `bats` tests of the order of the models step with a fake llmfit: `h` as the default, `m` computing the recommended VM from the models (memory for the two quantisations, GPU or CPU, disk, CloudStack equivalent), the margin shown apart and labelled `estimated margin` with its breakdown, no chat interface in the stack giving no chat part, a Hugging Face name and an Ollama tag both resolved, a model without a figure listed as `not estimated`, the recommendation repeated in the summary and absent from the configuration, the order offered again as the default when the step is redone.
+- A test of the default-quantisation fallback against the real llmfit when it is installed (skipped otherwise): `info` with `--ram 1` reports a quantisation and a memory for a few models, so that a change of behaviour of llmfit is caught at its upgrade.
 - Integration test: generate a script, run it on a fresh VM, `status` healthy, run it a second time, nothing changes.
 - `shellcheck` clean on the generator; `--help` text consistent with this spec.
 
@@ -164,4 +207,17 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 
 - **Secrets**: how the generated script gets its secrets (API key, admin passwords). The configuration describes a secret by its source, never by value ([Secrets](spec-config.md#secrets)); what is open is whether a literal is allowed in the file at all, and the mode of the generated file (`0600` if it ever holds one). Until decided, a secret option is asked as "generated at run time" and never written. Linked to the CloudStack user-data caveat in the [contract](spec-script-contract.md#secrets), see also [spec: config](spec-config.md#open-questions).
 - **Package hosting**: where the packages live and how the checksum is published (see [decision: VM script generator](decision-vm-generator.md#open-questions)).
+- **Sizing from a model**: [checked with llmfit 1.1.17](#sizing-checked-with-llmfit). What stays open is **calibrating the [estimated margin](#estimated-margin)**: measuring the real consumption of the stack (engine, chat interface, databases) on a fresh VM, and whether an engine should declare its own overhead in its `describe` instead of the generator's constant. What also stays open is that the default-quantisation figure relies on a **fallback of llmfit** (a tiny target gives the model default), not on a documented option: to watch at each llmfit upgrade, and to replace by an option if llmfit gains one. A **mixture-of-experts** model (`is_moe`) does not follow the rule below: its memory does not move with the quantisation (17.1 GB from `Q2_K` to `Q8_0` for `Qwen3-30B-A3B`), its disk size is larger than its memory, and the figure differs between a CPU and a GPU target (17.1 and 15.6 GB). For those the recommendation shows the figure as reported and flags it as less reliable.
 - **User-data limit**: the exact limit of the target CloudStack instance, and the typical size of the generated script, to measure once the generator exists.
+
+### Sizing checked with llmfit
+
+Measured with llmfit 1.1.17 (Linux release, in WSL), to settle the first question above:
+
+- **The requirement depends on the machine.** llmfit reports the memory of the best quantisation that fits the machine it is told about. `Qwen/Qwen3-4B-Instruct-2507` gives 3.11 GB (`Q2_K`) at `--ram 4`, 4.84 GB (`Q6_K`) at 6, then 5.85 GB (`Q8_0`) from 8 GB up, unchanged at 16 and 64. Sizing for a large target therefore gives a stable figure.
+- **The context counts.** `--max-context` 2048, 8192 (the assumed default) and 32768 give 5.0, 5.85 and 9.22 GB for the same model.
+- **The memory is the weights plus a constant per model**, over six models: `memory_required_gb − disk_size_gb` is 1.5 GB for `llama3.1:8b` and `mistral:7b` at every quantisation from `Q2_K` to `Q8_0`, 1.75 for `qwen3:14b`, 3.5 for `gemma3:12b` and 1.63 for `qwen3:4b` (smaller at `Q2_K`, where llmfit also shrinks the context it assumes). The cache of the assumed context is therefore already in the figure. A mixture-of-experts model is the exception (see [open questions](#open-questions)).
+- **A tiny target gives the default quantisation.** With `--ram 1`, `llmfit info` returns `Q4_K_M` for all eight models tried (`qwen3:4b`, `llama3.2:3b`, `llama3.2:1b`, `llama3.1:8b`, `mistral:7b`, `gemma3:12b`, `qwen3:14b`, `qwen3:30b-a3b`), with `Too Tight` and its memory and disk (`llama3.1:8b`: 6.16 and 4.66 GB). Adding `--memory 1` gives the same figures.
+- **`run_mode` follows the machine**, not the model: the same model is `CPU` with `--ram` alone and `GPU` with `--memory`.
+- **`disk_size_gb` is reported** for the chosen quantisation (4.22 GB for the `Q8_0` above).
+- **Ollama tags.** `llmfit info llama3.1:8b` is `model_not_found`, but `llmfit fit --json -n 100000` on a large target lists 141 models with an `ollama_name`, among them `llama3.1:8b`, `llama3.2:3b`, `mistral:7b`, `qwen3:8b`, `gemma3:4b`, `phi4` and `qwen2.5:7b`. That field gives the exact Hugging Face name to pass to `info`.
