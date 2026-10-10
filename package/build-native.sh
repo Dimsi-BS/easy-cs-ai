@@ -26,6 +26,11 @@ done
 
 [[ -d "$output/stage" ]] || { printf 'no %s/stage: run package/build.sh --output %s first\n' "$output" "$output" >&2; exit 2; }
 output="$(cd "$output" && pwd)"
+# nfpm runs from another directory below: a path (not a bare name looked up in PATH) must be absolute
+if [[ "$nfpm" == */* ]]; then
+    [[ -x "$nfpm" ]] || { printf 'nfpm not found or not executable: %s\n' "$nfpm" >&2; exit 2; }
+    nfpm="$(cd "$(dirname "$nfpm")" && pwd)/$(basename "$nfpm")"
+fi
 version="$(sed -n 's/^readonly CLI_VERSION=//p' "$root/package/bin/easy-cs-ai")"
 
 tmp="$(mktemp -d)"
