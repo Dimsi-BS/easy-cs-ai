@@ -243,6 +243,77 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "$status" -eq 2 ]
 }
 
+# --- size ---------------------------------------------------------------------------------------
+
+# a fake llmfit that sizes like the real one (observed with v1.1.17): the best quantisation on a
+# large machine, the default one (Q4_K_M, "Too Tight") on a tiny one, a bit more with GPU memory
+make_sizing_llmfit() {
+    cat >"$BATS_TEST_TMPDIR/bin/llmfit" <<'FAKE'
+#!/usr/bin/env bash
+echo "llmfit $*" >>"${CALLS:-/dev/null}"
+ram=0 mem=0
+while [[ "${1:-}" == --ram || "${1:-}" == --memory ]]; do
+    if [[ "$1" == --ram ]]; then ram="$2"; else mem="$2"; fi
+    shift 2
+done
+case "$1" in
+--version) echo "llmfit 1.1.16" ;;
+fit) echo '{"models":[{"name":"hf/m","ollama_name":"m:8b","score":1}]}' ;;
+info)
+    [[ "$2" == hf/m ]] || { echo '{"error":{"kind":"model_not_found","message":"no"}}'; exit 1; }
+    if ((ram > 100)); then
+        quant=Q8_0 disk=8.43 req=9.93 gpu=10.43
+    else
+        quant=Q4_K_M disk=4.66 req=6.16 gpu=6.46
+    fi
+    ((mem > 0)) && req=$gpu
+    jq -n --arg q "$quant" --argjson d "$disk" --argjson r "$req" \
+        '{models: [{name: "hf/m", ollama_name: "m:8b", is_moe: false, best_quant: $q, disk_size_gb: $d, memory_required_gb: $r, estimate_basis: {assumed_context: 8192}}]}' ;;
+esac
+FAKE
+    chmod +x "$BATS_TEST_TMPDIR/bin/llmfit"
+}
+
+@test "size: memory and disk of a model for the best and the default quantisation, with and without GPU memory" {
+    llmfit install
+    make_sizing_llmfit
+    : >"$CALLS"
+    llmfit size hf/m
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.name, .context, .moe]' <<<"$output")" = '["hf/m",8192,false]' ]
+    [ "$(jq -c '.best' <<<"$output")" = '{"quant":"Q8_0","disk_gb":8.43,"cpu_gb":9.93,"gpu_gb":10.43}' ]
+    [ "$(jq -c '.default' <<<"$output")" = '{"quant":"Q4_K_M","disk_gb":4.66,"cpu_gb":6.16,"gpu_gb":6.46}' ]
+    # a very large machine for the best figures, a tiny one for the default ones
+    grep -qx 'llmfit --ram 1024 info hf/m --json --no-dashboard' "$CALLS"
+    grep -qx 'llmfit --ram 1024 --memory 1024 info hf/m --json --no-dashboard' "$CALLS"
+    grep -qx 'llmfit --ram 1 info hf/m --json --no-dashboard' "$CALLS"
+    grep -qx 'llmfit --ram 1 --memory 1 info hf/m --json --no-dashboard' "$CALLS"
+}
+
+@test "size by Ollama tag: found on a large machine, then sized by its Hugging Face name" {
+    llmfit install
+    make_sizing_llmfit
+    : >"$CALLS"
+    llmfit size m:8b
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.name' <<<"$output")" = "hf/m" ]
+    grep -qx 'llmfit --ram 1024 --memory 1024 fit --json -n 100000 --no-dashboard' "$CALLS"
+}
+
+@test "size of an unknown model is exit 1, no name is exit 2, and it needs an installed llmfit" {
+    llmfit size hf/m
+    [ "$status" -eq 4 ]
+    llmfit install
+    make_sizing_llmfit
+    llmfit size nosuchmodel
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"llmfit does not know 'nosuchmodel'"* ]]
+    llmfit size
+    [ "$status" -eq 2 ]
+    llmfit size hf/m --target-ram 8
+    [ "$status" -eq 2 ]
+}
+
 @test "a missing llmfit is exit 4 with the command that installs it" {
     llmfit recommend --target-ram 8
     [ "$status" -eq 4 ]

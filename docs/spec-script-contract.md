@@ -53,7 +53,7 @@ Components of one type expose the same actions, so switching is one parameter:
 | `engine` | `add-model <name>`, `remove-model <name>`, `list-models` |
 | `proxy` | `add-upstream <name> <url>`, `remove-upstream <name>`, `add-site <name> <url>`, `remove-site <name>`, `show-key` |
 | `chat-interface` | `add-endpoint <name> <url> [--model <model>]`, `remove-endpoint <name>` |
-| `provisioning` | `recommend` (JSON on stdout), `check <model>` (JSON on stdout) |
+| `provisioning` | `recommend` (JSON on stdout), `check <model>` (JSON on stdout), `size <model>` (JSON on stdout) |
 
 Output of the actions that return something other than the standard `status` / `describe` / `list-models`:
 
@@ -86,6 +86,7 @@ These are the "component commands" mirrored by `easy-cs-ai <type> <name> <action
 | `engine add-model` (Ollama) | `ollama pull` | size-aware wait, state, journal |
 | `engine remove-model` (Ollama) | `ollama rm` | state, journal |
 | `provisioning recommend` | `llmfit recommend --json` | exit codes, no state |
+| `provisioning size <model>` | llmfit's own output: `llmfit info <name> --json` for a very large machine and for a tiny one, with and without GPU memory, the name found as for `check` | `name`, `moe`, `context` and, for the `best` and the `default` quantisation, `quant`, `disk_gb`, `cpu_gb`, `gpu_gb`, read with `jq`; for the [VM recommendation of the generator](spec-vm-generator.md#recommended-vm) |
 | `provisioning check <model>` | llmfit's own output: `llmfit info <model> --json`, else `llmfit fit --json` filtered on the Ollama tag (see the [findings](../search/llmfit.md#observed-behaviour-llmfit-1116-run-on-a-cpu-only-machine)) | `fits` (false only for the level `Too Tight`) and `reason` (name, level, mode, memory) read with `jq` |
 | `proxy` configuration check | `nginx -t` before every reload | exit code 6 on failure |
 

@@ -406,6 +406,13 @@ recommend) echo '{"models":[
   {"name":"hf/b","ollama_name":"llama3.2:3b","fit_level":"Good","score":90,"memory_required_gb":2.4},
   {"name":"hf/c","ollama_name":"huge:70b","fit_level":"Too Tight","score":99,"memory_required_gb":48},
   {"name":"hf/d","ollama_name":null,"fit_level":"Good","score":95,"memory_required_gb":3}]}' ;;
+size)
+    case "$2" in
+    m1) echo '{"name":"hf/m1","ollama_name":"m1","moe":false,"context":8192,"best":{"quant":"Q8_0","disk_gb":8.0,"cpu_gb":9.0,"gpu_gb":9.5},"default":{"quant":"Q4_K_M","disk_gb":4.5,"cpu_gb":6.0,"gpu_gb":6.2}}' ;;
+    m2) echo '{"name":"hf/m2","ollama_name":"m2","moe":false,"context":8192,"best":{"quant":"Q8_0","disk_gb":3.0,"cpu_gb":4.0,"gpu_gb":4.2},"default":{"quant":"Q4_K_M","disk_gb":1.8,"cpu_gb":2.5,"gpu_gb":2.6}}' ;;
+    moe) echo '{"name":"hf/moe","ollama_name":"moe","moe":true,"context":8192,"best":{"quant":"Q8_0","disk_gb":32.0,"cpu_gb":17.1,"gpu_gb":15.6},"default":{"quant":"Q4_K_M","disk_gb":17.7,"cpu_gb":17.1,"gpu_gb":15.6}}' ;;
+    *) exit 1 ;;
+    esac ;;
 check)
     case "$2" in
     big) echo '{"fits":false,"reason":"big: fit Too Tight, needs 40 GB of 16 GB available"}' ;;
@@ -424,7 +431,7 @@ FAKE
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
     # llmfit, proxy, engine, chat; specs (RAM, GPU, cores); models: the first suggestion, then two typed names
-    ask "" none ollama none 16 "" 4 "1, big, unknown" y
+    ask "" none ollama none "" 16 "" 4 "1, big, unknown" y
     [ "$status" -eq 0 ]
     # best score first, only the Ollama tags, nothing that is Too Tight
     [[ "$stderr" == *" 1) llama3.2:3b"*" 2) small:1b"* ]]
@@ -445,17 +452,17 @@ FAKE
 @test "the specs are optional, and without any there is no suggestion and no check" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none "" "" "" m1 y
+    ask "" none ollama none "" "" "" "" m1 y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"no spec given"* ]]
-    ! grep -q -e recommend -e check "$CALLS"
+    ! grep -q -e recommend -e check -e size "$CALLS"
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
 }
 
 @test "a spec that is not a positive whole number is asked again" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none abc 0 8 "" "" "" y
+    ask "" none ollama none "" abc 0 8 "" "" "" y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"'abc' is not a positive whole number"* ]]
     [[ "$stderr" == *"'0' is not a positive whole number"* ]]
@@ -465,7 +472,7 @@ FAKE
 @test "redoing the models offers the specs given before as defaults" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none 16 "" 4 "" m m1 "" "" "" "" y
+    ask "" none ollama none "" 16 "" 4 "" m "" "" "" "" m1 y
     [ "$status" -eq 0 ]
     [ "$(grep -c '^recommend --target-ram 16 --target-cpu-cores 4 ' "$CALLS")" -eq 2 ]
     [[ "$stderr" == *"RAM of the VM in GB [16]"* ]]
@@ -491,7 +498,7 @@ FAKE
     make_llmfit
     export FAKE_LLMFIT=missing
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none y 16 "" "" 1 y
+    ask "" none ollama none y "" 16 "" "" 1 y
     [ "$status" -eq 0 ]
     grep -qx install "$CALLS"
     grep -qx 'recommend --target-ram 16 -n 100000' "$CALLS"
@@ -505,6 +512,7 @@ FAKE
     ask "" none ollama none y m1 y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"llmfit could not be installed, type the model names"* ]]
+    [[ "$stderr" != *"Recommended VM"* ]]
     ! grep -q recommend "$CALLS"
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
 }
@@ -521,7 +529,7 @@ FAKE
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
     # llmfit is installed on this machine whatever the stack: the specs are still asked
-    ask none none ollama none "" "" "" m1 y
+    ask none none ollama none "" "" "" "" m1 y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"with none, the models are added unchecked"* ]]
     [ "$(jq -c '.models' cfg.json)" = '[{"name":"m1","force":true}]' ]
@@ -532,10 +540,112 @@ FAKE
 @test "no llmfit in the stack and no model: no force, no warning" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask none none ollama none "" "" "" "" y
+    ask none none ollama none "" "" "" "" "" y
     [ "$status" -eq 0 ]
     [ "$(jq 'has("models")' cfg.json)" = "false" ]
     [[ "$stderr" != *"not checked for fit"* ]]
+}
+
+@test "the order is asked first, hardware first by default, and a wrong answer is asked again" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none x "" "" "" "" m1 y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"'x' is not h or m"* ]]
+    [[ "$stderr" == *"Order, hardware first (h) or models first (m) [h]"* ]]
+    [[ "$stderr" == *"RAM of the VM in GB"* ]]
+    [[ "$stderr" != *"Recommended VM"* ]]
+}
+
+@test "models first: the VM the models need, the margin shown as estimated, nothing stored in the configuration" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none m m1 y
+    [ "$status" -eq 0 ]
+    # no specs asked, no suggestion, no fit check: the models are sized instead
+    [[ "$stderr" != *"RAM of the VM in GB"* ]]
+    grep -qx 'size m1' "$CALLS"
+    ! grep -q -e recommend -e check "$CALLS"
+    [[ "$stderr" == *"Recommended VM, from llmfit (context of 8192 tokens) plus an ESTIMATED margin"* ]]
+    [[ "$stderr" == *"m1: best Q8_0 9 GB, default Q4_K_M 6 GB, disk 8 or 4.5 GB"* ]]
+    [[ "$stderr" == *"with the best quantisation (Q8_0):"* ]]
+    [[ "$stderr" == *"VM without GPU: RAM 11 GB (11264 MB) = 9 model + 2 estimated margin (1 engine, 1 system)"* ]]
+    [[ "$stderr" == *"VM with a GPU:  GPU memory 12 GB = 9.5 model + 2.5 estimated margin"* ]]
+    [[ "$stderr" == *"disk: 28 GB = 8 models + 20 estimated for the system and components"* ]]
+    [[ "$stderr" == *"with the default quantisation (Q4_K_M):"* ]]
+    [[ "$stderr" == *"VM without GPU: RAM 8 GB (8192 MB) = 6 model + 2 estimated margin"* ]]
+    [[ "$stderr" == *"disk: 25 GB = 4.5 models"* ]]
+    [[ "$stderr" == *"vCPU: not sized by llmfit"* ]]
+    # at the end of the step and again in the summary
+    [ "$(grep -o 'Recommended VM, from llmfit' <<<"$stderr" | wc -l)" -eq 2 ]
+    # the configuration is valid for any VM: models only
+    [ "$(jq -c 'keys' cfg.json)" = '["components","models","schema_version"]' ]
+    [ "$(jq -c '.models' cfg.json)" = '[{"name":"m1"}]' ]
+}
+
+@test "models first: the largest model sizes the memory and the disks add up" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none m "m1, m2" y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"RAM 11 GB (11264 MB) = 9 model + 2 estimated margin"* ]]
+    [[ "$stderr" == *"disk: 31 GB = 11 models + 20 estimated"* ]]
+    [[ "$stderr" == *"m2: best Q8_0 4 GB"* ]]
+}
+
+@test "models first: a chat interface in the stack adds its share to the estimated margin" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" "" ollama chat m m1 y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"RAM 15 GB (15360 MB) = 9 model + 6 estimated margin (1 engine, 1 system, 4 chat interface)"* ]]
+    [[ "$stderr" == *"RAM 6 GB (6144 MB), estimated"* ]]
+}
+
+@test "models first: the cores given before are the vCPU, a model llmfit cannot size is not estimated" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none "" "" "" 4 "" m m "m1, unknown" y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"vCPU: 4"* ]]
+    [[ "$stderr" == *"unknown: not estimated (llmfit does not know it), the recommendation does not cover it"* ]]
+    [[ "$stderr" == *"RAM 11 GB"* ]]
+    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1","unknown"]' ]
+}
+
+@test "models first: nothing estimated gives no figure, a mixture of experts is flagged" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none m unknown y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"unknown: not estimated"* ]]
+    [[ "$stderr" != *"VM without GPU"* ]]
+    ask "" none ollama none m moe y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"moe: best Q8_0 17.1 GB"*"(mixture of experts, figure less reliable)"* ]]
+}
+
+@test "models first: the order is offered again when the step is redone, and the recommendation follows the models" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask "" none ollama none m m1 m "" m2 y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"Order, hardware first (h) or models first (m) [m]"* ]]
+    grep -qx 'size m1' "$CALLS"
+    grep -qx 'size m2' "$CALLS"
+    # the summary shows the second one only
+    [[ "${stderr##*Summary}" == *"m2: best"* ]]
+    [[ "${stderr##*Summary}" != *"m1: best"* ]]
+    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m2"]' ]
+}
+
+@test "--config: no session, so no recommendation" {
+    make_llmfit
+    echo '{"schema_version":1,"components":[{"type":"engine","name":"ollama"},{"type":"provisioning","name":"llmfit"}],"models":[{"name":"m1"}]}' >cfg.json
+    gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"Recommended VM"* ]]
+    ! grep -q '^size' "$CALLS"
 }
 
 @test "--config: the warning follows a model with force and no llmfit, and nothing else changes" {

@@ -17,7 +17,7 @@ declare -A PINNED_SHA256=(
     [x86_64]=27fad93d5e579156e4d87609e1bdef51675342cef3da111ef0f58e1ec10be7f1
     [aarch64]=87d1fd489cd90d4e28e4421bd9a9411d89d4f1ee2526216db0207df4ba7152ff
 )
-readonly ACTIONS="install uninstall status describe recommend check"
+readonly ACTIONS="install uninstall status describe recommend check size"
 
 LIB_DIR="${EASY_CS_AI_LIB:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)}"
 readonly LIB_DIR
@@ -37,6 +37,8 @@ Usage: llmfit.sh <action> [options]
 Actions: $ACTIONS
   recommend [args]        llmfit's own recommendations for this machine (JSON)
   check <model>           {"fits": true|false, "reason": "…"} for a model
+  size <model>            what a model needs, whatever this machine is (JSON): memory and
+                          disk for the best and the default quantisation
 
 Options of recommend and check, to size for another machine:
   --target-ram <GB>       RAM of the machine to size for (llmfit --ram)
@@ -424,6 +426,45 @@ cmd_check() {
       }' <<<"$entry"
 }
 
+# size <model>: what a model needs, whatever this machine is, for the VM recommendation of the
+# generator (docs/spec-vm-generator.md#recommended-vm). llmfit sizes for the machine it is told
+# about: for a very large one it reports its best quantisation, for a tiny one it falls back to the
+# default quantisation of the model (observed with v1.1.17), so each answer is read for both, with
+# and without GPU memory. The context is the one llmfit assumes.
+readonly SIZE_BIG=1024 SIZE_TINY=1
+
+# size_info <bin> <name> <ram> [<vram>]: the llmfit entry of a model sized for a machine, with
+# GPU memory when given.
+size_info() {
+    local bin="$1" name="$2" args=(--ram "$3") out
+    [[ -z "${4:-}" ]] || args+=(--memory "$4")
+    out="$("$bin" "${args[@]}" info "$name" --json --no-dashboard 2>/dev/null)" || return 1
+    jq -ce '.models[0] // empty' <<<"$out"
+}
+
+cmd_size() {
+    local model="${POSITIONAL[0]:-}" bin entry name best_cpu best_gpu def_cpu def_gpu
+    [[ -n "$model" ]] || die "$EXIT_USAGE" "size needs a model name"
+    require_installed
+    bin="$(llmfit_bin)"
+    # An Ollama tag is known only on a machine large enough to list it.
+    TARGET_ARGS=(--ram "$SIZE_BIG" --memory "$SIZE_BIG")
+    entry="$(fit_entry "$bin" "$model")" ||
+        die "$EXIT_ERROR" "llmfit does not know '$model'. It knows Hugging Face names and the Ollama tags of the models that fit a large machine"
+    name="$(jq -r '.name' <<<"$entry")"
+    if ! { best_cpu="$(size_info "$bin" "$name" "$SIZE_BIG")" &&
+        best_gpu="$(size_info "$bin" "$name" "$SIZE_BIG" "$SIZE_BIG")" &&
+        def_cpu="$(size_info "$bin" "$name" "$SIZE_TINY")" &&
+        def_gpu="$(size_info "$bin" "$name" "$SIZE_TINY" "$SIZE_TINY")"; }; then
+        die "$EXIT_ERROR" "llmfit could not size '$name'"
+    fi
+    jq -n --argjson bc "$best_cpu" --argjson bg "$best_gpu" --argjson dc "$def_cpu" --argjson dg "$def_gpu" '
+        def q($c; $g): {quant: $c.best_quant, disk_gb: $c.disk_size_gb, cpu_gb: $c.memory_required_gb, gpu_gb: $g.memory_required_gb};
+        {name: $bc.name, ollama_name: $bc.ollama_name, moe: ($bc.is_moe // false),
+         context: ($bc.estimate_basis.assumed_context // null),
+         best: q($bc; $bg), default: q($dc; $dg)}'
+}
+
 # --- main -------------------------------------------------------------------------------
 
 main() {
@@ -451,6 +492,7 @@ main() {
     status) cmd_status ;;
     recommend) cmd_recommend ;;
     check) cmd_check ;;
+    size) cmd_size ;;
     esac
 }
 
