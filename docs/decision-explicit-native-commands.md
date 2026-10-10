@@ -44,4 +44,5 @@ Adding the `size` action to the llmfit component showed the cost. `size` was not
 ## Open questions
 
 - A field per action in `describe` to say which ones change the machine, to remove `CHANGING_ACTIONS`.
+- **Is `exec` useful at all?** An administrator can call the installed component directly (`ollama ps`, `nginx -t`, `docker compose -f … logs -f`) without going through the CLI. What `exec` adds is only the environment the project would otherwise make the user retype (`native.env`, such as `OLLAMA_HOST`, and `{compose_file}` for Docker Compose components), the "not installed" precondition check, and the resolved command shown by `--verbose` and `--dry-run`. It adds nothing for an administrator who knows the tool, and it is an extra surface to maintain (spec, tests, the `native` block of every `describe`). To settle: keep it as a convenience, or remove it and document the direct commands instead (with the variables to export where they matter).
 - No transition period is planned (the fallback is removed in the same version). If users of the pre-release need one, the fallback could warn for one version, naming `exec`.
