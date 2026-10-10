@@ -87,3 +87,104 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
     [ -x "$DIST/stage/lib/easy-cs-ai/provisioning/llmfit.sh" ]
     [ -x "$DIST/stage/lib/easy-cs-ai/vm_script/generate.sh" ]
 }
+
+# A stand-in for nfpm: records where and how it was run, then writes the package it was asked for
+fake_nfpm() {
+    FAKE_NFPM="$BATS_TEST_TMPDIR/bin/nfpm"
+    NFPM_LOG="$BATS_TEST_TMPDIR/nfpm.log"
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    cat >"$FAKE_NFPM" <<'FAKE'
+#!/usr/bin/env bash
+packager="" target="" config=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    package) shift ;;
+    --config) config="$2"; shift 2 ;;
+    --packager) packager="$2"; shift 2 ;;
+    --target) target="$2"; shift 2 ;;
+    *) exit 64 ;;
+    esac
+done
+printf '%s|%s|%s|%s|%s\n' "$packager" "$VERSION" "$config" "$(test -x dist/stage/bin/easy-cs-ai && echo stage-seen)" "$(basename "$PWD" | sed 's/.*/cwd/')" >>"$NFPM_LOG"
+printf 'fake %s\n' "$packager" >"${target}easy-cs-ai-fake.$packager"
+FAKE
+    chmod +x "$FAKE_NFPM"
+    export NFPM_LOG
+}
+
+build_native() { bash "$ROOT/package/build-native.sh" --output "$DIST" "$@"; }
+
+@test "build-native refuses an output without a stage" {
+    mkdir -p "$DIST"
+    run --separate-stderr build_native --nfpm /bin/true
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"package/build.sh --output"* ]]
+}
+
+@test "build-native refuses an unknown argument" {
+    run --separate-stderr build_native --bogus
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"unknown argument: --bogus"* ]]
+}
+
+@test "build-native builds the deb and the rpm, named after the CLI version, with their checksums" {
+    fake_nfpm
+    build >/dev/null
+    run --separate-stderr build_native --nfpm "$FAKE_NFPM"
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "$DIST/easy-cs-ai_${VERSION}_all.deb" ]
+    [ "${lines[1]}" = "$DIST/easy-cs-ai-${VERSION}-1.noarch.rpm" ]
+    [ "${#lines[@]}" -eq 2 ]
+    (cd "$DIST" && sha256sum -c "easy-cs-ai_${VERSION}_all.deb.sha256" "easy-cs-ai-${VERSION}-1.noarch.rpm.sha256")
+    grep -q '^fake deb$' "$DIST/easy-cs-ai_${VERSION}_all.deb"
+    grep -q '^fake rpm$' "$DIST/easy-cs-ai-${VERSION}-1.noarch.rpm"
+}
+
+@test "build-native runs nfpm once per packager, with VERSION, nfpm.yaml and dist/stage visible" {
+    fake_nfpm
+    build >/dev/null
+    run --separate-stderr build_native --nfpm "$FAKE_NFPM"
+    [ "$status" -eq 0 ]
+    [ "$(wc -l <"$NFPM_LOG")" -eq 2 ]
+    grep -q "^deb|$VERSION|.*/package/nfpm.yaml|stage-seen|" "$NFPM_LOG"
+    grep -q "^rpm|$VERSION|.*/package/nfpm.yaml|stage-seen|" "$NFPM_LOG"
+}
+
+@test "build-native leaves nothing but the packages and the stage in the output" {
+    fake_nfpm
+    build >/dev/null
+    build_native --nfpm "$FAKE_NFPM" >/dev/null
+    run ls "$DIST"
+    [ "$output" = "easy-cs-ai-$VERSION-1.noarch.rpm
+easy-cs-ai-$VERSION-1.noarch.rpm.sha256
+easy-cs-ai-$VERSION.tar.gz
+easy-cs-ai-$VERSION.tar.gz.sha256
+easy-cs-ai_${VERSION}_all.deb
+easy-cs-ai_${VERSION}_all.deb.sha256
+stage" ]
+}
+
+@test "build-native accepts a relative path to nfpm" {
+    fake_nfpm
+    build >/dev/null
+    cd "$BATS_TEST_TMPDIR"
+    run --separate-stderr build_native --nfpm bin/nfpm
+    [ "$status" -eq 0 ]
+    [ -f "$DIST/easy-cs-ai_${VERSION}_all.deb" ]
+}
+
+@test "build-native refuses an nfpm path that is not an executable" {
+    build >/dev/null
+    run --separate-stderr build_native --nfpm "$BATS_TEST_TMPDIR/bin/missing"
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"nfpm not found or not executable"* ]]
+    [ ! -e "$DIST/easy-cs-ai_${VERSION}_all.deb" ]
+}
+
+@test "build-native looks a bare nfpm name up in PATH" {
+    fake_nfpm
+    build >/dev/null
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH" run --separate-stderr bash "$ROOT/package/build-native.sh" --output "$DIST"
+    [ "$status" -eq 0 ]
+    [ -f "$DIST/easy-cs-ai-${VERSION}-1.noarch.rpm" ]
+}
