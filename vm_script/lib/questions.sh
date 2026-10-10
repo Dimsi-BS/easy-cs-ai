@@ -212,12 +212,14 @@ run_session() {
         5)
             SESSION_CONFIG="$(session_config)"
             print_summary "$SESSION_CONFIG"
-            _read "Confirm (y), cancel (n) or redo a step (1 components, 3 options, 4 models)" y
+            _read "Confirm (y), cancel (n) or redo a step (c components, o options, m models)" y
             answer="$REPLY"
             case "$answer" in
             y | Y) return 0 ;;
             n | N) log_info "cancelled, nothing written"; exit 0 ;;
-            1 | 3 | 4) step="$answer" ;;
+            c | C) step=1 ;;
+            o | O) step=3 ;;
+            m | M) step=4 ;;
             *) log_warn "'$answer' is not a valid answer" ;;
             esac
             ;;

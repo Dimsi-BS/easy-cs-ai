@@ -46,7 +46,7 @@ Takes the [configuration](spec-config.md) from a file instead of a session: **no
 ## Implementation notes
 
 - The session picks **one component per type** (the configuration allows several, but there is no question to ask for a second one; edit the file written by `--config-only` for that). The rank 1 is offered as the default answer, `none` skips the type; a type with no shipped component is not asked.
-- A dependency the administrator refuses sends the session back to the component choice. At the summary, `y` confirms, `n` cancels, and `1`, `3` or `4` redo the components (with their dependencies), the options or the models. Step 2 (dependencies) is part of step 1.
+- A dependency the administrator refuses sends the session back to the component choice. At the summary, `y` confirms, `n` cancels, and `c`, `o` or `m` redo the components (with their dependencies), the options or the models. The dependency check is not a choice of its own: it always follows the components.
 - End of input on stdin cancels the session: exit 0, nothing written.
 - The generator plans for another machine: what is installed on the machine running it is ignored (`EASY_CS_AI_ASSUME_EMPTY`), so a configuration is validated as for a fresh VM, and a requirement that the file does not satisfy is an incomplete file (exit 2).
 - The validation, the ordering of components and the summary are the code of `apply` (`lib/cli-apply.sh`), so the generator and `apply` cannot disagree.

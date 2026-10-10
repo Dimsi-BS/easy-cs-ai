@@ -100,7 +100,7 @@ ask() { ANSWERS="$(printf '%s\n' "$@")"; export ANSWERS; session; }
 
 @test "the summary can be redone from a step, or cancelled" {
     GEN_ARGS=(--config-only --output cfg.json)
-    ask none eng none "" m1 4 m2 y
+    ask none eng none "" m1 m m2 y
     [ "$status" -eq 0 ]
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m2"]' ]
     rm cfg.json
