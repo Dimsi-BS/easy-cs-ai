@@ -1,16 +1,4 @@
-# LF everywhere in the repository, whatever core.autocrlf says on the machine (the scripts, the data files
-# and the templates run on Linux, a stray CR sticks to the last field or breaks the shebang). The
-# rules below stay as the explicit list of what must never become CRLF.
+# LF for every text file, whatever core.autocrlf says on the machine: the scripts, the data files
+# read by the CLI and the templates rendered into system files all run on Linux, where a stray CR
+# breaks a shebang or sticks to the last field of a line.
 * text=auto eol=lf
-# Shell scripts and bats tests must keep LF endings (run on Linux)
-*.sh text eol=lf
-*.bats text eol=lf
-# Templates rendered into system files
-*.service text eol=lf
-.shellcheckrc text eol=lf
-package/bin/* text eol=lf
-*.tpl text eol=lf
-# Data files read by the CLI (a CR would stick to the last field)
-install_scripts/*.conf text eol=lf
-install_scripts/templates/nginx/*.conf text eol=lf
-install_scripts/templates/librechat/* text eol=lf
