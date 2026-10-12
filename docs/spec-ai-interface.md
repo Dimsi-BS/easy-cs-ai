@@ -188,7 +188,7 @@ Prints, as plain text, the procedure of the [next section](#procedure-for-an-age
 
 ## Model fit for a machine that is not this one
 
-`provisioning llmfit recommend` and `check <model>` evaluate the **local** hardware. An agent that prepares a fleet knows the specs of the target from the user, not from `host`. llmfit overrides the detected hardware with `--memory`, `--ram` and `--cpu-cores` (see [findings](../search/llmfit.md)), so the two actions gain, as options:
+`provisioning llmfit recommend`, `suggest` and `check <model>` evaluate the **local** hardware. An agent that prepares a fleet knows the specs of the target from the user, not from `host`. llmfit overrides the detected hardware with `--memory`, `--ram` and `--cpu-cores` (see [findings](../search/llmfit.md)), so the three actions gain, as options:
 
 | Option | Meaning | Forwarded to llmfit as |
 | --- | --- | --- |
@@ -198,7 +198,19 @@ Prints, as plain text, the procedure of the [next section](#procedure-for-an-age
 
 With none of them, behaviour is unchanged (local hardware). They are declared in the `describe` of the llmfit script under `action_options`, keyed by action (`recommend`, `check`), and not in `options`, which are the options of `install` and of the configuration; they are therefore in `catalog` too. The options are read-only and need no engine; llmfit itself must be installed, otherwise the action exits 4 with the command that installs it (`easy-cs-ai install provisioning llmfit`), and the agent asks the user before running it (it is a change on the machine).
 
-The interactive generator uses the same two actions to help an administrator without an agent choose models, and treats llmfit as optional: it offers to install llmfit, and falls back to typed names when llmfit is missing instead of exiting 4 (see [spec: VM script generator](spec-vm-generator.md#choosing-models)).
+### Two orders, one implementation
+
+A user either has a VM imposed (**hardware first**) or has models in mind (**models first**); an agent serves both, exactly as the interactive generator does (see [spec: VM script generator](spec-vm-generator.md#choosing-models)). Both orders are actions of the `provisioning llmfit` component, so that the generator and the agent share the code and never the logic twice:
+
+| Order | Action | Answer |
+| --- | --- | --- |
+| Hardware first | `suggest` with the `--target-*` options | The models that fit, already filtered (Ollama tag, not `Too Tight`) and ranked by score, see the [script contract](spec-script-contract.md#actions) |
+| Hardware first, a model named by the user | `check <model>` with the `--target-*` options | `fits` and `reason` |
+| Models first | `plan <model>… [--target-cpu-cores <n>] [--chat-interface]` | The VM the models need: the model figures from llmfit, the **estimated margin** and the total, for RAM without GPU, GPU memory with a GPU, and disk, for the `best` and the `default` quantisation, plus the models llmfit could not size (`unsized`) |
+
+The agent presents the result of `plan` as the generator does: the model figure and the estimated margin side by side, never a single total that looks measured, the two quantisations, and the unsized models listed as not covered. It does not compute the margin itself. `plan` has no `--target-ram` or `--target-vram`: in this order the hardware is the answer, not the question.
+
+The interactive generator uses the same actions to help an administrator without an agent choose models, and treats llmfit as optional: it offers to install llmfit, and falls back to typed names when llmfit is missing instead of exiting 4 (see [spec: VM script generator](spec-vm-generator.md#choosing-models)).
 
 The configuration still does not store the target specs: the fit is checked **at run time on the target** (`add`, as before), and what the agent asks llmfit while preparing is only an early opinion. A model the agent proposed that does not fit on the target is refused at `apply` (or accepted with `force`).
 
@@ -225,7 +237,7 @@ An agent that needs a secret known in advance (rare) says so to the user and use
 What `guide` prints, in substance:
 
 1. **Ask before assuming.** The CLI never takes a default choice on its own, and neither does the agent: the stack (`install --defaults` included) is the user's decision, with the catalog's ranks given as a suggestion.
-2. **Discover**: `catalog --json`, then `host --json` (this machine) or the specs the user gives (another machine), then, to choose a model, `provisioning llmfit recommend --json` with the `--target-*` options when needed.
+2. **Discover**: `catalog --json`, then `host --json` (this machine) or the specs the user gives (another machine). To choose a model, ask the user which order suits them: with a VM imposed, `provisioning llmfit suggest` with the `--target-*` options; with models in mind, `provisioning llmfit plan <model>…` to tell them what VM to ask for. See [two orders](#two-orders-one-implementation).
 3. **Draft** the configuration from `config schema` and the catalog. Never write a secret as a value.
 4. **Validate**: `config validate <file> --target fresh|this --json`; fix the `errors` by their `path` and `code`, and loop until `ok`.
 5. **Show the user** the `plan` and **every `warning`** (open registration…), and get a yes.
@@ -243,6 +255,7 @@ What `guide` prints, in substance:
 | Validating for a fleet (not this machine) has no command | `--target fresh`, `generate --config --dry-run --json` |
 | The machine is opaque | [`host`](#host) |
 | Fit of a model can only be asked for the local hardware | [`--target-*`](#model-fit-for-a-machine-that-is-not-this-one) |
+| Models-first sizing, candidate ranking and the VM margin existed only in the interactive generator | [`suggest` and `plan`](#two-orders-one-implementation), shared by both |
 | Option types are not declared | [typed options](#contract-addition-typed-options-in-describe) |
 | Outcome of `apply` / `install` / `add` is only on stderr | [result document](#result-of-the-changing-commands) |
 | Literal secrets undecided | [Secrets](#secrets) |
@@ -253,7 +266,7 @@ What `guide` prints, in substance:
 - `bats` tests in `EASY_CS_AI_ROOT` mode with fake components: `catalog` (shipped only, ranks, default model, order, `describe` verbatim, unranked, no root), `host` (fake `/proc` and `/etc/os-release`, a fact that cannot be read is `null`, no GPU), `config schema` (valid JSON Schema, options typed from `describe`, secret objects), `config validate` (every `code`, every path, several errors at once, `plan` null on error, warnings on a default value, `--target this` versus `fresh`, stdin, exit codes, no root), the result document of each changing command for success, a failing step, exit 7 and interruption, the dry-run plans.
 - A schema check: a configuration accepted by `config validate` is accepted by `config schema`'s schema, and vice versa for every error code except those the schema cannot express.
 - stdout hygiene: with `--json`, stdout parses as exactly one document in each of the cases above, including failures; without it, no JSON.
-- `provisioning` tests: the `--target-*` options reach llmfit as `--ram`, `--memory`, `--cpu-cores`, before the subcommand; llmfit missing is exit 4 with the install hint.
+- `provisioning` tests: the `--target-*` options reach llmfit as `--ram`, `--memory`, `--cpu-cores`, before the subcommand; llmfit missing is exit 4 with the install hint; `suggest` (Ollama tags only, no `Too Tight`, best score first, at most `-n`, empty list on no result), `plan` (margin parts and totals for both quantisations, `--chat-interface`, `unsized`, no model is exit 2). The tests of the generator check that it prints what these actions return and computes nothing of its own.
 - Every shipped `describe` validates against the typed-option rules.
 - Integration test on a VM: the procedure above run end to end by a script that plays the agent (catalog, host, validate, apply with `--json`, status).
 - `shellcheck` clean; the `--help` of each command and `guide` consistent with this spec.
