@@ -68,6 +68,9 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     cli help
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage: easy-cs-ai"* ]]
+    # an AI agent with only the binary is sent to the guide first, and the commands for it are together
+    [[ "$output" == *"Usage: easy-cs-ai"*"AI agent or program: run \`easy-cs-ai guide\` first, it tells how to use this CLI."*"Commands:"* ]]
+    [[ "$output" == *"For an AI agent or a program (start with guide):"*"guide "*"catalog "*"host "*"config schema"*"config validate"*"llmfit suggest|plan"* ]]
     cli --version
     [ "$output" = "0.1.0-rc1" ]
 }

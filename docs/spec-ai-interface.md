@@ -156,6 +156,8 @@ Without `--json`, the problems and the plan in human form (the lines `apply --dr
 
 ### `guide`
 
+An agent that has nothing but the binary finds it from `easy-cs-ai --help`, whose usage starts with a line telling an AI agent to run `guide` first, and whose command list groups `guide` with `catalog`, `host` and `config` under a heading of their own for agents and programs.
+
 Prints, as plain text, the procedure of the [next section](#procedure-for-an-agent) and the safety rules that go with it, so an agent that has nothing but the binary learns how to use it. Short (a screen or two), versioned with the CLI. It is text, not JSON: it is meant to be read by a model, and is the only reader-oriented output that has no `--json` form.
 
 ## Result of the changing commands
@@ -239,13 +241,18 @@ An agent that needs a secret known in advance (rare) says so to the user and use
 What `guide` prints, in substance:
 
 1. **Ask before assuming.** The CLI never takes a default choice on its own, and neither does the agent: the stack (`install --defaults` included) is the user's decision, with the catalog's ranks given as a suggestion.
-2. **Discover**: `catalog --json`, then `host --json` (this machine) or the specs the user gives (another machine). To choose a model, ask the user which order suits them: with a VM imposed, `provisioning llmfit suggest --json` with the `--target-*` options; with models in mind, `provisioning llmfit plan <model>… --json` to tell them what VM to ask for. See [two orders](#two-orders-one-implementation).
-3. **Draft** the configuration from `config schema` and the catalog. Never write a secret as a value.
-4. **Validate**: `config validate <file> --target fresh|this --json`; fix the `errors` by their `path` and `code`, and loop until `ok`.
-5. **Show the user** the `plan` and **every `warning`** (open registration…), and get a yes.
-6. **Produce** either the script (`generate --config <file> --package-… --output <path>`, which the user reviews and runs on the VM) or the change on this machine (`sudo easy-cs-ai apply <file> --json`, only with the user's explicit agreement, since it changes the machine).
-7. **Read the result document** and `status --json`; report to the user in plain words. A failure is reported with its `message` and `failed_step`; a second `apply` resumes (see [spec: config](spec-config.md#failure-and-resume)), it is not retried blindly.
-8. **Never** run `uninstall`, `remove`, `apply --prune` or `--purge` on the agent's own initiative, nor `proxy nginx show-key`, nor `exec`, which runs any command of a component's program (`ollama rm`, `docker compose down -v`) outside the state, the lock and the journal, unless the user asked for that command.
+2. **Discover**: `catalog --json`, then `host --json` (this machine) or the specs the user gives (another machine).
+3. **Choose the models, in the order that suits the user.** This step stands on its own in the guide, because an agent that has only the binary must see that there are two ways in, and ask which one applies:
+   - **Hardware first**, when a VM is imposed: `provisioning llmfit suggest --json` with the `--target-*` options lists the models that fit it, and `check <model>` judges one the user names.
+   - **Models first**, when the user has models in mind: `provisioning llmfit plan <model>… --json` (with `--chat-interface` when one is in the stack, `--target-cpu-cores` for the vCPU) tells what VM to ask for.
+
+   The guide says how to read the `plan` document (`quantisations.best` and `.default`, each with `ram_no_gpu`, `gpu_memory`, `gpu_ram` and `disk`, and `model_gb`, `margin_gb`, `total_gb` in each; `unsized` for the models llmfit does not know), that the margin is an estimate to present as such, that all this is an early opinion (the fit is checked again on the target), and that llmfit must be installed, which the agent asks the user about first. See [two orders](#two-orders-one-implementation).
+4. **Draft** the configuration from `config schema` and the catalog. Never write a secret as a value.
+5. **Validate**: `config validate <file> --target fresh|this --json`; fix the `errors` by their `path` and `code`, and loop until `ok`.
+6. **Show the user** the `plan` and **every `warning`** (open registration…), and get a yes.
+7. **Produce** either the script (`generate --config <file> --package-… --output <path>`, which the user reviews and runs on the VM) or the change on this machine (`sudo easy-cs-ai apply <file> --json`, only with the user's explicit agreement, since it changes the machine).
+8. **Read the result document** and `status --json`; report to the user in plain words. A failure is reported with its `message` and `failed_step`; a second `apply` resumes (see [spec: config](spec-config.md#failure-and-resume)), it is not retried blindly.
+9. **Never** run `uninstall`, `remove`, `apply --prune` or `--purge` on the agent's own initiative, nor `proxy nginx show-key`, nor `exec`, which runs any command of a component's program (`ollama rm`, `docker compose down -v`) outside the state, the lock and the journal, unless the user asked for that command.
 
 ## Gaps closed
 

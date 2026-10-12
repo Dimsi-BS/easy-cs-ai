@@ -410,33 +410,45 @@ Procedure
                                              ranks, default models
                easy-cs-ai host --json       this machine (CPU, RAM, disk, GPU)
     For another machine (a VM to provision), ask the user for its specs.
-    To choose a model, ask the user which comes first. A VM imposed:
-      easy-cs-ai provisioning llmfit suggest --json --target-ram GB
-        [--target-vram GB] [--target-cpu-cores N]    the models that fit it
-      (check MODEL with the same options for a model the user names).
-    Models in mind:
-      easy-cs-ai provisioning llmfit plan MODEL... --json [--chat-interface]
-        [--target-cpu-cores N]    the VM to ask for, margin shown as estimated
-    Without --json, suggest and plan print a text for a person.
-    llmfit must be installed: ask before installing it.
- 3. Draft a configuration (JSON). Its format: easy-cs-ai config schema
+ 3. Choose the models. There are TWO ORDERS: ask the user which one applies.
+    a) HARDWARE FIRST, a VM is imposed: which models fit it?
+         easy-cs-ai provisioning llmfit suggest --json --target-ram GB
+           [--target-vram GB] [--target-cpu-cores N]
+       lists the models that fit, best first. For a model the user names:
+         easy-cs-ai provisioning llmfit check MODEL --target-ram GB ...
+       answers {"fits", "reason"}.
+    b) MODELS FIRST, the user has models in mind: which VM do they need?
+         easy-cs-ai provisioning llmfit plan MODEL... --json
+           [--chat-interface] [--target-cpu-cores N]
+       Read quantisations.best and quantisations.default (the 8-bit and the
+       usual 4-bit weights): each has ram_no_gpu (VM without GPU), gpu_memory
+       and gpu_ram (VM with a GPU), disk, and in each model_gb, margin_gb and
+       total_gb. "unsized" lists the models llmfit does not know: say that the
+       figures do not cover them. Give the user the model figure and the
+       margin side by side, and say the margin is an ESTIMATE; never present
+       a total as measured. Do not pick GPU or CPU for them.
+    These are early opinions: the fit is checked again on the VM.
+    llmfit must be installed (easy-cs-ai install provisioning llmfit): ask
+    the user before installing it. Without --json, suggest and plan print a
+    text for a person.
+ 4. Draft a configuration (JSON). Its format: easy-cs-ai config schema
     A secret option is never a plain value: {"file": path}, {"env": NAME} or
     {"generate": true}. Never put a secret on a command line or in a file.
- 4. Validate:   easy-cs-ai config validate FILE --target fresh --json
+ 5. Validate:   easy-cs-ai config validate FILE --target fresh --json
     (--target this for this machine). Fix every entry of "errors" using its
     "path" and "code", and validate again until "ok" is true.
- 5. Show the user the "plan" and EVERY entry of "warnings" (open registration,
+ 6. Show the user the "plan" and EVERY entry of "warnings" (open registration,
     ...) and get a yes before going further.
- 6. Produce, as the user chose:
+ 7. Produce, as the user chose:
       - a VM post-install script:
           easy-cs-ai generate --config FILE --output SCRIPT [--package-version V ...]
         the user reviews it and runs it on the VM;
       - or the change on this machine, only with the user's explicit
         agreement: sudo easy-cs-ai apply FILE --json
- 7. Read the result document of the command and `easy-cs-ai status --json`,
+ 8. Read the result document of the command and `easy-cs-ai status --json`,
     and report in plain words. A failure is reported with its "message" and
     "failed_step"; a second apply resumes where it stopped, do not retry blindly.
- 8. Never run uninstall, remove, apply --prune, --purge, `exec` or
+ 9. Never run uninstall, remove, apply --prune, --purge, `exec` or
     `proxy nginx show-key` on your own initiative: exec runs any command of a
     component's program, outside the state, the lock and the journal.
 EOF

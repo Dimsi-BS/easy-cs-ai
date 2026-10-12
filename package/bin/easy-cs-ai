@@ -44,6 +44,8 @@ usage() {
     cat <<'EOF'
 Usage: easy-cs-ai [--verbose] [--dry-run] [--json] <command> [arguments]
 
+AI agent or program: run `easy-cs-ai guide` first, it tells how to use this CLI.
+
 Commands:
   status                                   installed components with their live status
   install <type> <name> [--defaults] [--default] [options]
@@ -57,12 +59,15 @@ Commands:
   remove <model> [--engine <n>]            remove --all [--engine <n>]
   apply <file|-> [--prune]                 make the machine match a configuration file
   generate [--config-only] [--config <file>] [options]   VM post-install script generator
+  help, version
+
+For an AI agent or a program (start with guide):
+  guide                                    how to use this CLI: procedure and safety rules
   catalog                                  what can be installed (components, options, ranks)
   host                                     this machine: platform, CPU, memory, disk, GPU
   config schema                            the configuration format, as a JSON Schema
   config validate <file|-> [--target this|fresh]   check a configuration, show its plan
-  guide                                    how an AI agent should use this CLI
-  help, version
+  provisioning llmfit suggest|plan         the models that fit a VM, or the VM that models need
 
 --json prints one JSON document on stdout instead of the human output (for programs).
 
