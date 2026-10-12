@@ -104,6 +104,8 @@ check "the tarball holds the CLI and the scripts tree" test -x "$TREE/bin/easy-c
 check "no documentation is shipped" bash -c "! find '$TREE' -name '*.md' | grep -q ."
 check "no CRLF in the shipped files" bash -c "! grep -rlI \$'\\r' '$TREE' | grep -q ."
 expect "the extracted CLI reports the version" "$VERSION" "$("$TREE/bin/easy-cs-ai" --version 2>/dev/null)"
+check "the short name ecsai is a link to the CLI" test "$(readlink "$TREE/bin/ecsai")" = easy-cs-ai
+expect "the extracted short name reports the version" "$VERSION" "$("$TREE/bin/ecsai" --version 2>/dev/null)"
 
 # --- the deb and the rpm ---------------------------------------------------------------------
 
@@ -128,6 +130,7 @@ if command -v dpkg-deb >/dev/null 2>&1; then
     got="$(dpkg-deb -c "$DIST/$DEB" | awk '$1 ~ /^-/ {print $6}' | sed 's|^\./|/|' | LC_ALL=C sort)"
     expect "deb: same files as the tarball" "$want" "$got"
     check "deb: the CLI is executable" bash -c "dpkg-deb -c '$DIST/$DEB' | grep -E '^-rwxr-xr-x .* \./usr/bin/easy-cs-ai\$'"
+    check "deb: ecsai is a link to easy-cs-ai" bash -c "dpkg-deb -c '$DIST/$DEB' | grep -E '^l.* \./usr/bin/ecsai -> easy-cs-ai\$'"
     check "deb: no maintainer script" bash -c "! dpkg-deb -I '$DIST/$DEB' | grep -Eq '(postinst|preinst|prerm|postrm)'"
 else
     skip "deb inspection (no dpkg-deb)"
@@ -173,6 +176,7 @@ in_container() { # <description> <image> <package> <format> <install command> <r
 set -eux
 $install
 easy-cs-ai --version
+ecsai --version
 easy-cs-ai status
 echo '{"schema_version":1,"components":[{"type":"engine","name":"ollama","default":true}]}' >/tmp/config.json
 easy-cs-ai generate --config /tmp/config.json --package-file "/pkgs/$pkg" --package-format $format --output /tmp/vm.sh
@@ -181,6 +185,7 @@ grep -q "\$(sha256sum "/pkgs/$pkg" | cut -d' ' -f1)" /tmp/vm.sh
 test -f /usr/lib/easy-cs-ai/engine/ollama.sh
 $remove
 test ! -e /usr/bin/easy-cs-ai
+test ! -L /usr/bin/ecsai
 test ! -e /usr/lib/easy-cs-ai
 EOF
     if docker run --rm -v "$DIST:/pkgs:ro" -v "$WORK/container-$format.sh:/check.sh:ro" "$image" bash /check.sh >"$log" 2>&1; then

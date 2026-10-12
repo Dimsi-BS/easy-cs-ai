@@ -26,6 +26,15 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
     (cd "$DIST" && sha256sum -c "easy-cs-ai-$VERSION.tar.gz.sha256")
 }
 
+@test "the stage has the short name ecsai, a link that runs the same CLI" {
+    build >/dev/null
+    [ -L "$DIST/stage/bin/ecsai" ]
+    [ "$(readlink "$DIST/stage/bin/ecsai")" = easy-cs-ai ]
+    run --separate-stderr bash "$DIST/stage/bin/ecsai" --version
+    [ "$status" -eq 0 ]
+    [ "$output" = "$VERSION" ]
+}
+
 @test "build refuses a version that differs from the CLI's" {
     run --separate-stderr build --version 9.9.9
     [ "$status" -eq 2 ]
@@ -72,6 +81,7 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
 @test "nfpm.yaml names the same layout as the stage" {
     grep -q 'src: dist/stage/bin/easy-cs-ai' "$ROOT/package/nfpm.yaml"
     grep -q 'dst: /usr/bin/easy-cs-ai' "$ROOT/package/nfpm.yaml"
+    grep -q 'dst: /usr/bin/ecsai' "$ROOT/package/nfpm.yaml"
     grep -q 'dst: /usr/lib/easy-cs-ai' "$ROOT/package/nfpm.yaml"
 }
 

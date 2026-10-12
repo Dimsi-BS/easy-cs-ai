@@ -6,6 +6,7 @@
 # Produces, in <output> (default ./dist):
 #   stage/                         the tree the packages install under /usr
 #     bin/easy-cs-ai
+#     bin/ecsai -> easy-cs-ai      the short name
 #     lib/easy-cs-ai/{lib,engine,…,templates,ranks.conf,vm_script}
 #   easy-cs-ai-<v>.tar.gz          the same tree under easy-cs-ai-<v>/
 #   easy-cs-ai-<v>.tar.gz.sha256   "<hash>  <file>", the format the generator reads
@@ -35,6 +36,8 @@ stage="$output/stage"
 rm -rf "$stage"
 mkdir -p "$stage/bin" "$stage/lib/easy-cs-ai"
 install -m 0755 "$root/package/bin/easy-cs-ai" "$stage/bin/easy-cs-ai"
+# The short name, a link: the CLI resolves it (readlink -f) to find its tree.
+ln -s easy-cs-ai "$stage/bin/ecsai"
 
 # The scripts tree: everything of install_scripts except the documentation.
 cp -a "$root/install_scripts/." "$stage/lib/easy-cs-ai/"

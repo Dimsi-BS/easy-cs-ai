@@ -19,6 +19,9 @@ contents:
     dst: /usr/bin/easy-cs-ai
     file_info:
       mode: 0755
+  - src: easy-cs-ai
+    dst: /usr/bin/ecsai
+    type: symlink
   - src: dist/stage/lib/easy-cs-ai
     dst: /usr/lib/easy-cs-ai
     type: tree
