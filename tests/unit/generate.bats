@@ -401,39 +401,26 @@ status)
 install)
     [[ "${FAKE_LLMFIT_INSTALL:-}" != fail ]] || { echo "fake install failed" >&2; exit 5; }
     touch "$CALLS.installed" ;;
-# what suggest answers is what the generator lists, in that order, with nothing filtered or
-# re-ranked on its side (the Too Tight one and the untagged one are the action's business)
-suggest) echo '{"models":[
-  {"name":"llama3.2:3b","llmfit_name":"hf/b","fit_level":"Good","score":90,"memory_required_gb":2.4},
-  {"name":"small:1b","llmfit_name":"hf/a","fit_level":"Perfect","score":70,"memory_required_gb":1.2}]}' ;;
-# what plan answers is what the generator prints: the figures and the margin are the fake's own
-# (a fixed 2 GB margin, whatever the models), and the generator must not compute any
+# what suggest prints is what the generator shows, in that order, with nothing filtered or
+# re-ranked on its side (the Too Tight one and the untagged one are the action's business); it
+# only reads the number and the name at the start of the lines
+suggest)
+    printf '   1) llama3.2:3b                  Good, needs 2.4 GB\n   2) small:1b                     Perfect, needs 1.2 GB\n' ;;
+# what plan prints is what the generator shows, as it is: the text is the fake's own, and the
+# generator must not compute or format anything of it
 plan)
     shift
-    chat=0 cores=null names=()
+    chat=no cores=none names=()
     while (($#)); do
         case "$1" in
-        --chat-interface) chat=4 ;;
+        --chat-interface) chat=yes ;;
         --target-cpu-cores) cores="$2"; shift ;;
         *) names+=("$1") ;;
         esac
         shift
     done
-    jq -n --argjson chat "$chat" --argjson cores "$cores" --arg names "${names[*]}" '
-      {m1: {name:"hf/m1",moe:false,best:{quant:"Q8_0",disk_gb:8,cpu_gb:9,gpu_gb:9.5},default:{quant:"Q4_K_M",disk_gb:4.5,cpu_gb:6,gpu_gb:6.2}},
-       m2: {name:"hf/m2",moe:false,best:{quant:"Q8_0",disk_gb:3,cpu_gb:4,gpu_gb:4.2},default:{quant:"Q4_K_M",disk_gb:1.8,cpu_gb:2.5,gpu_gb:2.6}},
-       moe: {name:"hf/moe",moe:true,best:{quant:"Q8_0",disk_gb:32,cpu_gb:17.1,gpu_gb:15.6},default:{quant:"Q4_K_M",disk_gb:17.7,cpu_gb:17.1,gpu_gb:15.6}}} as $T
-      | ($names | split(" ")) as $n
-      | ($n | map(select($T[.] != null))) as $ok
-      | def q($k; $ram): {quants: [$T[$ok[0]][$k].quant],
-          ram_no_gpu: {model_gb: $T[$ok[0]][$k].cpu_gb, margin_gb: (2 + $chat), total_gb: $ram, total_mb: ($ram * 1024),
-                       margin_parts: ({engine: 1, system: 1} + {chat_interface: $chat})},
-          gpu_memory: {model_gb: $T[$ok[0]][$k].gpu_gb, margin_gb: 2.5, total_gb: 12, margin_basis: "model / 0.9, 1 for the CUDA context"},
-          gpu_ram: {model_gb: 0, margin_gb: (2 + $chat), total_gb: (2 + $chat), total_mb: ((2 + $chat) * 1024), margin_parts: {system_and_engine: 2, chat_interface: $chat}},
-          disk: {model_gb: ($ok | map($T[.][$k].disk_gb) | add), margin_gb: 20, total_gb: (($ok | map($T[.][$k].disk_gb) | add) + 20 | ceil), margin_parts: {system_and_components: 20}}};
-      {context: 8192, vcpu: $cores, chat_interface: ($chat > 0),
-       models: ($ok | map($T[.] + {typed: .})), unsized: ($n - $ok),
-       quantisations: (if ($ok | length) == 0 then null else {best: q("best"; 11 + $chat), default: q("default"; 8 + $chat)} end)}' ;;
+    echo "fake: sizing ${names[*]}" >&2
+    printf '\nFAKE RECOMMENDATION for %s (chat interface: %s, vcpu: %s)\n  with a margin that is the fake'"'"'s own\n' "${names[*]}" "$chat" "$cores" ;;
 check)
     case "$2" in
     big) echo '{"fits":false,"reason":"big: fit Too Tight, needs 40 GB of 16 GB available"}' ;;
@@ -580,7 +567,7 @@ FAKE
     [[ "$stderr" != *"Recommended VM"* ]]
 }
 
-@test "models first: the VM the models need, the margin shown as estimated, nothing stored in the configuration" {
+@test "models first: the plan of llmfit is shown as it is, once, in the summary, and nothing is stored in the configuration" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
     ask "" none ollama none m m1 y
@@ -589,64 +576,54 @@ FAKE
     [[ "$stderr" != *"RAM of the VM in GB"* ]]
     grep -qx 'plan m1' "$CALLS"
     ! grep -q -e suggest -e check "$CALLS"
-    [[ "$stderr" == *"Recommended VM, from llmfit (context of 8192 tokens) plus an ESTIMATED margin"* ]]
-    [[ "$stderr" == *"m1: best Q8_0 9 GB, default Q4_K_M 6 GB, disk 8 or 4.5 GB"* ]]
-    [[ "$stderr" == *"with the best quantisation (Q8_0):"* ]]
-    [[ "$stderr" == *"VM without GPU: RAM 11 GB (11264 MB) = 9 model + 2 estimated margin (1 engine, 1 system)"* ]]
-    [[ "$stderr" == *"VM with a GPU:  GPU memory 12 GB = 9.5 model + 2.5 estimated margin"* ]]
-    [[ "$stderr" == *"disk: 28 GB = 8 models + 20 estimated for the system and components"* ]]
-    [[ "$stderr" == *"with the default quantisation (Q4_K_M):"* ]]
-    [[ "$stderr" == *"VM without GPU: RAM 8 GB (8192 MB) = 6 model + 2 estimated margin"* ]]
-    [[ "$stderr" == *"disk: 25 GB = 4.5 models"* ]]
-    [[ "$stderr" == *"vCPU: not sized by llmfit"* ]]
+    # the text of the action, with the progress it announced while llmfit was slow
+    [[ "$stderr" == *"fake: sizing m1"* ]]
+    [[ "$stderr" == *"FAKE RECOMMENDATION for m1 (chat interface: no, vcpu: none)"* ]]
+    [[ "$stderr" == *"with a margin that is the fake's own"* ]]
     # printed once, in the summary, not at the end of the step
-    [ "$(grep -o 'Recommended VM, from llmfit' <<<"$stderr" | wc -l)" -eq 1 ]
-    [[ "${stderr##*Summary}" == *"Recommended VM, from llmfit"* ]]
+    [ "$(grep -o 'FAKE RECOMMENDATION' <<<"$stderr" | wc -l)" -eq 1 ]
+    [[ "${stderr##*Summary}" == *"FAKE RECOMMENDATION"* ]]
     # the configuration is valid for any VM: models only
     [ "$(jq -c 'keys' cfg.json)" = '["components","models","schema_version"]' ]
     [ "$(jq -c '.models' cfg.json)" = '[{"name":"m1"}]' ]
 }
 
-@test "models first: the largest model sizes the memory and the disks add up" {
+@test "models first: all the models are given to the plan, in one call" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
     ask "" none ollama none m "m1, m2" y
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"RAM 11 GB (11264 MB) = 9 model + 2 estimated margin"* ]]
-    [[ "$stderr" == *"disk: 31 GB = 11 models + 20 estimated"* ]]
-    [[ "$stderr" == *"m2: best Q8_0 4 GB"* ]]
+    grep -qx 'plan m1 m2' "$CALLS"
+    [ "$(grep -c '^plan' "$CALLS")" -eq 1 ]
+    [[ "$stderr" == *"FAKE RECOMMENDATION for m1 m2"* ]]
 }
 
-@test "models first: a chat interface in the stack adds its share to the estimated margin" {
+@test "models first: a chat interface in the stack is passed to the plan" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
     ask "" "" ollama chat m m1 y
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"RAM 15 GB (15360 MB) = 9 model + 6 estimated margin (1 engine, 1 system, 4 chat interface)"* ]]
-    [[ "$stderr" == *"RAM 6 GB (6144 MB), estimated"* ]]
+    grep -qx 'plan m1 --chat-interface' "$CALLS"
+    [[ "$stderr" == *"(chat interface: yes, vcpu: none)"* ]]
 }
 
-@test "models first: the cores given before are the vCPU, a model llmfit cannot size is not estimated" {
+@test "models first: the cores given before are passed to the plan as the vCPU" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
     ask "" none ollama none "" "" "" 4 "" m m "m1, unknown" y
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"vCPU: 4"* ]]
-    [[ "$stderr" == *"unknown: not estimated (llmfit does not know it), the recommendation does not cover it"* ]]
-    [[ "$stderr" == *"RAM 11 GB"* ]]
+    grep -qx 'plan m1 unknown --target-cpu-cores 4' "$CALLS"
+    [[ "$stderr" == *"vcpu: 4"* ]]
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1","unknown"]' ]
 }
 
-@test "models first: nothing estimated gives no figure, a mixture of experts is flagged" {
+@test "models first: no model, no plan" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none m unknown y
+    ask "" none ollama none m "" y
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"unknown: not estimated"* ]]
-    [[ "$stderr" != *"VM without GPU"* ]]
-    ask "" none ollama none m moe y
-    [ "$status" -eq 0 ]
-    [[ "$stderr" == *"moe: best Q8_0 17.1 GB"*"(mixture of experts, figure less reliable)"* ]]
+    ! grep -q '^plan' "$CALLS"
+    [[ "$stderr" != *"FAKE RECOMMENDATION"* ]]
 }
 
 @test "models first: the order is offered again when the step is redone, and the recommendation follows the models" {
@@ -658,8 +635,8 @@ FAKE
     grep -qx 'plan m1' "$CALLS"
     grep -qx 'plan m2' "$CALLS"
     # the summary shows the second one only
-    [[ "${stderr##*Summary}" == *"m2: best"* ]]
-    [[ "${stderr##*Summary}" != *"m1: best"* ]]
+    [[ "${stderr##*Summary}" == *"FAKE RECOMMENDATION for m2 "* ]]
+    [[ "${stderr##*Summary}" != *"FAKE RECOMMENDATION for m1 "* ]]
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m2"]' ]
 }
 

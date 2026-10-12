@@ -148,7 +148,7 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
 @test "suggest lists the Ollama tags that fit, best score first, never a Too Tight one" {
     llmfit install
     : >"$CALLS"
-    llmfit suggest
+    llmfit suggest --json
     [ "$status" -eq 0 ]
     [ "$(jq -c '[.models[].name]' <<<"$output")" = '["llama3.2:3b","small:1b"]' ]
     [ "$(jq -c '.models[0]' <<<"$output")" = '{"name":"llama3.2:3b","llmfit_name":"hf/b","fit_level":"Good","memory_required_gb":2.4,"score":90}' ]
@@ -158,7 +158,7 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
 
 @test "suggest -n limits the list, and a wrong -n is a usage error" {
     llmfit install
-    llmfit suggest -n 1
+    llmfit suggest --json -n 1
     [ "$(jq -c '[.models[].name]' <<<"$output")" = '["llama3.2:3b"]' ]
     llmfit suggest -n 0
     [ "$status" -eq 2 ]
@@ -169,7 +169,7 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
 }
 
 @test "suggest and check need an installed llmfit" {
-    llmfit suggest
+    llmfit suggest --json
     [ "$status" -eq 4 ]
     llmfit check meta-llama/Llama-3.2-3B-Instruct
     [ "$status" -eq 4 ]
@@ -403,7 +403,7 @@ FAKE
 @test "plan: the figures of llmfit, an estimated margin, the totals rounded up, for both quantisations" {
     llmfit install
     make_planning_llmfit
-    llmfit plan hf/m
+    llmfit plan hf/m --json
     [ "$status" -eq 0 ]
     [ "$(jq -c '[.context, .vcpu, .chat_interface, .unsized]' <<<"$output")" = '[8192,null,false,[]]' ]
     [ "$(jq -c '.models[0] | [.typed, .name]' <<<"$output")" = '["hf/m","hf/m"]' ]
@@ -420,7 +420,7 @@ FAKE
 @test "plan: the largest model sizes the memory, the disks add up, each model is announced" {
     llmfit install
     make_planning_llmfit
-    llmfit plan hf/m hf/small
+    llmfit plan hf/m hf/small --json
     [ "$status" -eq 0 ]
     [ "$(jq -c '.quantisations.best | [.ram_no_gpu.model_gb, .disk.model_gb, .disk.total_gb]' <<<"$output")" = '[9.93,11.24,32]' ]
     [[ "$stderr" == *"sizing hf/m with llmfit (1/2)"*"sizing hf/small with llmfit (2/2)"* ]]
@@ -429,7 +429,7 @@ FAKE
 @test "plan: a chat interface adds its share to the RAM margin, the cores are reported as given" {
     llmfit install
     make_planning_llmfit
-    llmfit plan hf/m --chat-interface --target-cpu-cores 4
+    llmfit plan hf/m --chat-interface --target-cpu-cores 4 --json
     [ "$status" -eq 0 ]
     [ "$(jq -c '[.vcpu, .chat_interface]' <<<"$output")" = '[4,true]' ]
     [ "$(jq -c '.quantisations.best.ram_no_gpu | [.total_gb, .margin_parts.chat_interface]' <<<"$output")" = '[16,4]' ]
@@ -439,17 +439,17 @@ FAKE
 @test "plan: a model llmfit cannot size is listed apart and never guessed; nothing sized is no figure" {
     llmfit install
     make_planning_llmfit
-    llmfit plan hf/m nosuchmodel
+    llmfit plan hf/m nosuchmodel --json
     [ "$status" -eq 0 ]
     [ "$(jq -c '[.models[].typed, .unsized]' <<<"$output")" = '["hf/m",["nosuchmodel"]]' ]
     [[ "$stderr" != *"does not know"* ]]
-    llmfit plan nosuchmodel
+    llmfit plan nosuchmodel --json
     [ "$status" -eq 0 ]
     [ "$(jq -c '[.models, .unsized, .quantisations, .context]' <<<"$output")" = '[[],["nosuchmodel"],null,null]' ]
 }
 
 @test "plan needs llmfit and a model, and takes neither --target-ram nor suggest's options" {
-    llmfit plan hf/m
+    llmfit plan hf/m --json
     [ "$status" -eq 4 ]
     llmfit install
     make_planning_llmfit
@@ -459,4 +459,64 @@ FAKE
     [ "$status" -eq 2 ]
     llmfit suggest --chat-interface
     [ "$status" -eq 2 ]
+}
+
+# --- the text for a person (without --json) --------------------------------------------------------
+
+@test "suggest prints a numbered list for a person, the numbers and names being what the generator reads" {
+    llmfit install
+    llmfit suggest
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "   1) llama3.2:3b                  Good, needs 2.4 GB" ]
+    [ "${lines[1]}" = "   2) small:1b                     Perfect, needs 1.2 GB" ]
+    [ "${#lines[@]}" -eq 2 ]
+    # nothing of the JSON, and the same models as with --json
+    [[ "$output" != *'"models"'* ]]
+    llmfit suggest -n 1
+    [ "${#lines[@]}" -eq 1 ]
+}
+
+@test "suggest says so in a sentence when llmfit finds no model" {
+    llmfit install
+    cat >"$BATS_TEST_TMPDIR/bin/llmfit" <<'FAKE'
+#!/usr/bin/env bash
+case "$1" in --version) echo "llmfit 1.1.16" ;; recommend) echo '{"models":[]}' ;; esac
+FAKE
+    llmfit suggest
+    [ "$status" -eq 0 ]
+    [ "$output" = "llmfit finds no model to suggest for these specs" ]
+    llmfit suggest --json
+    [ "$(jq -c '.models' <<<"$output")" = "[]" ]
+}
+
+@test "plan prints the recommendation for a person: the margin shown as estimated, with what it is made of" {
+    llmfit install
+    make_planning_llmfit
+    llmfit plan hf/m hf/small
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Recommended VM, from llmfit (context of 8192 tokens) plus an ESTIMATED margin"* ]]
+    [[ "$output" == *"hf/m: best Q8_0 9.93 GB, default Q4_K_M 6.16 GB, disk 8.43 or 4.66 GB"* ]]
+    [[ "$output" == *"vCPU: not sized by llmfit"* ]]
+    [[ "$output" == *"with the best quantisation (Q8_0):"* ]]
+    [[ "$output" == *"VM without GPU: RAM 12 GB (12288 MB) = 9.93 model + 2.07 estimated margin (1 engine, 1 system)"* ]]
+    [[ "$output" == *"VM with a GPU:  GPU memory 13 GB = 10.43 model + 2.57 estimated margin (model / 0.9, 1 for the CUDA context); RAM 2 GB (2048 MB), estimated"* ]]
+    [[ "$output" == *"disk: 32 GB = 11.24 models + 20 estimated for the system and components"* ]]
+    [[ "$output" == *"with the default quantisation (Q4_K_M):"* ]]
+    # the progress goes to stderr, not into the text
+    [[ "$output" != *"sizing"* ]]
+    [[ "$stderr" == *"sizing hf/m with llmfit (1/2)"* ]]
+}
+
+@test "plan, for a person: the chat interface and the cores, a model not estimated, a mixture of experts" {
+    llmfit install
+    make_planning_llmfit
+    llmfit plan hf/m nosuch --chat-interface --target-cpu-cores 4
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"vCPU: 4"* ]]
+    [[ "$output" == *"(1 engine, 1 system, 4 chat interface)"* ]]
+    [[ "$output" == *"nosuch: not estimated (llmfit does not know it), the recommendation does not cover it"* ]]
+    llmfit plan nosuch
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Recommended VM:"*"nosuch: not estimated"* ]]
+    [[ "$output" != *"VM without GPU"* ]]
 }

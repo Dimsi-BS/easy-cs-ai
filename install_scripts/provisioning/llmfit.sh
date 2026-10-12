@@ -39,13 +39,14 @@ usage() {
 Usage: llmfit.sh <action> [options]
 
 Actions: $ACTIONS
-  suggest [-n <count>]    the models that fit (JSON): Ollama tags, none that is Too Tight,
-                          best score first, $SUGGEST_COUNT by default
+  suggest [-n <count>]    the models that fit: Ollama tags, none that is Too Tight,
+                          best score first, $SUGGEST_COUNT by default (text, or JSON with --json)
   check <model>           {"fits": true|false, "reason": "…"} for a model
   size <model>            what a model needs, whatever this machine is (JSON): memory and
                           disk for the best and the default quantisation
-  plan <model>…           the VM the models need (JSON): the figures of size plus an
-                          estimated margin, for the best and the default quantisation
+  plan <model>…           the VM the models need: the figures of size plus an estimated
+                          margin, for the best and the default quantisation (text, or
+                          JSON with --json)
 
 Options of suggest and check, to size for another machine:
   --target-ram <GB>       RAM of the machine to size for (llmfit --ram)
@@ -415,17 +416,27 @@ require_installed() {
 # Only the Ollama tags (llmfit's `ollama_name`) are listed, the only names an engine can pull today,
 # and none that llmfit judges Too Tight; the best score comes first.
 cmd_suggest() {
-    local bin out
+    local bin out doc name level need n=0
     require_installed
     bin="$(llmfit_bin)"
     out="$("$bin" "${TARGET_ARGS[@]}" recommend --json --no-dashboard -n 100000 2>/dev/null)" ||
         die "$EXIT_ERROR" "llmfit recommend failed"
-    jq --argjson n "$COUNT" '{models: (
+    doc="$(jq --argjson n "$COUNT" '{models: (
         [.models[]? | select(.ollama_name != null and .fit_level != "Too Tight")]
         | sort_by(-(.score // 0)) | .[:$n]
         | map({name: .ollama_name, llmfit_name: .name, fit_level: (.fit_level // "?"),
-               memory_required_gb: (.memory_required_gb // null), score: (.score // 0)}))}' <<<"$out" ||
+               memory_required_gb: (.memory_required_gb // null), score: (.score // 0)}))}' <<<"$out")" ||
         die "$EXIT_ERROR" "llmfit recommend did not answer with JSON"
+    if wants_json; then
+        printf '%s\n' "$doc"
+        return 0
+    fi
+    # The text for a person. The start of each line, "<n>) <name>", is relied on by the generator.
+    while IFS=$'\t' read -r name level need; do
+        n=$((n + 1))
+        printf '  %2d) %-28s %s, needs %s GB\n' "$n" "$name" "$level" "$need"
+    done < <(jq -r '.models[] | [.name, .fit_level, (.memory_required_gb // "?" | tostring)] | @tsv' <<<"$doc")
+    ((n > 0)) || printf 'llmfit finds no model to suggest for these specs\n'
 }
 
 # fit_entry <model>: print the llmfit model entry for a name, or fail.
@@ -526,7 +537,7 @@ cmd_size() {
 # else, so that the generator and an agent show the same numbers. A model llmfit cannot size is
 # listed in `unsized`, never guessed.
 cmd_plan() {
-    local bin m n=0 out sized='[]' unsized='[]'
+    local bin m n=0 out doc sized='[]' unsized='[]'
     ((${#POSITIONAL[@]})) || die "$EXIT_USAGE" "plan needs at least one model name"
     require_installed
     bin="$(llmfit_bin)"
@@ -541,7 +552,7 @@ cmd_plan() {
             unsized="$(jq -c --arg t "$m" '. + [$t]' <<<"$unsized")"
         fi
     done
-    jq -n --argjson sized "$sized" --argjson unsized "$unsized" --argjson chat "$CHAT_INTERFACE" --arg cores "$PLAN_CORES" '
+    doc="$(jq -n --argjson sized "$sized" --argjson unsized "$unsized" --argjson chat "$CHAT_INTERFACE" --arg cores "$PLAN_CORES" '
         def r2: . * 100 | round / 100;
         def part($model; $total): {model_gb: ($model | r2), margin_gb: (($total - $model) | r2), total_gb: $total};
         (if $chat == 1 then 4 else 0 end) as $chat_gb
@@ -567,7 +578,31 @@ cmd_plan() {
                    gpu_ram: (part(0; $gpuram) + {total_mb: ($gpuram * 1024),
                        margin_parts: {system_and_engine: 2, chat_interface: $chat_gb}}),
                    disk: (part($disk; $dtotal) + {margin_parts: {system_and_components: 20}})}})
-             | from_entries end)}'
+             | from_entries end)}')"
+    if wants_json; then
+        printf '%s\n' "$doc"
+    else
+        render_plan "$doc"
+    fi
+}
+
+# render_plan <document>: the text of plan, for a person. The margin is always shown as estimated,
+# with what it is made of, never as a total that looks measured.
+render_plan() {
+    jq -r '
+      def n: . * 100 | round / 100;
+      def parts: .margin_parts | to_entries | map(select(.value > 0) | "\(.value) \(.key | gsub("_"; " "))") | join(", ");
+      if .quantisations == null then "\nRecommended VM:"
+      else "\nRecommended VM, from llmfit (context of \(.context // "?") tokens) plus an ESTIMATED margin, an early opinion:",
+        (.models[] | "  \(.typed): best \(.best.quant) \(.best.cpu_gb | n) GB, default \(.default.quant) \(.default.cpu_gb | n) GB, disk \(.best.disk_gb | n) or \(.default.disk_gb | n) GB\(if .moe then " (mixture of experts, figure less reliable)" else "" end)"),
+        "  vCPU: \(if .vcpu != null then .vcpu else "not sized by llmfit" end)",
+        (["best", "default"][] as $q | .quantisations[$q] as $x
+          | "  with the \($q) quantisation (\($x.quants | join(", "))):",
+            "    VM without GPU: RAM \($x.ram_no_gpu.total_gb) GB (\($x.ram_no_gpu.total_mb) MB) = \($x.ram_no_gpu.model_gb) model + \($x.ram_no_gpu.margin_gb) estimated margin (\($x.ram_no_gpu | parts))",
+            "    VM with a GPU:  GPU memory \($x.gpu_memory.total_gb) GB = \($x.gpu_memory.model_gb) model + \($x.gpu_memory.margin_gb) estimated margin (\($x.gpu_memory.margin_basis)); RAM \($x.gpu_ram.total_gb) GB (\($x.gpu_ram.total_mb) MB), estimated",
+            "    disk: \($x.disk.total_gb) GB = \($x.disk.model_gb) models + \($x.disk.margin_parts.system_and_components) estimated for the system and components")
+      end,
+      (.unsized[] | "  \(.): not estimated (llmfit does not know it), the recommendation does not cover it")' <<<"$1"
 }
 
 # --- main -------------------------------------------------------------------------------

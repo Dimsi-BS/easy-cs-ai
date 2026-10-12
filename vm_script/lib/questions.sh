@@ -141,7 +141,7 @@ SESSION_FIT_WARN=()    # "<model>: <reason>", shown in the summary
 TARGET_RAM="" TARGET_VRAM="" TARGET_CORES=""    # the specs of the VM, kept to be offered again
 LLMFIT_NOTICE_GIVEN=0
 MODELS_ORDER=h         # h: the models that fit the hardware, m: the hardware the models need
-SESSION_PLAN=""        # the JSON of `llmfit plan` for the models named in the m order, printed as is
+SESSION_PLAN=""        # the text of `llmfit plan` for the models named in the m order, shown as it is
 
 # _llmfit_ready: the llmfit script is shipped and installed, working, on this machine.
 _llmfit_ready() {
@@ -201,24 +201,23 @@ _target_args() {
     [[ -z "$TARGET_CORES" ]] || printf '%s\n' --target-cpu-cores "$TARGET_CORES"
 }
 
-# _suggest_models <script>: list, numbered on stderr, what `provisioning llmfit suggest` returns
-# for the VM, in SUGGESTIONS. The selection (Ollama tags, nothing Too Tight, best score first)
-# is the action's; this only numbers it. Only the Ollama tags can be added today.
+# _suggest_models <script>: show, on stderr, the numbered list that `provisioning llmfit suggest`
+# prints for the VM, and keep its names in SUGGESTIONS. The selection (Ollama tags, nothing Too
+# Tight, best score first) and the numbering are the action's. Only the Ollama tags can be added today.
 _suggest_models() {
-    local script="$1" args=() out line name level need n=0
+    local script="$1" args=() out line name
     SUGGESTIONS=()
     while IFS= read -r line; do args+=("$line"); done < <(_target_args)
     [[ "${SEL[engine]}" == ollama ]] || { log_info "model suggestions are only available for ollama"; return 0; }
     printf '  asking llmfit for the models that fit the VM, a few seconds...
 ' >&2
     out="$(bash "$script" suggest "${args[@]}" 2>/dev/null)" || { log_warn "llmfit could not make suggestions, type the model names"; return 0; }
-    while IFS=$'\t' read -r name level need; do
-        [[ -n "$name" ]] || continue
-        SUGGESTIONS+=("$name")
-        n=$((n + 1))
-        printf '  %2d) %-28s %s, needs %s GB\n' "$n" "$name" "$level" "$need" >&2
-    done < <(jq -r '.models[]? | [.name, .fit_level, (.memory_required_gb // "?" | tostring)] | @tsv' <<<"$out")
-    ((n > 0)) || log_info "llmfit finds no model to suggest for these specs"
+    # The action's own text is shown as it is; the only thing read from it is the number and the
+    # name at the start of each line, so that a number can be picked.
+    printf '%s\n' "$out" >&2
+    while read -r name; do
+        [[ -n "$name" ]] && SUGGESTIONS+=("$name")
+    done < <(sed -nE 's/^ *[0-9]+\) ([^ ]+).*/\1/p' <<<"$out")
 }
 
 # _check_model <script> <model>: keep a negative verdict, or an unknown model, as a warning.
@@ -265,24 +264,11 @@ _plan_models() {
 }
 
 # _print_vm_recommendation: the characteristics to ask for when creating the VM, on stderr
-# (docs/spec-vm-generator.md#recommended-vm), formatted from SESSION_PLAN. The margin is
-# estimated by the plan action and is always shown as such, with what it is made of.
+# (docs/spec-vm-generator.md#recommended-vm): the text of the plan action, kept in SESSION_PLAN
+# and shown as it is. The action shows the margin as estimated, with what it is made of.
 _print_vm_recommendation() {
     [[ -n "$SESSION_PLAN" ]] || return 0
-    jq -r '
-      def n: . * 100 | round / 100;
-      def parts: .margin_parts | to_entries | map(select(.value > 0) | "\(.value) \(.key | gsub("_"; " "))") | join(", ");
-      if .quantisations == null then "\nRecommended VM:"
-      else "\nRecommended VM, from llmfit (context of \(.context // "?") tokens) plus an ESTIMATED margin, an early opinion:",
-        (.models[] | "  \(.typed): best \(.best.quant) \(.best.cpu_gb | n) GB, default \(.default.quant) \(.default.cpu_gb | n) GB, disk \(.best.disk_gb | n) or \(.default.disk_gb | n) GB\(if .moe then " (mixture of experts, figure less reliable)" else "" end)"),
-        "  vCPU: \(if .vcpu != null then .vcpu else "not sized by llmfit" end)",
-        (["best", "default"][] as $q | .quantisations[$q] as $x
-          | "  with the \($q) quantisation (\($x.quants | join(", "))):",
-            "    VM without GPU: RAM \($x.ram_no_gpu.total_gb) GB (\($x.ram_no_gpu.total_mb) MB) = \($x.ram_no_gpu.model_gb) model + \($x.ram_no_gpu.margin_gb) estimated margin (\($x.ram_no_gpu | parts))",
-            "    VM with a GPU:  GPU memory \($x.gpu_memory.total_gb) GB = \($x.gpu_memory.model_gb) model + \($x.gpu_memory.margin_gb) estimated margin (\($x.gpu_memory.margin_basis)); RAM \($x.gpu_ram.total_gb) GB (\($x.gpu_ram.total_mb) MB), estimated",
-            "    disk: \($x.disk.total_gb) GB = \($x.disk.model_gb) models + \($x.disk.margin_parts.system_and_components) estimated for the system and components")
-      end,
-      (.unsized[] | "  \(.): not estimated (llmfit does not know it), the recommendation does not cover it")' <<<"$SESSION_PLAN" >&2
+    printf '%s\n' "$SESSION_PLAN" >&2
 }
 
 step_models() {

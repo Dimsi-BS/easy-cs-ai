@@ -11,7 +11,7 @@ An AI agent, with a shell on a machine where **only the installed package exists
 The rule that governs all of it:
 
 > **`--json` is accepted by every command that outputs data, and then stdout carries one JSON document and nothing else.**
-> A command that only returns a data structure (`config schema`, the component actions `status`, `list-models`, `suggest`…) prints JSON by default and takes `--json` as a no-op. A command with a human rendering (tables, plans, hints) prints it without `--json`, and that rendering is not a stable interface.
+> A command that only returns a data structure (`config schema`, the component actions `status`, `list-models`, `check`…) prints JSON by default and takes `--json` as a no-op. A command with a human rendering (tables, plans, hints) prints it without `--json`, and that rendering is not a stable interface. The `provisioning llmfit` actions `suggest` and `plan` are of the second kind: a person reads their text, a program or an agent passes `--json`.
 
 Why the rule is not "no `--json` is always for humans": [decision](decision-json-output-rule.md).
 
@@ -208,7 +208,9 @@ A user either has a VM imposed (**hardware first**) or has models in mind (**mod
 | Hardware first, a model named by the user | `check <model>` with the `--target-*` options | `fits` and `reason` |
 | Models first | `plan <model>… [--target-cpu-cores <n>] [--chat-interface]` | The VM the models need: the model figures from llmfit, the **estimated margin** and the total, for RAM without GPU, GPU memory with a GPU, and disk, for the `best` and the `default` quantisation, plus the models llmfit could not size (`unsized`) |
 
-The agent presents the result of `plan` as the generator does: the model figure and the estimated margin side by side, never a single total that looks measured, the two quantisations, and the unsized models listed as not covered. It does not compute the margin itself. `plan` has no `--target-ram` or `--target-vram`: in this order the hardware is the answer, not the question.
+`suggest` and `plan` have a **text for a person by default** (what the interactive generator shows, and what an administrator reads when running them from the command line) and the JSON documents of the [script contract](spec-script-contract.md#actions) with `--json`, which an agent always passes. The text is rendered by the action from the same document, so the two cannot differ.
+
+The agent presents the result of `plan` as the text does: the model figure and the estimated margin side by side, never a single total that looks measured, the two quantisations, and the unsized models listed as not covered. It does not compute the margin itself. `plan` has no `--target-ram` or `--target-vram`: in this order the hardware is the answer, not the question.
 
 The interactive generator uses the same actions to help an administrator without an agent choose models, and treats llmfit as optional: it offers to install llmfit, and falls back to typed names when llmfit is missing instead of exiting 4 (see [spec: VM script generator](spec-vm-generator.md#choosing-models)).
 
@@ -237,7 +239,7 @@ An agent that needs a secret known in advance (rare) says so to the user and use
 What `guide` prints, in substance:
 
 1. **Ask before assuming.** The CLI never takes a default choice on its own, and neither does the agent: the stack (`install --defaults` included) is the user's decision, with the catalog's ranks given as a suggestion.
-2. **Discover**: `catalog --json`, then `host --json` (this machine) or the specs the user gives (another machine). To choose a model, ask the user which order suits them: with a VM imposed, `provisioning llmfit suggest` with the `--target-*` options; with models in mind, `provisioning llmfit plan <model>…` to tell them what VM to ask for. See [two orders](#two-orders-one-implementation).
+2. **Discover**: `catalog --json`, then `host --json` (this machine) or the specs the user gives (another machine). To choose a model, ask the user which order suits them: with a VM imposed, `provisioning llmfit suggest --json` with the `--target-*` options; with models in mind, `provisioning llmfit plan <model>… --json` to tell them what VM to ask for. See [two orders](#two-orders-one-implementation).
 3. **Draft** the configuration from `config schema` and the catalog. Never write a secret as a value.
 4. **Validate**: `config validate <file> --target fresh|this --json`; fix the `errors` by their `path` and `code`, and loop until `ok`.
 5. **Show the user** the `plan` and **every `warning`** (open registration…), and get a yes.
