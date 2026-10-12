@@ -32,7 +32,7 @@ sudo apt install "./easy-cs-ai_${VERSION}_all.deb"
 
 The `.rpm` and the `.tar.gz` are published next to it (see [docs/decision-packaging](docs/decision-packaging.md)); the scripts target Ubuntu/Debian. Installing the package only drops files: nothing is started.
 
-The command is `easy-cs-ai`, and `ecsai` (the initials of **e**asy-**c**s-**a**i, with the `s`) is installed next to it as a short name: both run the same program, so `ecsai status` is `easy-cs-ai status`. The documentation uses the full name.
+The command is `easy-cs-ai`, and `ecsai` (**e**asy-**cs**-**ai**) is installed next to it as a short name: both run the same program, so `ecsai status` is `easy-cs-ai status`. The documentation uses the full name.
 
 **2. Install the default stack and a first model** (llmfit, nginx, Ollama, LibreChat, then `llama3.2:3b`, about 2 GB to download):
 
