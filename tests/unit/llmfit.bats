@@ -5,7 +5,7 @@ bats_require_minimum_version 1.5.0
 # A fake llmfit on the PATH answers like the real one (observed with v1.1.16):
 #   info <name> --json   {"system":…,"models":[{…}]}, or {"error":{"kind","message"}} and exit 1
 #   fit --json -n N      {"system":…,"models":[…]} limited to the models that fit
-#   recommend --json     {"system":…,"models":[…]}
+#   recommend --json     {"system":…,"models":[…]}, what `suggest` reads
 
 setup() {
     SCRIPT="${BATS_TEST_DIRNAME}/../../install_scripts/provisioning/llmfit.sh"
@@ -35,7 +35,11 @@ fit)
       {"name":"deepseek-ai/DeepSeek-R1-Distill-Qwen-14B","ollama_name":"deepseek-r1:14b","fit_level":"Marginal","run_mode":"CPU","score":60,"memory_required_gb":9.5,"memory_available_gb":9.96}]}' ;;
 recommend)
     [[ "${FAKE_BROKEN:-}" == 1 ]] && { echo "not json"; exit 0; }
-    echo '{"system":{},"models":[{"name":"m","fit_level":"Good"}]}' ;;
+    echo '{"system":{},"models":[
+      {"name":"hf/a","ollama_name":"small:1b","fit_level":"Perfect","score":70,"memory_required_gb":1.2},
+      {"name":"hf/b","ollama_name":"llama3.2:3b","fit_level":"Good","score":90,"memory_required_gb":2.4},
+      {"name":"hf/c","ollama_name":"huge:70b","fit_level":"Too Tight","score":99,"memory_required_gb":48},
+      {"name":"hf/d","ollama_name":null,"fit_level":"Good","score":95,"memory_required_gb":3}]}' ;;
 esac
 FAKE
     chmod +x "$BATS_TEST_TMPDIR/bin/llmfit"
@@ -54,7 +58,8 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "${lines[0]}" = "llmfit" ]
     [ "${lines[1]}" = "provisioning" ]
     [ "${lines[2]}" = "llmfit" ]
-    [[ "${lines[3]}" == *"recommend"*"check"* ]]
+    [[ "${lines[3]}" == *"suggest"*"check"*"size"*"plan"* ]]
+    [[ "${lines[3]}" != *"recommend"* ]]
 }
 
 @test "usage errors exit 2" {
@@ -140,20 +145,40 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
 
 # --- recommend ----------------------------------------------------------------------------------
 
-@test "recommend prints llmfit's JSON untouched and passes its options" {
+@test "suggest lists the Ollama tags that fit, best score first, never a Too Tight one" {
     llmfit install
-    llmfit recommend -n 3 --use-case coding
+    : >"$CALLS"
+    llmfit suggest
     [ "$status" -eq 0 ]
-    run jq -r '.models[0].name' <<<"$output"
-    [ "$output" = "m" ]
-    grep -q 'llmfit recommend --json --no-dashboard -n 3 --use-case coding' "$CALLS"
+    [ "$(jq -c '[.models[].name]' <<<"$output")" = '["llama3.2:3b","small:1b"]' ]
+    [ "$(jq -c '.models[0]' <<<"$output")" = '{"name":"llama3.2:3b","llmfit_name":"hf/b","fit_level":"Good","memory_required_gb":2.4,"score":90}' ]
+    # llmfit is asked for everything, the selection is the action's
+    grep -qx 'llmfit recommend --json --no-dashboard -n 100000' "$CALLS"
 }
 
-@test "recommend and check need an installed llmfit" {
-    llmfit recommend
+@test "suggest -n limits the list, and a wrong -n is a usage error" {
+    llmfit install
+    llmfit suggest -n 1
+    [ "$(jq -c '[.models[].name]' <<<"$output")" = '["llama3.2:3b"]' ]
+    llmfit suggest -n 0
+    [ "$status" -eq 2 ]
+    llmfit suggest -n
+    [ "$status" -eq 2 ]
+    llmfit check meta-llama/Llama-3.2-3B-Instruct -n 1
+    [ "$status" -eq 2 ]
+}
+
+@test "suggest and check need an installed llmfit" {
+    llmfit suggest
     [ "$status" -eq 4 ]
     llmfit check meta-llama/Llama-3.2-3B-Instruct
     [ "$status" -eq 4 ]
+}
+
+@test "recommend is not an action any more" {
+    llmfit install
+    llmfit recommend
+    [ "$status" -eq 2 ]
 }
 
 # --- check -----------------------------------------------------------------------------------------
@@ -202,12 +227,12 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
 
 # --- sizing for another machine (docs/spec-ai-interface.md) ------------------------------------------
 
-@test "recommend sizes for another machine: the --target-* options become llmfit's global options, before the subcommand" {
+@test "suggest sizes for another machine: the --target-* options become llmfit's global options, before the subcommand" {
     llmfit install
     : >"$CALLS"
-    llmfit recommend --target-ram 8 --target-vram=24 --target-cpu-cores 4 -n 3
+    llmfit suggest --target-ram 8 --target-vram=24 --target-cpu-cores 4 -n 3
     [ "$status" -eq 0 ]
-    grep -qx 'llmfit --ram 8 --memory 24 --cpu-cores 4 recommend --json --no-dashboard -n 3' "$CALLS"
+    grep -qx 'llmfit --ram 8 --memory 24 --cpu-cores 4 recommend --json --no-dashboard -n 100000' "$CALLS"
 }
 
 @test "check sizes for another machine, by Hugging Face name and by Ollama tag" {
@@ -229,13 +254,13 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
     grep -qx 'llmfit info meta-llama/Llama-3.2-3B-Instruct --json --no-dashboard' "$CALLS"
 }
 
-@test "--target-* needs a positive whole number and only applies to recommend and check" {
+@test "--target-* needs a positive whole number and only applies to suggest and check" {
     llmfit install
-    llmfit recommend --target-ram 0
+    llmfit suggest --target-ram 0
     [ "$status" -eq 2 ]
-    llmfit recommend --target-ram eight
+    llmfit suggest --target-ram eight
     [ "$status" -eq 2 ]
-    llmfit recommend --target-ram
+    llmfit suggest --target-ram
     [ "$status" -eq 2 ]
     llmfit status --target-ram 8
     [ "$status" -eq 2 ]
@@ -328,15 +353,110 @@ FAKE
 }
 
 @test "a missing llmfit is exit 4 with the command that installs it" {
-    llmfit recommend --target-ram 8
+    llmfit suggest --target-ram 8
     [ "$status" -eq 4 ]
     [[ "$stderr" == *"easy-cs-ai install provisioning llmfit"* ]]
 }
 
-@test "describe declares the target options of recommend and check, apart from the install options" {
+@test "describe declares the options of suggest, check and plan, apart from the install options" {
     llmfit describe
-    run jq -r '(.action_options.recommend | map(.name) | join(" ")), (.action_options.check | map(.name) | join(" ")), (.options | map(.name) | join(" "))' <<<"$output"
-    [ "${lines[0]}" = "target-ram target-vram target-cpu-cores" ]
+    run jq -r '(.action_options.suggest | map(.name) | join(" ")), (.action_options.check | map(.name) | join(" ")), (.action_options.plan | map(.name) | join(" ")), (.options | map(.name) | join(" ")), (.action_options | has("recommend") | tostring)' <<<"$output"
+    [ "${lines[0]}" = "target-ram target-vram target-cpu-cores n" ]
     [ "${lines[1]}" = "target-ram target-vram target-cpu-cores" ]
-    [[ "${lines[2]}" != *target* ]]
+    [ "${lines[2]}" = "target-cpu-cores chat-interface" ]
+    [[ "${lines[3]}" != *target* ]]
+    [ "${lines[4]}" = "false" ]
+}
+
+# --- plan -----------------------------------------------------------------------------------------
+
+# a fake llmfit that sizes two models like the real one (best quantisation on a large machine, the
+# default one on a tiny one, a bit more with GPU memory): hf/m (best Q8_0 9.93 / 10.43 GB, disk 8.43;
+# default Q4_K_M 6.16 / 6.46 GB, disk 4.66) and hf/small (a third of that); any other is unknown
+make_planning_llmfit() {
+    cat >"$BATS_TEST_TMPDIR/bin/llmfit" <<'FAKE'
+#!/usr/bin/env bash
+echo "llmfit $*" >>"${CALLS:-/dev/null}"
+ram=0 mem=0
+while [[ "${1:-}" == --ram || "${1:-}" == --memory ]]; do
+    if [[ "$1" == --ram ]]; then ram="$2"; else mem="$2"; fi
+    shift 2
+done
+case "$1" in
+--version) echo "llmfit 1.1.16" ;;
+fit) echo '{"models":[{"name":"hf/m","ollama_name":"m:8b","score":1}]}' ;;
+info)
+    case "$2" in hf/m) k=1 ;; hf/small) k=3 ;; *) echo '{"error":{"kind":"model_not_found","message":"no"}}'; exit 1 ;; esac
+    if ((ram > 100)); then
+        quant=Q8_0 disk=8.43 req=9.93 gpu=10.43
+    else
+        quant=Q4_K_M disk=4.66 req=6.16 gpu=6.46
+    fi
+    ((mem > 0)) && req=$gpu
+    jq -n --arg n "$2" --arg q "$quant" --argjson k "$k" --argjson d "$disk" --argjson r "$req" \
+        '{models: [{name: $n, ollama_name: null, is_moe: false, best_quant: $q, disk_size_gb: ($d / $k), memory_required_gb: ($r / $k), estimate_basis: {assumed_context: 8192}}]}' ;;
+esac
+FAKE
+    chmod +x "$BATS_TEST_TMPDIR/bin/llmfit"
+}
+
+@test "plan: the figures of llmfit, an estimated margin, the totals rounded up, for both quantisations" {
+    llmfit install
+    make_planning_llmfit
+    llmfit plan hf/m
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.context, .vcpu, .chat_interface, .unsized]' <<<"$output")" = '[8192,null,false,[]]' ]
+    [ "$(jq -c '.models[0] | [.typed, .name]' <<<"$output")" = '["hf/m","hf/m"]' ]
+    # best: RAM without GPU = model + 1 engine + 1 system, GPU memory = model / 0.9 + 1, disk + 20
+    [ "$(jq -c '.quantisations.best.quants' <<<"$output")" = '["Q8_0"]' ]
+    [ "$(jq -c '.quantisations.best.ram_no_gpu' <<<"$output")" = '{"model_gb":9.93,"margin_gb":2.07,"total_gb":12,"total_mb":12288,"margin_parts":{"engine":1,"system":1,"chat_interface":0}}' ]
+    [ "$(jq -c '.quantisations.best.gpu_memory' <<<"$output")" = '{"model_gb":10.43,"margin_gb":2.57,"total_gb":13,"margin_basis":"model / 0.9, 1 for the CUDA context"}' ]
+    [ "$(jq -c '.quantisations.best.gpu_ram' <<<"$output")" = '{"model_gb":0,"margin_gb":2,"total_gb":2,"total_mb":2048,"margin_parts":{"system_and_engine":2,"chat_interface":0}}' ]
+    [ "$(jq -c '.quantisations.best.disk' <<<"$output")" = '{"model_gb":8.43,"margin_gb":20.57,"total_gb":29,"margin_parts":{"system_and_components":20}}' ]
+    [ "$(jq -c '.quantisations.default.ram_no_gpu | [.total_gb, .total_mb]' <<<"$output")" = '[9,9216]' ]
+    [ "$(jq -r '.quantisations.default.quants[]' <<<"$output")" = "Q4_K_M" ]
+}
+
+@test "plan: the largest model sizes the memory, the disks add up, each model is announced" {
+    llmfit install
+    make_planning_llmfit
+    llmfit plan hf/m hf/small
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.quantisations.best | [.ram_no_gpu.model_gb, .disk.model_gb, .disk.total_gb]' <<<"$output")" = '[9.93,11.24,32]' ]
+    [[ "$stderr" == *"sizing hf/m with llmfit (1/2)"*"sizing hf/small with llmfit (2/2)"* ]]
+}
+
+@test "plan: a chat interface adds its share to the RAM margin, the cores are reported as given" {
+    llmfit install
+    make_planning_llmfit
+    llmfit plan hf/m --chat-interface --target-cpu-cores 4
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.vcpu, .chat_interface]' <<<"$output")" = '[4,true]' ]
+    [ "$(jq -c '.quantisations.best.ram_no_gpu | [.total_gb, .margin_parts.chat_interface]' <<<"$output")" = '[16,4]' ]
+    [ "$(jq -c '.quantisations.best.gpu_ram | [.total_gb, .total_mb]' <<<"$output")" = '[6,6144]' ]
+}
+
+@test "plan: a model llmfit cannot size is listed apart and never guessed; nothing sized is no figure" {
+    llmfit install
+    make_planning_llmfit
+    llmfit plan hf/m nosuchmodel
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.models[].typed, .unsized]' <<<"$output")" = '["hf/m",["nosuchmodel"]]' ]
+    [[ "$stderr" != *"does not know"* ]]
+    llmfit plan nosuchmodel
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.models, .unsized, .quantisations, .context]' <<<"$output")" = '[[],["nosuchmodel"],null,null]' ]
+}
+
+@test "plan needs llmfit and a model, and takes neither --target-ram nor suggest's options" {
+    llmfit plan hf/m
+    [ "$status" -eq 4 ]
+    llmfit install
+    make_planning_llmfit
+    llmfit plan
+    [ "$status" -eq 2 ]
+    llmfit plan hf/m --target-ram 8
+    [ "$status" -eq 2 ]
+    llmfit suggest --chat-interface
+    [ "$status" -eq 2 ]
 }

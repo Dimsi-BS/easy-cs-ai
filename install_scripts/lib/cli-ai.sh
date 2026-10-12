@@ -410,9 +410,14 @@ Procedure
                                              ranks, default models
                easy-cs-ai host --json       this machine (CPU, RAM, disk, GPU)
     For another machine (a VM to provision), ask the user for its specs.
-    To choose a model: easy-cs-ai provisioning llmfit recommend --json
-    (add --target-ram GB, --target-vram GB, --target-cpu-cores N to size it
-    for another machine). llmfit must be installed: ask before installing it.
+    To choose a model, ask the user which comes first. A VM imposed:
+      easy-cs-ai provisioning llmfit suggest --target-ram GB
+        [--target-vram GB] [--target-cpu-cores N]    the models that fit it
+      (check MODEL with the same options for a model the user names).
+    Models in mind:
+      easy-cs-ai provisioning llmfit plan MODEL... [--chat-interface]
+        [--target-cpu-cores N]    the VM to ask for, margin shown as estimated
+    llmfit must be installed: ask before installing it.
  3. Draft a configuration (JSON). Its format: easy-cs-ai config schema
     A secret option is never a plain value: {"file": path}, {"env": NAME} or
     {"generate": true}. Never put a secret on a command line or in a file.

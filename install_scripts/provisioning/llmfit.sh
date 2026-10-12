@@ -2,7 +2,7 @@
 # llmfit install script, see docs/spec-script-contract.md and search/llmfit.md.
 #
 #   llmfit.sh <action> [options]
-#   actions: install uninstall status describe recommend check size
+#   actions: install uninstall status describe suggest check size plan
 set -euo pipefail
 
 readonly NAME=llmfit
@@ -17,7 +17,8 @@ declare -A PINNED_SHA256=(
     [x86_64]=27fad93d5e579156e4d87609e1bdef51675342cef3da111ef0f58e1ec10be7f1
     [aarch64]=87d1fd489cd90d4e28e4421bd9a9411d89d4f1ee2526216db0207df4ba7152ff
 )
-readonly ACTIONS="install uninstall status describe recommend check size"
+readonly ACTIONS="install uninstall status describe suggest check size plan"
+readonly SUGGEST_COUNT=10
 
 LIB_DIR="${EASY_CS_AI_LIB:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)}"
 readonly LIB_DIR
@@ -26,24 +27,34 @@ source "$LIB_DIR/common.sh"
 
 ACTION="" FORCE=0 MAKE_DEFAULT=0
 POSITIONAL=()
-# Hardware to size for instead of this machine (recommend and check), as llmfit's own
+# Hardware to size for instead of this machine (suggest and check), as llmfit's own
 # global options, which go before its subcommand.
 TARGET_ARGS=()
+COUNT=$SUGGEST_COUNT    # suggest: how many models to list
+PLAN_CORES=""           # plan: the vCPU of the VM, reported as given
+CHAT_INTERFACE=0        # plan: a chat interface is in the stack
 
 usage() {
     cat <<EOF
 Usage: llmfit.sh <action> [options]
 
 Actions: $ACTIONS
-  recommend [args]        llmfit's own recommendations for this machine (JSON)
+  suggest [-n <count>]    the models that fit (JSON): Ollama tags, none that is Too Tight,
+                          best score first, $SUGGEST_COUNT by default
   check <model>           {"fits": true|false, "reason": "…"} for a model
   size <model>            what a model needs, whatever this machine is (JSON): memory and
                           disk for the best and the default quantisation
+  plan <model>…           the VM the models need (JSON): the figures of size plus an
+                          estimated margin, for the best and the default quantisation
 
-Options of recommend and check, to size for another machine:
+Options of suggest and check, to size for another machine:
   --target-ram <GB>       RAM of the machine to size for (llmfit --ram)
   --target-vram <GB>      GPU memory of the machine to size for (llmfit --memory)
   --target-cpu-cores <n>  CPU cores of the machine to size for (llmfit --cpu-cores)
+
+Options of plan:
+  --target-cpu-cores <n>  vCPU of the VM, reported as given (llmfit does not size them)
+  --chat-interface        a chat interface is in the stack: adds its share of the margin
 
 Options:
   --version <x.y.z>       llmfit version (default $DEFAULT_VERSION, EASY_CS_AI_LLMFIT_VERSION)
@@ -116,23 +127,36 @@ parse_args() {
                 value="$1"
                 shift
             fi
-            [[ "$ACTION" == recommend || "$ACTION" == check ]] || die "$EXIT_USAGE" "$opt only applies to recommend and check"
+            if [[ "$ACTION" == plan && "$opt" == --target-cpu-cores ]]; then
+                :
+            else
+                [[ "$ACTION" == suggest || "$ACTION" == check ]] || die "$EXIT_USAGE" "$opt only applies to suggest and check"
+            fi
             [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "$EXIT_USAGE" "$opt needs a positive whole number, got '$value'"
             case "$opt" in
             --target-ram) TARGET_ARGS+=(--ram "$value") ;;
             --target-vram) TARGET_ARGS+=(--memory "$value") ;;
-            --target-cpu-cores) TARGET_ARGS+=(--cpu-cores "$value") ;;
+            --target-cpu-cores)
+                if [[ "$ACTION" == plan ]]; then PLAN_CORES="$value"; else TARGET_ARGS+=(--cpu-cores "$value"); fi
+                ;;
             esac
+            ;;
+        -n)
+            [[ "$ACTION" == suggest ]] || die "$EXIT_USAGE" "-n only applies to suggest"
+            [[ $# -gt 0 ]] || die "$EXIT_USAGE" "-n needs a value"
+            COUNT="$1"
+            shift
+            [[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || die "$EXIT_USAGE" "-n needs a positive whole number, got '$COUNT'"
+            ;;
+        --chat-interface)
+            [[ "$ACTION" == plan ]] || die "$EXIT_USAGE" "--chat-interface only applies to plan"
+            CHAT_INTERFACE=1
             ;;
         --default) MAKE_DEFAULT=1 ;;
         --force) FORCE=1 ;;
         # `uninstall --all --purge` forwards --purge to every component: llmfit keeps no data, nothing to purge
         --purge) ;;
-        -*)
-            # recommend passes its own options to llmfit.
-            [[ "$ACTION" == recommend ]] || die "$EXIT_USAGE" "unknown option: $opt"
-            POSITIONAL+=("$opt")
-            ;;
+        -*) die "$EXIT_USAGE" "unknown option: $opt" ;;
         *) POSITIONAL+=("$opt") ;;
         esac
     done
@@ -166,10 +190,15 @@ describe() {
         ],
         actions: ($actions | split(" ")),
         action_options: {
-          recommend: [
+          suggest: [
             { name: "target-ram", type: "integer", min: 1, description: "RAM in GB of the machine to size for, instead of this one" },
             { name: "target-vram", type: "integer", min: 1, description: "GPU memory in GB of the machine to size for, instead of this one" },
-            { name: "target-cpu-cores", type: "integer", min: 1, description: "CPU cores of the machine to size for, instead of this one" }
+            { name: "target-cpu-cores", type: "integer", min: 1, description: "CPU cores of the machine to size for, instead of this one" },
+            { name: "n", type: "integer", min: 1, description: "Number of models to list (default 10)" }
+          ],
+          plan: [
+            { name: "target-cpu-cores", type: "integer", min: 1, description: "vCPU of the VM, reported as given: llmfit does not size them" },
+            { name: "chat-interface", type: "boolean", description: "A chat interface is in the stack: adds its share of the margin" }
           ],
           check: [
             { name: "target-ram", type: "integer", min: 1, description: "RAM in GB of the machine to size for, instead of this one" },
@@ -375,20 +404,28 @@ cmd_status() {
     return "$rc"
 }
 
-# --- recommend and check ----------------------------------------------------------------
+# --- suggest, check, size and plan ------------------------------------------------------
 
 require_installed() {
     state_read "$NAME" >/dev/null 2>&1 || die "$EXIT_PRECONDITION" "$NAME is not installed, run: easy-cs-ai install provisioning llmfit"
     llmfit_bin >/dev/null || die "$EXIT_PRECONDITION" "the llmfit binary is missing, run: easy-cs-ai install provisioning llmfit"
 }
 
-# recommend: llmfit's own JSON, untouched.
-cmd_recommend() {
-    local bin
+# suggest: the models that fit, for the generator and the agents (docs/spec-vm-generator.md#choosing-models).
+# Only the Ollama tags (llmfit's `ollama_name`) are listed, the only names an engine can pull today,
+# and none that llmfit judges Too Tight; the best score comes first.
+cmd_suggest() {
+    local bin out
     require_installed
     bin="$(llmfit_bin)"
-    "$bin" "${TARGET_ARGS[@]}" recommend --json --no-dashboard "${POSITIONAL[@]}" ||
+    out="$("$bin" "${TARGET_ARGS[@]}" recommend --json --no-dashboard -n 100000 2>/dev/null)" ||
         die "$EXIT_ERROR" "llmfit recommend failed"
+    jq --argjson n "$COUNT" '{models: (
+        [.models[]? | select(.ollama_name != null and .fit_level != "Too Tight")]
+        | sort_by(-(.score // 0)) | .[:$n]
+        | map({name: .ollama_name, llmfit_name: .name, fit_level: (.fit_level // "?"),
+               memory_required_gb: (.memory_required_gb // null), score: (.score // 0)}))}' <<<"$out" ||
+        die "$EXIT_ERROR" "llmfit recommend did not answer with JSON"
 }
 
 # fit_entry <model>: print the llmfit model entry for a name, or fail.
@@ -442,15 +479,16 @@ size_info() {
     jq -ce '.models[0] // empty' <<<"$out"
 }
 
-cmd_size() {
-    local model="${POSITIONAL[0]:-}" bin entry name best_cpu best_gpu def_cpu def_gpu tmp
-    [[ -n "$model" ]] || die "$EXIT_USAGE" "size needs a model name"
-    require_installed
-    bin="$(llmfit_bin)"
+# size_model <bin> <model> [quiet]: the sizing document of a model on stdout, or return 1 with the
+# reason as an error (not with `quiet`, for plan, which reports the model as not estimated).
+size_model() {
+    local bin="$1" model="$2" quiet="${3:-}" entry name best_cpu best_gpu def_cpu def_gpu tmp
     # An Ollama tag is known only on a machine large enough to list it.
     TARGET_ARGS=(--ram "$SIZE_BIG" --memory "$SIZE_BIG")
-    entry="$(fit_entry "$bin" "$model")" ||
-        die "$EXIT_ERROR" "llmfit does not know '$model'. It knows Hugging Face names and the Ollama tags of the models that fit a large machine"
+    entry="$(fit_entry "$bin" "$model")" || {
+        [[ -n "$quiet" ]] || log_error "llmfit does not know '$model'. It knows Hugging Face names and the Ollama tags of the models that fit a large machine"
+        return 1
+    }
     name="$(jq -r '.name' <<<"$entry")"
     # The four calls are independent and read-only, and each takes a few seconds (llmfit loads its
     # catalogue every time): they run together.
@@ -464,13 +502,72 @@ cmd_size() {
     best_cpu="$(<"$tmp/best_cpu")" best_gpu="$(<"$tmp/best_gpu")"
     def_cpu="$(<"$tmp/def_cpu")" def_gpu="$(<"$tmp/def_gpu")"
     rm -rf "$tmp"
-    [[ -n "$best_cpu" && -n "$best_gpu" && -n "$def_cpu" && -n "$def_gpu" ]] ||
-        die "$EXIT_ERROR" "llmfit could not size '$name'"
+    [[ -n "$best_cpu" && -n "$best_gpu" && -n "$def_cpu" && -n "$def_gpu" ]] || {
+        [[ -n "$quiet" ]] || log_error "llmfit could not size '$name'"
+        return 1
+    }
     jq -n --argjson bc "$best_cpu" --argjson bg "$best_gpu" --argjson dc "$def_cpu" --argjson dg "$def_gpu" '
         def q($c; $g): {quant: $c.best_quant, disk_gb: $c.disk_size_gb, cpu_gb: $c.memory_required_gb, gpu_gb: $g.memory_required_gb};
         {name: $bc.name, ollama_name: $bc.ollama_name, moe: ($bc.is_moe // false),
          context: ($bc.estimate_basis.assumed_context // null),
          best: q($bc; $bg), default: q($dc; $dg)}'
+}
+
+cmd_size() {
+    local model="${POSITIONAL[0]:-}" bin
+    [[ -n "$model" ]] || die "$EXIT_USAGE" "size needs a model name"
+    require_installed
+    bin="$(llmfit_bin)"
+    size_model "$bin" "$model" || exit "$EXIT_ERROR"
+}
+
+# plan <model>…: the VM the models need (docs/spec-vm-generator.md#recommended-vm). The figures are
+# llmfit's, through `size`; the margin on top of them is estimated, and defined here and nowhere
+# else, so that the generator and an agent show the same numbers. A model llmfit cannot size is
+# listed in `unsized`, never guessed.
+cmd_plan() {
+    local bin m n=0 out sized='[]' unsized='[]'
+    ((${#POSITIONAL[@]})) || die "$EXIT_USAGE" "plan needs at least one model name"
+    require_installed
+    bin="$(llmfit_bin)"
+    for m in "${POSITIONAL[@]}"; do
+        n=$((n + 1))
+        # llmfit takes several seconds per model: say what is going on.
+        log_info "sizing $m with llmfit ($n/${#POSITIONAL[@]}), a few seconds..."
+        if out="$(size_model "$bin" "$m" quiet)" &&
+            jq -e '[.best.cpu_gb, .best.gpu_gb, .best.disk_gb, .default.cpu_gb, .default.gpu_gb, .default.disk_gb] | all(. != null)' <<<"$out" >/dev/null 2>&1; then
+            sized="$(jq -c --arg t "$m" --argjson e "$out" '. + [$e + {typed: $t}]' <<<"$sized")"
+        else
+            unsized="$(jq -c --arg t "$m" '. + [$t]' <<<"$unsized")"
+        fi
+    done
+    jq -n --argjson sized "$sized" --argjson unsized "$unsized" --argjson chat "$CHAT_INTERFACE" --arg cores "$PLAN_CORES" '
+        def r2: . * 100 | round / 100;
+        def part($model; $total): {model_gb: ($model | r2), margin_gb: (($total - $model) | r2), total_gb: $total};
+        (if $chat == 1 then 4 else 0 end) as $chat_gb
+        | {context: ($sized | map(.context) | map(select(. != null)) | first // null),
+           vcpu: (if $cores == "" then null else ($cores | tonumber) end),
+           chat_interface: ($chat == 1),
+           models: $sized,
+           unsized: $unsized,
+           quantisations: (if ($sized | length) == 0 then null else
+             ["best", "default"] | map(. as $q
+               | ($sized | map(.[$q].cpu_gb) | max) as $cpu
+               | ($sized | map(.[$q].gpu_gb) | max) as $gpu
+               | ($sized | map(.[$q].disk_gb) | add) as $disk
+               | (($cpu + 2 + $chat_gb) | ceil) as $ram
+               | (($gpu / 0.9 + 1) | ceil) as $vram
+               | (2 + $chat_gb) as $gpuram
+               | (($disk + 20) | ceil) as $dtotal
+               | {key: $q, value: {
+                   quants: ($sized | map(.[$q].quant) | unique),
+                   ram_no_gpu: (part($cpu; $ram) + {total_mb: ($ram * 1024),
+                       margin_parts: {engine: 1, system: 1, chat_interface: $chat_gb}}),
+                   gpu_memory: (part($gpu; $vram) + {margin_basis: "model / 0.9, 1 for the CUDA context"}),
+                   gpu_ram: (part(0; $gpuram) + {total_mb: ($gpuram * 1024),
+                       margin_parts: {system_and_engine: 2, chat_interface: $chat_gb}}),
+                   disk: (part($disk; $dtotal) + {margin_parts: {system_and_components: 20}})}})
+             | from_entries end)}'
 }
 
 # --- main -------------------------------------------------------------------------------
@@ -498,9 +595,10 @@ main() {
     install) cmd_install ;;
     uninstall) cmd_uninstall ;;
     status) cmd_status ;;
-    recommend) cmd_recommend ;;
+    suggest) cmd_suggest ;;
     check) cmd_check ;;
     size) cmd_size ;;
+    plan) cmd_plan ;;
     esac
 }
 

@@ -385,7 +385,7 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
 
 # --- models: llmfit is optional ------------------------------------------------------------------
 
-# a shipped llmfit (rank 1 of its type) whose recommend and check are logged in $CALLS; it
+# a shipped llmfit (rank 1 of its type) whose suggest, check and plan are logged in $CALLS; it
 # reports itself installed unless FAKE_LLMFIT=missing
 make_llmfit() {
     mkdir -p "$EASY_CS_AI_HOME/provisioning"
@@ -401,18 +401,39 @@ status)
 install)
     [[ "${FAKE_LLMFIT_INSTALL:-}" != fail ]] || { echo "fake install failed" >&2; exit 5; }
     touch "$CALLS.installed" ;;
-recommend) echo '{"models":[
-  {"name":"hf/a","ollama_name":"small:1b","fit_level":"Perfect","score":70,"memory_required_gb":1.2},
-  {"name":"hf/b","ollama_name":"llama3.2:3b","fit_level":"Good","score":90,"memory_required_gb":2.4},
-  {"name":"hf/c","ollama_name":"huge:70b","fit_level":"Too Tight","score":99,"memory_required_gb":48},
-  {"name":"hf/d","ollama_name":null,"fit_level":"Good","score":95,"memory_required_gb":3}]}' ;;
-size)
-    case "$2" in
-    m1) echo '{"name":"hf/m1","ollama_name":"m1","moe":false,"context":8192,"best":{"quant":"Q8_0","disk_gb":8.0,"cpu_gb":9.0,"gpu_gb":9.5},"default":{"quant":"Q4_K_M","disk_gb":4.5,"cpu_gb":6.0,"gpu_gb":6.2}}' ;;
-    m2) echo '{"name":"hf/m2","ollama_name":"m2","moe":false,"context":8192,"best":{"quant":"Q8_0","disk_gb":3.0,"cpu_gb":4.0,"gpu_gb":4.2},"default":{"quant":"Q4_K_M","disk_gb":1.8,"cpu_gb":2.5,"gpu_gb":2.6}}' ;;
-    moe) echo '{"name":"hf/moe","ollama_name":"moe","moe":true,"context":8192,"best":{"quant":"Q8_0","disk_gb":32.0,"cpu_gb":17.1,"gpu_gb":15.6},"default":{"quant":"Q4_K_M","disk_gb":17.7,"cpu_gb":17.1,"gpu_gb":15.6}}' ;;
-    *) exit 1 ;;
-    esac ;;
+# what suggest answers is what the generator lists, in that order, with nothing filtered or
+# re-ranked on its side (the Too Tight one and the untagged one are the action's business)
+suggest) echo '{"models":[
+  {"name":"llama3.2:3b","llmfit_name":"hf/b","fit_level":"Good","score":90,"memory_required_gb":2.4},
+  {"name":"small:1b","llmfit_name":"hf/a","fit_level":"Perfect","score":70,"memory_required_gb":1.2}]}' ;;
+# what plan answers is what the generator prints: the figures and the margin are the fake's own
+# (a fixed 2 GB margin, whatever the models), and the generator must not compute any
+plan)
+    shift
+    chat=0 cores=null names=()
+    while (($#)); do
+        case "$1" in
+        --chat-interface) chat=4 ;;
+        --target-cpu-cores) cores="$2"; shift ;;
+        *) names+=("$1") ;;
+        esac
+        shift
+    done
+    jq -n --argjson chat "$chat" --argjson cores "$cores" --arg names "${names[*]}" '
+      {m1: {name:"hf/m1",moe:false,best:{quant:"Q8_0",disk_gb:8,cpu_gb:9,gpu_gb:9.5},default:{quant:"Q4_K_M",disk_gb:4.5,cpu_gb:6,gpu_gb:6.2}},
+       m2: {name:"hf/m2",moe:false,best:{quant:"Q8_0",disk_gb:3,cpu_gb:4,gpu_gb:4.2},default:{quant:"Q4_K_M",disk_gb:1.8,cpu_gb:2.5,gpu_gb:2.6}},
+       moe: {name:"hf/moe",moe:true,best:{quant:"Q8_0",disk_gb:32,cpu_gb:17.1,gpu_gb:15.6},default:{quant:"Q4_K_M",disk_gb:17.7,cpu_gb:17.1,gpu_gb:15.6}}} as $T
+      | ($names | split(" ")) as $n
+      | ($n | map(select($T[.] != null))) as $ok
+      | def q($k; $ram): {quants: [$T[$ok[0]][$k].quant],
+          ram_no_gpu: {model_gb: $T[$ok[0]][$k].cpu_gb, margin_gb: (2 + $chat), total_gb: $ram, total_mb: ($ram * 1024),
+                       margin_parts: ({engine: 1, system: 1} + {chat_interface: $chat})},
+          gpu_memory: {model_gb: $T[$ok[0]][$k].gpu_gb, margin_gb: 2.5, total_gb: 12, margin_basis: "model / 0.9, 1 for the CUDA context"},
+          gpu_ram: {model_gb: 0, margin_gb: (2 + $chat), total_gb: (2 + $chat), total_mb: ((2 + $chat) * 1024), margin_parts: {system_and_engine: 2, chat_interface: $chat}},
+          disk: {model_gb: ($ok | map($T[.][$k].disk_gb) | add), margin_gb: 20, total_gb: (($ok | map($T[.][$k].disk_gb) | add) + 20 | ceil), margin_parts: {system_and_components: 20}}};
+      {context: 8192, vcpu: $cores, chat_interface: ($chat > 0),
+       models: ($ok | map($T[.] + {typed: .})), unsized: ($n - $ok),
+       quantisations: (if ($ok | length) == 0 then null else {best: q("best"; 11 + $chat), default: q("default"; 8 + $chat)} end)}' ;;
 check)
     case "$2" in
     big) echo '{"fits":false,"reason":"big: fit Too Tight, needs 40 GB of 16 GB available"}' ;;
@@ -437,7 +458,7 @@ FAKE
     [[ "$stderr" == *" 1) llama3.2:3b"*" 2) small:1b"* ]]
     [[ "$stderr" != *"huge:70b"* ]]
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["llama3.2:3b","big","unknown"]' ]
-    grep -qx 'recommend --target-ram 16 --target-cpu-cores 4 -n 100000' "$CALLS"
+    grep -qx 'suggest --target-ram 16 --target-cpu-cores 4' "$CALLS"
     grep -qx 'check big --target-ram 16 --target-cpu-cores 4' "$CALLS"
     grep -qx 'check unknown --target-ram 16 --target-cpu-cores 4' "$CALLS"
     # the step says what it is doing before each slow llmfit call
@@ -457,7 +478,7 @@ FAKE
     ask "" none ollama none "" "" "" "" m1 y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"no spec given"* ]]
-    ! grep -q -e recommend -e check -e size "$CALLS"
+    ! grep -q -e suggest -e check -e plan "$CALLS"
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
 }
 
@@ -468,7 +489,7 @@ FAKE
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"'abc' is not a positive whole number"* ]]
     [[ "$stderr" == *"'0' is not a positive whole number"* ]]
-    grep -qx 'recommend --target-ram 8 -n 100000' "$CALLS"
+    grep -qx 'suggest --target-ram 8' "$CALLS"
 }
 
 @test "redoing the models offers the specs given before as defaults" {
@@ -476,7 +497,7 @@ FAKE
     GEN_ARGS=(--config-only --output cfg.json)
     ask "" none ollama none "" 16 "" 4 "" m "" "" "" "" m1 y
     [ "$status" -eq 0 ]
-    [ "$(grep -c '^recommend --target-ram 16 --target-cpu-cores 4 ' "$CALLS")" -eq 2 ]
+    [ "$(grep -c '^suggest --target-ram 16 --target-cpu-cores 4$' "$CALLS")" -eq 2 ]
     [[ "$stderr" == *"RAM of the VM in GB [16]"* ]]
 }
 
@@ -488,7 +509,7 @@ FAKE
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"llmfit is not installed here: install it now"*"(y/n) [n]"* ]]
     [[ "$stderr" == *"sudo easy-cs-ai install provisioning llmfit"* ]]
-    ! grep -q -e recommend -e check -e install "$CALLS"
+    ! grep -q -e suggest -e check -e install "$CALLS"
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
     # a redo of the step does not ask again
     ask "" none ollama none n m1 m m2 y
@@ -503,7 +524,7 @@ FAKE
     ask "" none ollama none y "" 16 "" "" 1 y
     [ "$status" -eq 0 ]
     grep -qx install "$CALLS"
-    grep -qx 'recommend --target-ram 16 -n 100000' "$CALLS"
+    grep -qx 'suggest --target-ram 16' "$CALLS"
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["llama3.2:3b"]' ]
 }
 
@@ -515,7 +536,7 @@ FAKE
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"llmfit could not be installed, type the model names"* ]]
     [[ "$stderr" != *"Recommended VM"* ]]
-    ! grep -q recommend "$CALLS"
+    ! grep -q -e suggest -e plan "$CALLS"
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
 }
 
@@ -566,8 +587,8 @@ FAKE
     [ "$status" -eq 0 ]
     # no specs asked, no suggestion, no fit check: the models are sized instead
     [[ "$stderr" != *"RAM of the VM in GB"* ]]
-    grep -qx 'size m1' "$CALLS"
-    ! grep -q -e recommend -e check "$CALLS"
+    grep -qx 'plan m1' "$CALLS"
+    ! grep -q -e suggest -e check "$CALLS"
     [[ "$stderr" == *"Recommended VM, from llmfit (context of 8192 tokens) plus an ESTIMATED margin"* ]]
     [[ "$stderr" == *"m1: best Q8_0 9 GB, default Q4_K_M 6 GB, disk 8 or 4.5 GB"* ]]
     [[ "$stderr" == *"with the best quantisation (Q8_0):"* ]]
@@ -594,8 +615,6 @@ FAKE
     [[ "$stderr" == *"RAM 11 GB (11264 MB) = 9 model + 2 estimated margin"* ]]
     [[ "$stderr" == *"disk: 31 GB = 11 models + 20 estimated"* ]]
     [[ "$stderr" == *"m2: best Q8_0 4 GB"* ]]
-    # llmfit is slow: each model is announced before it is sized
-    [[ "$stderr" == *"sizing m1 with llmfit (1/2)"*"sizing m2 with llmfit (2/2)"* ]]
 }
 
 @test "models first: a chat interface in the stack adds its share to the estimated margin" {
@@ -636,8 +655,8 @@ FAKE
     ask "" none ollama none m m1 m "" m2 y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"Order, hardware first (h) or models first (m) [m]"* ]]
-    grep -qx 'size m1' "$CALLS"
-    grep -qx 'size m2' "$CALLS"
+    grep -qx 'plan m1' "$CALLS"
+    grep -qx 'plan m2' "$CALLS"
     # the summary shows the second one only
     [[ "${stderr##*Summary}" == *"m2: best"* ]]
     [[ "${stderr##*Summary}" != *"m1: best"* ]]
@@ -650,7 +669,7 @@ FAKE
     gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"Recommended VM"* ]]
-    ! grep -q '^size' "$CALLS"
+    ! grep -q '^plan' "$CALLS"
 }
 
 @test "--config: the warning follows a model with force and no llmfit, and nothing else changes" {
