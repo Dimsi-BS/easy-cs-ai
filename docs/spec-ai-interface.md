@@ -11,7 +11,7 @@ An AI agent, with a shell on a machine where **only the installed package exists
 The rule that governs all of it:
 
 > **`--json` is accepted by every command that outputs data, and then stdout carries one JSON document and nothing else.**
-> A command that only returns a data structure (`config schema`, the component actions `status`, `list-models`, `recommend`…) prints JSON by default and takes `--json` as a no-op. A command with a human rendering (tables, plans, hints) prints it without `--json`, and that rendering is not a stable interface.
+> A command that only returns a data structure (`config schema`, the component actions `status`, `list-models`, `suggest`…) prints JSON by default and takes `--json` as a no-op. A command with a human rendering (tables, plans, hints) prints it without `--json`, and that rendering is not a stable interface.
 
 Why the rule is not "no `--json` is always for humans": [decision](decision-json-output-rule.md).
 
@@ -188,7 +188,7 @@ Prints, as plain text, the procedure of the [next section](#procedure-for-an-age
 
 ## Model fit for a machine that is not this one
 
-`provisioning llmfit recommend`, `suggest` and `check <model>` evaluate the **local** hardware. An agent that prepares a fleet knows the specs of the target from the user, not from `host`. llmfit overrides the detected hardware with `--memory`, `--ram` and `--cpu-cores` (see [findings](../search/llmfit.md)), so the three actions gain, as options:
+`provisioning llmfit suggest` and `check <model>` evaluate the **local** hardware. An agent that prepares a fleet knows the specs of the target from the user, not from `host`. llmfit overrides the detected hardware with `--memory`, `--ram` and `--cpu-cores` (see [findings](../search/llmfit.md)), so the two actions gain, as options:
 
 | Option | Meaning | Forwarded to llmfit as |
 | --- | --- | --- |
@@ -196,7 +196,7 @@ Prints, as plain text, the procedure of the [next section](#procedure-for-an-age
 | `--target-vram <GB>` | GPU memory of the machine to size for | `--memory` |
 | `--target-cpu-cores <n>` | CPU cores of the machine to size for | `--cpu-cores` |
 
-With none of them, behaviour is unchanged (local hardware). They are declared in the `describe` of the llmfit script under `action_options`, keyed by action (`recommend`, `check`), and not in `options`, which are the options of `install` and of the configuration; they are therefore in `catalog` too. The options are read-only and need no engine; llmfit itself must be installed, otherwise the action exits 4 with the command that installs it (`easy-cs-ai install provisioning llmfit`), and the agent asks the user before running it (it is a change on the machine).
+With none of them, behaviour is unchanged (local hardware). They are declared in the `describe` of the llmfit script under `action_options`, keyed by action (`suggest`, `check`), and not in `options`, which are the options of `install` and of the configuration; they are therefore in `catalog` too. The options are read-only and need no engine; llmfit itself must be installed, otherwise the action exits 4 with the command that installs it (`easy-cs-ai install provisioning llmfit`), and the agent asks the user before running it (it is a change on the machine).
 
 ### Two orders, one implementation
 
