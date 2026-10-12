@@ -72,7 +72,7 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     [[ "$output" == *"Usage: easy-cs-ai"*"AI agent or program: run \`easy-cs-ai guide\` first, it tells how to use this CLI."*"Commands:"* ]]
     [[ "$output" == *"For an AI agent or a program (start with guide):"*"guide "*"catalog "*"host "*"config schema"*"config validate"*"llmfit suggest|plan"* ]]
     cli --version
-    [ "$output" = "0.1.0-rc1" ]
+    [ "$output" = "0.1.0-rc2" ]
 }
 
 @test "unknown command and unknown type are usage errors" {
