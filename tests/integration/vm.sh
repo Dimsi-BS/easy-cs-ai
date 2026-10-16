@@ -2,19 +2,27 @@
 # A throw-away Ubuntu VM under libvirt/KVM to run the install scripts for real, see
 # tests/integration/README.md.
 #
-#   vm.sh create | start | stop | status | ssh [command] | run <config.json> | destroy [--all]
+#   vm.sh create | start | stop | status | ssh [command] | run <config.json> [--vm <name>] | destroy [--all | --net]
 #
 # create    downloads the Ubuntu cloud image (checked against Ubuntu's SHA256SUMS), makes a NAT
 #           network of its own and the VM, and waits until it answers over SSH
 # run       builds the package from this working tree, generates the VM script from a
-#           configuration (easy-cs-ai generate), runs it as root in the VM, prints its log
+#           configuration (easy-cs-ai generate), runs it as root in the VM, prints its log;
+#           for a configuration that names several VMs, --vm says which script this VM runs
 # ssh       a shell on the VM as the user `tester` (commands as arguments, or on stdin)
-# destroy   removes the VM, its disk and its network; --all also removes the image cache
+# destroy   removes the VM, its disk and its network (a network shared through ECSAI_VM_NETWORK
+#           stays, unless --net); --all also removes the image cache
+#
+# Several VMs: ECSAI_VM_NAME picks the VM a command is for, ECSAI_VM_NETWORK puts them on one
+# network so that they reach each other (see tests/integration/two-vm.sh)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="${ECSAI_VM_DIR:-$HOME/.cache/easy-cs-ai-vm}"
 NAME="${ECSAI_VM_NAME:-ecsai-test}"
+# the libvirt network the VM is on: its own (named like the VM) by default, one shared with other VMs when
+# ECSAI_VM_NETWORK names it (the two-VM scenario: the two machines must reach each other)
+NET="${ECSAI_VM_NETWORK:-$NAME}"
 MEMORY_MB="${ECSAI_VM_MEMORY:-6144}"
 VCPUS="${ECSAI_VM_VCPUS:-4}"
 DISK_GB="${ECSAI_VM_DISK:-40}"
@@ -28,7 +36,7 @@ export LIBVIRT_DEFAULT_URI="${LIBVIRT_DEFAULT_URI:-qemu:///system}"
 log() { printf '[vm] %s\n' "$*" >&2; }
 die() { printf '[vm] ERROR: %s\n' "$*" >&2; exit 1; }
 
-usage() { sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 need() {
     local missing=() c
@@ -50,7 +58,7 @@ need_libvirt() {
 net_xml() { # <number>
     cat <<EOF
 <network>
-  <name>$NAME</name>
+  <name>$NET</name>
   <forward mode='nat'/>
   <bridge name='virbr-ecsai$1' stp='on' delay='0'/>
   <ip address='192.168.$1.1' netmask='255.255.255.0'>
@@ -65,29 +73,29 @@ net_number() { cat "$WORK/net-number" 2>/dev/null || printf '%s\n' "$FIRST_SUBNE
 # no `| grep -q` here: grep quits at the first match, virsh then dies of SIGPIPE and pipefail turns that into a failure
 net_active() {
     local info
-    info="$(virsh net-info "$NAME" 2>/dev/null)" || return 1
+    info="$(virsh net-info "$NET" 2>/dev/null)" || return 1
     [[ "$info" =~ Active:[[:space:]]+yes ]]
 }
 
 ensure_network() {
     local n
     net_active && return 0
-    if virsh net-info "$NAME" >/dev/null 2>&1 && virsh net-start "$NAME" >/dev/null 2>&1; then
+    if virsh net-info "$NET" >/dev/null 2>&1 && virsh net-start "$NET" >/dev/null 2>&1; then
         return 0
     fi
     n="$(net_number)"
     for _ in $(seq 1 20); do
-        virsh net-destroy "$NAME" >/dev/null 2>&1 || true
-        virsh net-undefine "$NAME" >/dev/null 2>&1 || true
+        virsh net-destroy "$NET" >/dev/null 2>&1 || true
+        virsh net-undefine "$NET" >/dev/null 2>&1 || true
         net_xml "$n" >"$WORK/net.xml"
-        if virsh net-define "$WORK/net.xml" >/dev/null 2>&1 && virsh net-start "$NAME" >/dev/null 2>&1; then
+        if virsh net-define "$WORK/net.xml" >/dev/null 2>&1 && virsh net-start "$NET" >/dev/null 2>&1; then
             printf '%s\n' "$n" >"$WORK/net-number"
-            log "network $NAME on 192.168.$n.0/24"
+            log "network $NET on 192.168.$n.0/24"
             return 0
         fi
         n=$((n + 1))
     done
-    die "could not start a NAT network: see 'virsh net-start $NAME'"
+    die "could not start a NAT network: see 'virsh net-start $NET'"
 }
 
 gateway() { printf '192.168.%s.1\n' "$(net_number)"; }
@@ -180,7 +188,7 @@ EOF
     log "creating the VM $NAME ($VCPUS vCPU, $MEMORY_MB MB, ${DISK_GB} GB)"
     virt-install --name "$NAME" --memory "$MEMORY_MB" --vcpus "$VCPUS" --cpu host-passthrough \
         --import --disk "vol=default/$NAME.qcow2,bus=virtio" --disk "vol=default/$NAME-seed.iso,device=cdrom" \
-        --network "network=$NAME" --osinfo detect=off,require=off --graphics none --noautoconsole >/dev/null
+        --network "network=$NET" --osinfo detect=off,require=off --graphics none --noautoconsole >/dev/null
     wait_ssh 300
 }
 
@@ -213,22 +221,27 @@ cmd_destroy() {
     if vm_exists; then virsh undefine "$NAME" --nvram >/dev/null 2>&1 || true; fi
     virsh vol-delete "$NAME.qcow2" --pool default >/dev/null 2>&1 || true
     virsh vol-delete "$NAME-seed.iso" --pool default >/dev/null 2>&1 || true
-    virsh net-destroy "$NAME" >/dev/null 2>&1 || true
-    virsh net-undefine "$NAME" >/dev/null 2>&1 || true
+    # its own network goes with it; a shared one (ECSAI_VM_NETWORK) stays for the other VMs, unless --net or --all
+    if [[ "$NET" == "$NAME" || "${1:-}" == --all || "${1:-}" == --net ]]; then
+        virsh net-destroy "$NET" >/dev/null 2>&1 || true
+        virsh net-undefine "$NET" >/dev/null 2>&1 || true
+    fi
     if [[ "${1:-}" == --all ]]; then
         rm -rf "$WORK"
         log "removed $WORK"
     fi
-    log "VM $NAME, its disk and its network are removed"
+    log "VM $NAME and its disk are removed"
 }
 
 # --- run -----------------------------------------------------------------------------------
 
-# cmd_run <config.json>: the package of this working tree, the script generated from the
-# configuration, run as root in the VM. Returns the exit code of the script.
+# cmd_run <config.json> [--vm <name>]: the package of this working tree, the script generated from the
+# configuration, run as root in the VM. A configuration that names several VMs gives one script per
+# VM: --vm picks the one of this VM. Returns the exit code of the script.
 cmd_run() {
-    local config="${1:-}" version dist script gw http_pid="" rc=0 end
-    [[ -r "$config" ]] || die "usage: $0 run <config.json>"
+    local config="${1:-}" which="" version dist script gw http_pid="" rc=0 end
+    [[ "${2:-}" != --vm ]] || which="${3:-}"
+    [[ -r "$config" ]] || die "usage: $0 run <config.json> [--vm <name>]"
     need_libvirt
     need python3 sha256sum
     vm_running || cmd_start
@@ -241,6 +254,13 @@ cmd_run() {
     EASY_CS_AI_CLI_VERSION="$version" bash "$ROOT/vm_script/generate.sh" --config "$config" --package-format tarball \
         --package-url "http://$gw:$HTTP_PORT/easy-cs-ai-$version.tar.gz" --package-file "$dist/easy-cs-ai-$version.tar.gz" \
         --package-version "$version" --output "$script" >&2
+    if jq -e 'any(.components[]?; has("vm"))' "$config" >/dev/null; then
+        [[ -n "$which" ]] || die "$config names several VMs: say which one this VM is with --vm <name>"
+        script="${script%.sh}-$which.sh"
+        [[ -f "$script" ]] || die "$config has no VM named $which"
+    else
+        [[ -z "$which" ]] || die "--vm $which: $config names no VM"
+    fi
 
     # the generated script skips the download when this version is installed: remove the
     # package so that it is the code of this working tree that runs (the components stay)

@@ -423,3 +423,14 @@ JSON
     # and the address warning, since nothing says the name of the engine VM yet
     [ "$(jq -c '[.warnings[] | select(.code == "engine_address_unknown") | .vm]' <<<"$(bash "$CLI" config validate real.json --target fresh --json)")" = '["engine"]' ]
 }
+
+@test "the command of step 4 is on two lines: a backslash, then a real new line" {
+    two_vm_file f.json
+    run --separate-stderr bash "$CLI" config validate f.json --target fresh --json
+    step4="$(jq -r '.next_steps[3]' <<<"$output")"
+    # not the two characters \ and n
+    [[ "$step4" != *'\n'* ]]
+    grep -qxF '  sudo easy-cs-ai chat-interface chat add-endpoint <name> <url> \' <<<"$step4"
+    grep -qx '    --model m1 --api-key-file <file>' <<<"$step4"
+    grep -qx '    --server-name <name or address>' <<<"$step4"
+}
