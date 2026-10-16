@@ -21,6 +21,7 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
     [ -f "$DIST/stage/lib/easy-cs-ai/engine/ollama.sh" ]
     [ -f "$DIST/stage/lib/easy-cs-ai/templates/ollama/ollama.service" ]
     [ -f "$DIST/stage/lib/easy-cs-ai/ranks.conf" ]
+    [ -f "$DIST/stage/lib/easy-cs-ai/guide.md" ]
     [ ! -e "$DIST/stage/lib/easy-cs-ai/README.md" ]
     [ "$output" = "$DIST/easy-cs-ai-$VERSION.tar.gz" ]
     (cd "$DIST" && sha256sum -c "easy-cs-ai-$VERSION.tar.gz.sha256")

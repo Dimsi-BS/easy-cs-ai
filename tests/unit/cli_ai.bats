@@ -19,6 +19,7 @@ setup() {
     unset EASY_CS_AI_LOCK_HELD EASY_CS_AI_HOST_IDS FAKE_FAIL
     mkdir -p "$EASY_CS_AI_HOME"/{engine,proxy,chat-interface,provisioning}
     ln -s "$REAL/lib" "$EASY_CS_AI_HOME/lib"
+    ln -s "$REAL/guide.md" "$EASY_CS_AI_HOME/guide.md"
     printf '# comment\nengine eng2\nengine ghost\nengine eng\nproxy prox\nchat-interface chat\nprovisioning fit\n' >"$EASY_CS_AI_HOME/ranks.conf"
     printf 'eng2 small-model\n' >"$EASY_CS_AI_HOME/default-models.conf"
     make_fake engine eng '[]'

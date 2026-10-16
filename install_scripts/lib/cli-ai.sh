@@ -392,66 +392,8 @@ cmd_config() {
 
 cmd_guide() {
     (($# == 0)) || fail "$EXIT_USAGE" "guide takes no argument (got '$1')"
-    cat <<'EOF'
-easy-cs-ai: guide for an AI agent (or any program) acting for a user
-
-Rule: --json is accepted by every command that outputs data; with it, stdout
-is exactly one JSON document and stderr holds the logs. A command that only
-returns data (config schema, the actions of a component) prints JSON without
-it; one with a human rendering (tables, plans) prints that, and it is not a
-stable interface. The exit code is the first success signal (0 = ok, 2 = usage or invalid input,
-3 platform, 4 precondition, 5 network, 6 verification, 7 incomplete rollback).
-
-Procedure
- 1. Ask before assuming. Nothing is chosen on the user's behalf: the stack
-    (install --defaults included) is the user's decision; the ranks of the
-    catalog are only a suggestion.
- 2. Discover:   easy-cs-ai catalog --json    what can be installed, options,
-                                             ranks, default models
-               easy-cs-ai host --json       this machine (CPU, RAM, disk, GPU)
-    For another machine (a VM to provision), ask the user for its specs.
- 3. Choose the models. There are TWO ORDERS: ask the user which one applies.
-    a) HARDWARE FIRST, a VM is imposed: which models fit it?
-         easy-cs-ai provisioning llmfit suggest --json --target-ram GB
-           [--target-vram GB] [--target-cpu-cores N]
-       lists the models that fit, best first. For a model the user names:
-         easy-cs-ai provisioning llmfit check MODEL --target-ram GB ...
-       answers {"fits", "reason"}.
-    b) MODELS FIRST, the user has models in mind: which VM do they need?
-         easy-cs-ai provisioning llmfit plan MODEL... --json
-           [--chat-interface] [--target-cpu-cores N]
-       Read quantisations.best and quantisations.default (the 8-bit and the
-       usual 4-bit weights): each has ram_no_gpu (VM without GPU), gpu_memory
-       and gpu_ram (VM with a GPU), disk, and in each model_gb, margin_gb and
-       total_gb. "unsized" lists the models llmfit does not know: say that the
-       figures do not cover them. Give the user the model figure and the
-       margin side by side, and say the margin is an ESTIMATE; never present
-       a total as measured. Do not pick GPU or CPU for them.
-    These are early opinions: the fit is checked again on the VM.
-    llmfit must be installed (easy-cs-ai install provisioning llmfit): ask
-    the user before installing it. Without --json, suggest and plan print a
-    text for a person.
- 4. Draft a configuration (JSON). Its format: easy-cs-ai config schema
-    A secret option is never a plain value: {"file": path}, {"env": NAME} or
-    {"generate": true}. Never put a secret on a command line or in a file.
- 5. Validate:   easy-cs-ai config validate FILE --target fresh --json
-    (--target this for this machine). Fix every entry of "errors" using its
-    "path" and "code", and validate again until "ok" is true.
- 6. Show the user the "plan" and EVERY entry of "warnings" (open registration,
-    ...) and get a yes before going further.
- 7. Produce, as the user chose:
-      - a VM post-install script:
-          easy-cs-ai generate --config FILE --output SCRIPT [--package-version V ...]
-        the user reviews it and runs it on the VM;
-      - or the change on this machine, only with the user's explicit
-        agreement: sudo easy-cs-ai apply FILE --json
- 8. Read the result document of the command and `easy-cs-ai status --json`,
-    and report in plain words. A failure is reported with its "message" and
-    "failed_step"; a second apply resumes where it stopped, do not retry blindly.
- 9. Never run uninstall, remove, apply --prune, --purge, `exec` or
-    `proxy nginx show-key` on your own initiative: exec runs any command of a
-    component's program, outside the state, the lock and the journal.
-EOF
+    [[ -r "$HOME_DIR/guide.md" ]] || fail "$EXIT_PRECONDITION" "guide.md is missing from the package (looked in $HOME_DIR)"
+    cat "$HOME_DIR/guide.md"
 }
 
 # --- result documents of the changing commands ----------------------------------------
