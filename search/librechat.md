@@ -32,7 +32,7 @@ Run on 2026-10-09 in WSL2 Ubuntu 24.04 (Docker Engine 29.9.0, Compose v5.6.0).
 - `/health`, `/livez` and `/readyz` return 200 `OK`; the log shows `Connected to MongoDB`. `/readyz` only proves the API is up, it does not detect a FerretDB outage by itself.
 - Registration, login, a streamed chat through a custom endpoint and the conversation display all work. Data is really stored in FerretDB (37 collections created, `users`, `conversations`, `messages` filled; the assistant text is in `messages.content[]`, not in `text`).
 - Everything survives `docker compose down` + `up` (PostgreSQL volume), including the web session.
-- Footprint at idle: API ~420 MiB, PostgreSQL ~100 MiB, FerretDB ~12 MiB (first measure). Measured again on 2026-10-16 with the pinned images: API ~590 MiB, PostgreSQL ~92 MiB, FerretDB ~12 MiB, 0.69 GB in all, 0.71 GB under a light load without accounts (see [decision](../docs/decision-librechat-install.md)). Images: DocumentDB PostgreSQL 2.31 GB, LibreChat 3.83 GB, FerretDB 54 MB.
+- Footprint at idle: API ~420 MiB, PostgreSQL ~100 MiB, FerretDB ~12 MiB (first measure). Measured again on 2026-10-16 with the pinned images: API ~590 MiB, PostgreSQL ~92 MiB, FerretDB ~12 MiB, 694 MiB in all, 711 MiB under a light load without accounts (see [decision](../docs/decision-librechat-install.md)). Images: DocumentDB PostgreSQL 2.31 GB, LibreChat 3.83 GB, FerretDB 54 MB.
 
 **Known noise:** the API logs `The argument to $size must be an array, but was of type: missing` (`contextProjectionController`) on the first message. MongoDB 7 returns the exact same error, so it is not caused by FerretDB, and it does not break the chat.
 

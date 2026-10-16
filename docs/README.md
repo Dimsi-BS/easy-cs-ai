@@ -19,11 +19,11 @@ This directory contains design decisions and write-ups about the project, comple
 - [Spec: script contract](spec-script-contract.md) — actions, parameters, secrets, output, exit codes and idempotence rules shared by all install scripts
 - [Spec: state format](spec-state-format.md) — layout and JSON schema of `/var/lib/easy-cs-ai/`, feeding `status` and the defaults of `add`
 - [Spec: CLI](spec-cli.md) — dispatch, `status`, `install`, `uninstall`, `add` orchestration with rollback, CLI exit codes
-- [Spec: configuration file and `apply`](spec-config.md) — declarative JSON deployment description, interpreted by `apply`, written by the generator (`--config-only`) and read back with `--config`
+- [Spec: configuration file and `apply`](spec-config.md) — declarative JSON deployment description, interpreted by `apply`, written by the generator (`--config-only`) and read back with `--config`; the `vm` field, the place of a model (`vm` and `engine`) and what a model needs (proxy, llmfit) are proposed
 - [Spec: VM script generator](spec-vm-generator.md) — the interactive rendering of the journey, `--config`, package source, shape of the generated VM script
 - [Decision: JSON output without `--json`?](decision-json-output-rule.md) — `--json` accepted everywhere, JSON by default allowed for data-only commands (accepted)
 - [Spec: the journey](spec-journey.md) — from a need to a stack, in seven steps defined once and walked either as an interactive session or with arguments and `--json`; rules that keep the two in step
 - [Spec: capabilities of the CLI](spec-capabilities.md) — `catalog`, `host`, `config schema` / `validate`, result documents, typed options, secrets; one document per capability
 - [Spec: renderings](spec-rendering.md) — the same document shown as text and questions for a person, as `--json` and arguments for a program; `guide`; parity checks
-- [Spec: model fit and VM sizing](spec-model-fit.md) — `suggest`, `check`, `plan` of `provisioning llmfit`, the estimated margin, llmfit as an option
+- [Spec: model fit and VM sizing](spec-model-fit.md) — `suggest`, `check`, `plan` of `provisioning llmfit`, the estimated margin, llmfit as an option; the resources declared by each component and the stack with no model are proposed
 - [Spec: two VMs, the engine and the web interface apart](spec-two-vm.md) — the `vm` field of the configuration, one generated script per VM, the link finished by hand once the VMs are up, `add-endpoint` with an API key and a certificate; one VM unchanged (proposed)
