@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. The two ways to walk it exist (see [implementation status](#implementation-status)); the parity test is in `tests/unit/parity.bats`.
+**Status:** accepted. The two ways to walk it exist (see [implementation status](#implementation-status)); the parity test is in `tests/unit/parity.bats`. The VM question and the passes per VM (steps 1, 2 and 4, and what concerns several VMs in 5 and 6) are **proposed, not implemented**, see [spec: two VMs](spec-two-vm.md).
 
 ## Purpose
 
@@ -31,7 +31,7 @@ Both call the same [capabilities](spec-capabilities.md), validate with the same 
 
 | # | The user decides | Capability called | Written to the configuration |
 | --- | --- | --- | --- |
-| 1 | Which machine the stack is for, and whether it is one VM or several | `catalog`, `host` | `components[].vm` (only for several VMs) |
+| 1 | Which machine the stack is for, and whether it is one VM or several | `catalog`, `host` | `components[].vm`, and the `vm` of each model with step 4 (only for several VMs) |
 | 2 | Which component per type, and which dependencies to accept | `catalog`, `config validate` | `components[].type`, `components[].name` |
 | 3 | The options of each component | `config schema` | `components[].options` |
 | 4 | The order, the models, on which engine and chat interface | `provisioning llmfit suggest`, `check`, `plan` | `models[]` |
@@ -66,7 +66,7 @@ What can be installed, and what the target is.
 Asked when an engine is selected (with two VMs, in the pass of the engine's VM: the chat interface is not on that VM, so the VM is sized from its own components and the models are not linked to it, see [spec: two VMs](spec-two-vm.md#in-the-session)). The user either has a VM imposed (**hardware first**) or has models in mind (**models first**). The detail, the actions and the sizing are in [spec: model fit](spec-model-fit.md):
 
 - **Hardware first**: the specs of the VM (RAM, GPU memory, cores) give `suggest`; a model the user names goes through `check`.
-- **Models first**: the names give `plan`, which says what VM to ask for, the estimated margin (the sum of what the components of the VM [declare](spec-model-fit.md#declared-resources)) shown apart from the model figure, and which models or components could not be sized. A VM with no model, such as the web VM of two VMs, is sized from its components alone.
+- **Models first**: the names give `plan`, which says what VM to ask for, the estimated margin (the sum of what the components of the VM [declare](spec-model-fit.md#declared-resources)) shown apart from the model figure, and which models or components could not be sized. A VM with no model, such as the web VM of two VMs or an engine VM that has none yet, is sized from its components alone, without a GPU figure.
 - llmfit is optional. Without it the user gives the names, and the models are written with `force` and a warning that they are not checked for fit on the VM.
 - With several VMs, each model is written with its **place**, the `vm` of the pass and the `engine` chosen, see [spec: config](spec-config.md#where-a-model-goes). A program that cannot say where a model goes leaves it out only when the file has one answer, otherwise `config validate` says why (`ambiguous_engine`, `engine_other_vm`…).
 - The specs, verdicts and recommendation are an early opinion and are **not** stored in the configuration; the fit is checked again on the target.

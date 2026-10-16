@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted (secrets handling still open, see [open questions](#open-questions))
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). The `vm` field, [Several VMs](#several-vms) and the [place of a model](#where-a-model-goes) are **proposed, not implemented**, see [spec: two VMs](spec-two-vm.md); a file with no `vm` behaves as described everywhere else.
 
 ## Purpose
 
@@ -107,7 +107,7 @@ A file whose components have no `vm` is a one-VM file: the model resolves as in 
 
 ### Validation
 
-`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, name or option, wrong value type, `schema_version` higher than supported, a secret given as a plain string, an unresolvable `engine` / `chat_interface` of a model. Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed. For a file that names several VMs, each slice is validated as a one-VM file, and `missing_vm`, `chat_interface_other_vm`, `unknown_vm`, `engine_other_vm` and `duplicate_model` join the codes (see [Several VMs](#several-vms) and [Where a model goes](#where-a-model-goes)).
+`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, name or option, wrong value type, `schema_version` higher than supported, a secret given as a plain string, an unresolvable `engine` / `chat_interface` of a model. Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed. For a file that names several VMs, each slice is validated as a one-VM file, and `missing_vm`, `chat_interface_other_vm`, `unknown_vm`, `engine_other_vm` and `duplicate_model` join the codes (`unknown_vm` also for a model that carries a `vm` in a file that names none) (see [Several VMs](#several-vms) and [Where a model goes](#where-a-model-goes)).
 
 ## `apply`
 
