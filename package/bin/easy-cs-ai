@@ -57,8 +57,8 @@ Commands:
   <type>                                   list the components of a type
   add <model> [--engine <n>] [--chat-interface <n>] [--no-chat-interface] [--defaults] [--force]
   remove <model> [--engine <n>]            remove --all [--engine <n>]
-  apply <file|-> [--prune]                 make the machine match a configuration file
-  generate [--config-only] [--config <file>] [options]   VM post-install script generator
+  apply <file|-> [--vm <name>] [--prune]   make the machine match a configuration file (--vm: one VM of a file that names several)
+  generate [--config-only] [--config <file>] [options]   VM post-install script generator (one script per VM when the stack is split in two)
   help, version
 
 For an AI agent or a program (start with guide):
@@ -66,8 +66,8 @@ For an AI agent or a program (start with guide):
   catalog                                  what can be installed (components, options, ranks)
   host                                     this machine: platform, CPU, memory, disk, GPU
   config schema                            the configuration format, as a JSON Schema
-  config validate <file|-> [--target this|fresh]   check a configuration, show its plan
-  provisioning llmfit suggest|plan         the models that fit a VM, or the VM that models need
+  config validate <file|-> [--target this|fresh] [--vm <name>]   check a configuration, show its plan
+  provisioning llmfit suggest|plan         the models that fit a VM, or the VM that models and components need
 
 --json prints one JSON document on stdout instead of the human output (for programs).
 

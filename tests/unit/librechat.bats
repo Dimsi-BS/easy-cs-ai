@@ -772,3 +772,19 @@ secret_of() { printf '%s/librechat-endpoint-%s.env' "$SECRETS" "$1"; }
     grep -q 'NODE_EXTRA_CA_CERTS' "$CONF/docker-compose.yml"
     [ "$(jq -c '.secrets | map(select(test("endpoint")))' "$STATE/components/librechat.json")" = '["/etc/easy-cs-ai/secrets/librechat-endpoint-e1.env"]' ]
 }
+
+@test "add-endpoint options are given once: a second --model, --api-key-file or --ca-file is a usage error" {
+    lc install
+    lc add-endpoint e1 http://127.0.0.1:11434/v1 --model a --model b
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"--model is given more than once"* ]]
+    lc add-endpoint e1 http://127.0.0.1:11434/v1 --model=a --model=b
+    [ "$status" -eq 2 ]
+    mk_key k.txt
+    lc add-endpoint e1 http://127.0.0.1:11434/v1 --api-key-file "$BATS_TEST_TMPDIR/k.txt" --api-key-file "$BATS_TEST_TMPDIR/k.txt"
+    [ "$status" -eq 2 ]
+    mk_cert c1 llm1.test
+    lc add-endpoint e1 http://127.0.0.1:11434/v1 --ca-file "$BATS_TEST_TMPDIR/c1.crt" --ca-file "$BATS_TEST_TMPDIR/c1.crt"
+    [ "$status" -eq 2 ]
+    [ "$(jq -c '.endpoints' "$STATE/components/librechat.json")" = '[]' ]
+}

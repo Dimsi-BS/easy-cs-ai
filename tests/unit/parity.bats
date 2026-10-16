@@ -150,6 +150,47 @@ parity() {
     diff -u <(canonical oracle-embedded.json) <(canonical session-embedded.json)
 }
 
+# parity_vms <scenario>: the same, for a stack on two VMs (fake catalog): the session answers, the file
+# written by hand, the same configuration (with the vm of each component), the same plan (one slice per
+# VM), and the same two scripts, each embedding its slice.
+parity_vms() {
+    local dir="$PARITY/fake" oracle plan session_err vm
+    oracle="$dir/$1.json"
+    [ -r "$dir/$1.answers" ]
+    [ -r "$oracle" ]
+    answers_of "$dir/$1.answers" >stdin.txt
+
+    run --separate-stderr bash "$CLI" config validate "$oracle" --target fresh --json
+    [ "$status" -eq 0 ]
+    plan="$output"
+
+    # same configuration
+    run --separate-stderr bash "$GEN" --config-only --output session.json <stdin.txt
+    [ "$status" -eq 0 ]
+    session_err="$stderr"
+    diff -u <(canonical "$oracle") <(canonical session.json)
+    # a summary per VM, and what each shows is what the plan says of that VM
+    [ "$(grep -c '^Summary' <<<"$session_err")" -eq 2 ]
+    [ "$(sed -n 's/^  models: //p' <<<"$session_err" | head -n 1)" = "$(jq -r '[.plan.vms[0].models[].name] | if length == 0 then "none" else join(", ") end' <<<"$plan")" ]
+
+    # same plan
+    run --separate-stderr bash "$GEN" --config "$oracle" --json "${PKG[@]}" --output c.sh
+    [ "$status" -eq 0 ]
+    diff -u <(jq -S . <<<"$plan") <(jq -S 'del(.script, .scripts)' <<<"$output")
+
+    # same scripts, one per VM
+    run --separate-stderr bash "$GEN" "${PKG[@]}" --output session.sh <stdin.txt
+    [ "$status" -eq 0 ]
+    run --separate-stderr bash "$GEN" --config "$oracle" "${PKG[@]}" --output oracle.sh </dev/null
+    [ "$status" -eq 0 ]
+    for vm in $(jq -r '.plan.vms[].vm' <<<"$plan"); do
+        diff -u <(bare "oracle-$vm.sh") <(bare "session-$vm.sh")
+        embedded "oracle-$vm.sh" >oracle-embedded.json
+        embedded "session-$vm.sh" >session-embedded.json
+        diff -u <(canonical oracle-embedded.json) <(canonical session-embedded.json)
+    done
+}
+
 # --- fake catalog -------------------------------------------------------------------------------
 
 @test "parity: an engine and one model, added unchecked as no llmfit is in the stack" {
@@ -182,6 +223,15 @@ parity() {
     llmfit_ready
     parity fake models-first
     grep -qx 'plan m1@ollama m2@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama' "$CALLS"
+}
+
+@test "parity: the engine and the web interface on two VMs, each pass sized from its own components" {
+    llmfit_ready
+    parity_vms two-vm
+    # the engine VM: its model with its engine, and its own components, nothing of the chat interface
+    grep -qx 'plan m1@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama' "$CALLS"
+    # the web VM holds no model: sized from its components alone, with no model asked for
+    grep -qx 'plan --component proxy/prox --component chat-interface/chat' "$CALLS"
 }
 
 # --- the shipped scripts ------------------------------------------------------------------------

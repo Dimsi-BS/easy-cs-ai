@@ -1,0 +1,12 @@
+2  # one VM for the engine, a second one for the web interface
+  # engine VM, provisioning: llmfit, the rank 1
+  # proxy: prox
+  # engine: ollama
+  # ollama --port, the default
+m  # order: models first
+m1  # models to add
+y  # confirm the engine VM
+  # web VM, proxy: prox
+  # chat interface: chat
+  # chat --allow-registration, the default
+y  # confirm the web VM

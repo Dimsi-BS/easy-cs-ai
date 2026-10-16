@@ -442,8 +442,13 @@ summary_warnings() {
 
 # print_summary <config>: components in install order, options (secrets are
 # generated, so nothing to mask), models, platforms, and the warnings of the options.
+# SUMMARY_ERRORS: how many problems the last summary showed (what a model needs and the file does not give,
+# for instance a package that ships no proxy to propose): the session does not confirm a configuration that
+# cannot finish.
+SUMMARY_ERRORS=0
+
 print_summary() {
-    local config="$1" desc order type name warnings fit
+    local config="$1" desc order type name warnings fit errors
     desc="$(apply_describes "$config")"
     order="$(apply_order "$config" "$desc")"
     warnings="$(summary_warnings "$config" "$desc")"
@@ -453,6 +458,9 @@ print_summary() {
     for fit in "${SESSION_FIT_WARN[@]}"; do
         warnings="${warnings:+$warnings$'\n'}    may not fit the VM, $fit"
     done
+    errors="$(apply_problems "$config" "$desc" true | jq -r '.[] | select(.code == "missing_requirement" and (.path | startswith("$.models"))) | "    \(.message)"')"
+    SUMMARY_ERRORS=0
+    [[ -z "$errors" ]] || SUMMARY_ERRORS="$(grep -c . <<<"$errors")"
     {
         printf '\nSummary\n  components, in install order:\n'
         while read -r type name; do
@@ -463,6 +471,9 @@ print_summary() {
         printf '  platforms: %s\n' "$(jq -r '[.[].platforms[]?] | unique | join(", ")' <<<"$desc")"
         if [[ -n "$warnings" ]]; then
             printf '  [WARN] to read before creating the VM:\n%s\n' "$warnings"
+        fi
+        if [[ -n "$errors" ]]; then
+            printf '  [ERROR] to fix before this can be confirmed:\n%s\n' "$errors"
         fi
     } >&2
     _print_vm_recommendation
@@ -531,7 +542,13 @@ run_pass() {
             _read "Confirm (y), cancel (n) or redo a step: $menu" y
             answer="$REPLY"
             case "$answer" in
-            y | Y) return 0 ;;
+            y | Y)
+                if ((SUMMARY_ERRORS)); then
+                    log_warn "this configuration cannot finish, redo a step or cancel"
+                else
+                    return 0
+                fi
+                ;;
             n | N) log_info "cancelled, nothing written"; exit 0 ;;
             c | C) step=1 ;;
             o | O) step=3 ;;

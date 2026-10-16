@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "components": [
+    { "type": "provisioning", "name": "llmfit", "vm": "engine" },
+    { "type": "proxy", "name": "prox", "vm": "engine" },
+    { "type": "engine", "name": "ollama", "vm": "engine" },
+    { "type": "proxy", "name": "prox", "vm": "web" },
+    { "type": "chat-interface", "name": "chat", "vm": "web" }
+  ],
+  "models": [{ "name": "m1", "vm": "engine", "engine": "ollama" }]
+}

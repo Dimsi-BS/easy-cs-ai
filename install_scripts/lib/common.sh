@@ -289,6 +289,16 @@ read_secret() {
     printf '%s\n' "$value"
 }
 
+# once_only <option>: an option of an action may be given once, unless its `describe` says it is
+# `repeatable` (docs/spec-script-contract.md#describe): given again it is a usage error, exit 2.
+declare -A _ONCE_SEEN=()
+once_only() {
+    if [[ -n "${_ONCE_SEEN[$1]:-}" ]]; then
+        die "$EXIT_USAGE" "$1 is given more than once"
+    fi
+    _ONCE_SEEN[$1]=1
+}
+
 # generate_secret: print a random secret, 32 bytes from /dev/urandom,
 # base64url without padding.
 generate_secret() {

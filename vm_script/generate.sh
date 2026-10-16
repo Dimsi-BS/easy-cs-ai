@@ -49,11 +49,15 @@ usage() {
 Usage: generate [options]
 
 Writes the VM post-install script (default ./easy-cs-ai-vm.sh), after an
-interactive session or from a configuration file.
+interactive session or from a configuration file. When the stack is split on
+two VMs (the first question of the session, or components that carry a vm),
+it writes one script per VM, the VM inserted before the extension of the name
+(easy-cs-ai-vm-engine.sh, easy-cs-ai-vm-web.sh), then prints what is left to do
+once the VMs are up.
 
   --config <file>          configuration to turn into a script, no prompt at all
   --config-only            write only the configuration (default ./easy-cs-ai.json)
-  --output <path>          where to write the result
+  --output <path>          where to write the result (for several VMs: the name the VM is inserted in)
   --package-url <url>      where the VM downloads the package (a mirror, for instance)
   --package-version <v>    pinned version (default: the version of the installed CLI)
   --package-format <f>     deb (default), rpm or tarball
@@ -61,7 +65,8 @@ interactive session or from a configuration file.
   --package-file <path>    compute the checksum from a local copy of the package
   --dry-run                run everything, print the result on stderr, write nothing
   --json                   with --config: print one JSON document on stdout (validation,
-                           warnings, plan, script written) instead of the human output
+                           warnings, plan, script written, or scripts and next steps for
+                           several VMs) instead of the human output
   --help --version --verbose
 
 Without --package-sha256 or --package-file, the checksum is read from <url>.sha256.
@@ -219,7 +224,7 @@ emit_vm_scripts() {
     SCRIPT_PATHS=()
     for vm in "${names[@]}"; do
         i=$((i + 1))
-        slice="$(apply_slice "$config" "$vm")"
+        slice="$(apply_slice "$config" "$vm" | jq .)"
         out="$(vm_path "$base" "$vm")"
         content="$(build_script "$slice" "$vm" "$i" "$total")"
         size="$(printf '%s\n' "$content" | wc -c)"

@@ -434,3 +434,105 @@ JSON
     grep -qx '    --model m1 --api-key-file <file>' <<<"$step4"
     grep -qx '    --server-name <name or address>' <<<"$step4"
 }
+
+# --- the sizing of each pass, with a llmfit that is there --------------------------------------
+
+make_llmfit() {
+    cat >"$EASY_CS_AI_HOME/provisioning/llmfit.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >>"$CALLS"
+case "$1" in
+describe) jq -n '{name: "llmfit", type: "provisioning", component_version: "9.9", requires: [], platforms: ["debian","ubuntu"], options: []}' ;;
+status) echo '{"installed":true,"running":true,"healthy":true}' ;;
+suggest) printf '   1) m1:1b   Good, needs 1 GB\n' ;;
+plan) printf '\nFAKE PLAN of %s\n' "$*" ;;
+esac
+FAKE
+    chmod +x "$EASY_CS_AI_HOME/provisioning/llmfit.sh"
+    printf 'provisioning llmfit\nengine eng\nproxy prox\nchat-interface chat\n' >"$EASY_CS_AI_HOME/ranks.conf"
+    export CALLS="$BATS_TEST_TMPDIR/llmfit-calls"
+    : >"$CALLS"
+}
+
+@test "each pass is sized from its own components, and the cores given for the engine VM stay with it" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    # engine VM: llmfit, proxy and its two options, engine and its port, hardware first with 16 GB, no GPU
+    # and 4 cores, no model; web VM: proxy and its two options, the interface
+    ask 2 "" "" "" "" "" "" "" 16 "" 4 "" y "" "" "" "" y
+    [ "$status" -eq 0 ]
+    # the engine VM has no model: its components, and the cores that were given for it
+    grep -qx 'plan --component provisioning/llmfit --component proxy/prox --component engine/eng --target-cpu-cores 4' "$CALLS"
+    # the web VM: its own components only, no model, and nothing of the engine VM's specs
+    grep -qx 'plan --component proxy/prox --component chat-interface/chat' "$CALLS"
+    [ "$(grep -c '^plan' "$CALLS")" -eq 2 ]
+    [[ "$stderr" == *"FAKE PLAN of plan --component provisioning/llmfit"* && "$stderr" == *"FAKE PLAN of plan --component proxy/prox --component chat-interface/chat"* ]]
+}
+
+@test "in the m order the engine VM asks for its models as <model>@<engine>, with its own components and no chat interface" {
+    make_llmfit
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask 2 "" "" "" "" "" "" m "m1, m2" y "" "" "" "" y
+    [ "$status" -eq 0 ]
+    grep -qx 'plan m1@eng m2@eng --component provisioning/llmfit --component proxy/prox --component engine/eng' "$CALLS"
+    [ "$(jq -c '.models | map([.name, .vm, .engine])' cfg.json)" = '[["m1","engine","eng"],["m2","engine","eng"]]' ]
+}
+
+# --- a file that names one VM only ---------------------------------------------------------------
+
+@test "a file that names one VM only takes the path of several: a script named after the VM, its header, scripts with one entry" {
+    cat >one.json <<'JSON'
+{ "schema_version": 1, "components": [ { "type": "proxy", "name": "prox", "vm": "a" }, { "type": "engine", "name": "eng", "vm": "a" } ] }
+JSON
+    gen --config one.json --json "${PKG[@]}" --output o.sh
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.script, (.scripts | map(.vm)), (.scripts | map(.path)), .next_steps]' <<<"$output")" = '[null,["a"],["o-a.sh"],[]]' ]
+    grep -q '^# VM: a (1 of 1)$' o-a.sh
+    [ ! -e o.sh ]
+    [ "$(embedded o-a.sh | jq -c '[.components[] | has("vm")] | any')" = "false" ]
+    # the steps need two VMs at least
+    run --separate-stderr bash "$CLI" config validate one.json --target fresh --json
+    [ "$(jq -c '.next_steps' <<<"$output")" = "[]" ]
+    # apply needs the VM, as for any file that names VMs
+    run --separate-stderr bash "$CLI" apply one.json --dry-run
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"select one with --vm"* ]]
+}
+
+@test "the same file without its vm fields gives today's script, with no VM line" {
+    cat >one.json <<'JSON'
+{ "schema_version": 1, "components": [ { "type": "proxy", "name": "prox", "vm": "a" }, { "type": "engine", "name": "eng", "vm": "a" } ] }
+JSON
+    jq 'del(.components[].vm)' one.json >none.json
+    gen --config none.json "${PKG[@]}" --output n.sh
+    [ "$status" -eq 0 ]
+    [ -x n.sh ]
+    [ -z "$(grep '^# VM:' n.sh)" ]
+    gen --config one.json "${PKG[@]}" --output o.sh
+    diff <(embedded n.sh | jq -S .) <(embedded o-a.sh | jq -S .)
+    diff <(grep -v '^# VM:\|^# easy-cs-ai VM' n.sh) <(grep -v '^# VM:\|^# easy-cs-ai VM' o-a.sh)
+}
+
+# --- engine_address_unknown, the cases that do not give it -------------------------------------
+
+@test "engine_address_unknown is not given for a protected engine, for another layout, or when no model is on the engine VM" {
+    two_vm_file f.json
+    # a protected engine
+    jq '(.components[] | select(.name == "eng") | .name) = "prot" | .models[0].engine = "prot"' f.json >p.json
+    run --separate-stderr bash "$CLI" config validate p.json --target fresh --json
+    [ "$(jq -c '[.warnings[] | select(.code == "engine_address_unknown")] | length' <<<"$output")" = 0 ]
+    # a third VM: another layout
+    jq '.components += [{"type": "proxy", "name": "prox", "vm": "extra"}]' f.json >t.json
+    run --separate-stderr bash "$CLI" config validate t.json --target fresh --json
+    [ "$(jq -c '[.warnings[] | select(.code == "engine_address_unknown")] | length' <<<"$output")" = 0 ]
+    # no model on the engine VM: it is the other warning's case, and never both
+    jq 'del(.models)' f.json >m.json
+    run --separate-stderr bash "$CLI" config validate m.json --target fresh --json
+    [ "$(jq -c '[.warnings[] | select(.code == "engine_address_unknown")] | length' <<<"$output")" = 0 ]
+    # and it is shown once, in the summary of the last pass, not in the one of the engine pass
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask 2 "${ENGINE_PASS[@]}" "${WEB_PASS[@]}"
+    [ "$(grep -c 'The address of the engine VM is not known yet' <<<"$stderr")" -eq 1 ]
+    last="${stderr##*VM web}"
+    [[ "$last" == *"The address of the engine VM is not known yet"* ]]
+}

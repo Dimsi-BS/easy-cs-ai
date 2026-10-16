@@ -126,6 +126,7 @@ parse_args() {
             set_option "$NAME" "${opt#--}" "$value"
             ;;
         --target-ram | --target-vram | --target-cpu-cores | --target-ram=* | --target-vram=* | --target-cpu-cores=*)
+            once_only "${opt%%=*}"
             if [[ "$opt" == *=* ]]; then
                 value="${opt#*=}"
                 opt="${opt%%=*}"
@@ -149,6 +150,7 @@ parse_args() {
             esac
             ;;
         -n)
+            once_only -n
             [[ "$ACTION" == suggest ]] || die "$EXIT_USAGE" "-n only applies to suggest"
             [[ $# -gt 0 ]] || die "$EXIT_USAGE" "-n needs a value"
             COUNT="$1"
@@ -156,6 +158,7 @@ parse_args() {
             [[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || die "$EXIT_USAGE" "-n needs a positive whole number, got '$COUNT'"
             ;;
         --chat-interface)
+            once_only --chat-interface
             [[ "$ACTION" == plan ]] || die "$EXIT_USAGE" "--chat-interface only applies to plan"
             CHAT_INTERFACE=1
             ;;

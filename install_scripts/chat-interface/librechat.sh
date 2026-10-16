@@ -125,23 +125,26 @@ parse_args() {
             set_option "$NAME" "${opt#--}" "$value"
             ;;
         --model)
+            once_only --model
             [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$opt needs a value"
             ENDPOINT_MODEL="$1"
             shift
             ;;
-        --model=*) ENDPOINT_MODEL="${opt#*=}" ;;
+        --model=*) once_only --model; ENDPOINT_MODEL="${opt#*=}" ;;
         --api-key-file)
+            once_only --api-key-file
             [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$opt needs a value"
             ENDPOINT_KEY_FILE="$1"
             shift
             ;;
-        --api-key-file=*) ENDPOINT_KEY_FILE="${opt#*=}" ;;
+        --api-key-file=*) once_only --api-key-file; ENDPOINT_KEY_FILE="${opt#*=}" ;;
         --ca-file)
+            once_only --ca-file
             [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$opt needs a value"
             ENDPOINT_CA_FILE="$1"
             shift
             ;;
-        --ca-file=*) ENDPOINT_CA_FILE="${opt#*=}" ;;
+        --ca-file=*) once_only --ca-file; ENDPOINT_CA_FILE="${opt#*=}" ;;
         --default) MAKE_DEFAULT=1 ;;
         --force) FORCE=1 ;;
         --purge) PURGE=1 ;;

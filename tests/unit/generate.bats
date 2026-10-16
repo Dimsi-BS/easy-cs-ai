@@ -726,3 +726,19 @@ FAKE
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"no recommendation"* ]]
 }
+
+@test "a package that ships no proxy to propose: the summary shows the error, and it is not confirmed" {
+    rm "$EASY_CS_AI_HOME/proxy/prox.sh"
+    GEN_ARGS=(--config-only --output cfg.json)
+    # engine, no model on the first try, then a model, a confirmation that is refused, and a cancel
+    ask eng none "" m1 y n
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"[ERROR] to fix before this can be confirmed:"*"model m1 needs a proxy to be reached from outside the VM"* ]]
+    [[ "$stderr" == *"this configuration cannot finish, redo a step or cancel"* ]]
+    [ ! -e cfg.json ]
+    # without the model the same package is fine
+    ask eng none "" "" y
+    [ "$status" -eq 0 ]
+    [ -s cfg.json ]
+    [[ "$stderr" != *"[ERROR]"* ]]
+}

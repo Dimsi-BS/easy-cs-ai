@@ -728,3 +728,23 @@ FAKE
     [[ "$output" == *"Recommended VM:"*"nosuch: not estimated"* ]]
     [[ "$output" != *"VM without GPU"* ]]
 }
+
+@test "an option of an action that is not repeatable is a usage error when it is given twice, --component is repeatable" {
+    llmfit install
+    make_planning_llmfit
+    llmfit suggest --target-ram 8 --target-ram 16
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"--target-ram is given more than once"* ]]
+    llmfit suggest --target-ram=8 --target-ram 16
+    [ "$status" -eq 2 ]
+    llmfit suggest -n 2 -n 3
+    [ "$status" -eq 2 ]
+    llmfit plan hf/m --chat-interface --chat-interface
+    [ "$status" -eq 2 ]
+    make_tree
+    llmfit plan hf/m --component engine/one --component proxy/prox --json
+    [ "$status" -eq 0 ]
+    # the describe says which one may be repeated
+    llmfit describe
+    [ "$(jq -c '[.action_options.plan[] | select(.repeatable == true) | .name]' <<<"$output")" = '["component"]' ]
+}
