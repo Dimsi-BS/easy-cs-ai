@@ -39,7 +39,7 @@ Both call the same [capabilities](spec-capabilities.md), validate with the same 
 | 6 | A script to run on a VM, or a change on this machine | `generate`, `apply` | — |
 | 7 | — (reported to the user) | the result document, `status` | — |
 
-Steps 2 to 4 may be revisited from the summary of step 5 (`c`, `o`, `m` in the session); the dependency check always follows the components.
+Steps 2 to 4 may be revisited from the summary of step 5 (`c`, `o`, `m` in the session; `m` is not offered in the `web` pass of two VMs, which has no models step, see [spec: two VMs](spec-two-vm.md#in-the-session)); the dependency check always follows the components.
 
 ### 1. Discover
 

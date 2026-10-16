@@ -45,7 +45,7 @@ Takes the [configuration](spec-config.md) from a file instead of a session: **no
 
 ## Implementation notes
 
-- The session offers **one component per type** (per VM when the stack is split, see [spec: two VMs](spec-two-vm.md#in-the-session)): the configuration allows several, but there is no question for a second one; edit the file written by `--config-only` for that (see [journey](spec-journey.md#2-components-and-dependencies)). At the summary, `y` confirms, `n` cancels, and `c`, `o` or `m` redo the components (with their dependencies), the options or the models.
+- The session offers **one component per type** (per VM when the stack is split, see [spec: two VMs](spec-two-vm.md#in-the-session)): the configuration allows several, but there is no question for a second one; edit the file written by `--config-only` for that (see [journey](spec-journey.md#2-components-and-dependencies)). At the summary, `y` confirms, `n` cancels, and `c`, `o` or `m` redo the components (with their dependencies), the options or the models (`m` is not offered in the `web` pass of two VMs, which has no models step, see [spec: two VMs](spec-two-vm.md#in-the-session)).
 - The generator plans for another machine: what is installed on the machine running it is ignored (`EASY_CS_AI_ASSUME_EMPTY`), so a configuration is validated as for a fresh VM, and a requirement that the file does not satisfy is an incomplete file (exit 2).
 - The validation, the ordering of components and the summary are the code of `apply` (`lib/cli-apply.sh`), so the generator and `apply` cannot disagree.
 - `--dry-run` also applies to `--config-only`: the configuration goes to stderr.
