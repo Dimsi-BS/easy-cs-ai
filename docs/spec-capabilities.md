@@ -180,6 +180,7 @@ Which models fit a machine, and what VM some models need, are capabilities too: 
 | `type` | `string` (default when absent), `integer`, `boolean`, `enum` |
 | `values` | The allowed values, for `enum` |
 | `min`, `max` | Bounds, for `integer` |
+| `repeatable` | `true` when an **action** option may be given several times (default `false`; never on an option of the configuration), see the [contract](spec-script-contract.md#describe). `catalog` carries it verbatim; it has no `config schema` or `config validate` effect, since those concern the options of the configuration |
 
 The scripts already validate these values at run time; `type` makes it available beforehand to `catalog`, `config schema` and `config validate` (code `invalid_value`). Every shipped script gets its options typed with this change. In the configuration, a typed option accepts the JSON type that matches (`11434` or `"11434"` for an integer, `true` or `"true"` for a boolean): the CLI passes the text.
 
