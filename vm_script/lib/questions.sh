@@ -110,8 +110,9 @@ step_dependencies() {
 # --- Step 3: options ------------------------------------------------------------------
 
 step_options() {
-    local t name oname default descr secret
+    local only="${1:-}" t name oname default descr secret
     for t in "${TYPES[@]}"; do
+        [[ -z "$only" || "$t" == "$only" ]] || continue
         name="${SEL[$t]:-}"
         [[ -n "$name" ]] || continue
         _describe_of "$t" "$name"
@@ -271,6 +272,33 @@ _print_vm_recommendation() {
     printf '%s\n' "$SESSION_PLAN" >&2
 }
 
+# _propose_proxy: the models named need a proxy to be reached from outside the VM when their engine
+# is not protected (docs/spec-config.md#what-a-model-needs). Without one in the stack the session
+# proposes the rank 1 proxy, as it proposes a missing dependency: `y` adds it and asks its options,
+# `n` takes the models out of the list. A package that ships no proxy proposes nothing: the
+# validation says why in the summary.
+_propose_proxy() {
+    local engine="${SEL[engine]:-}" proxy names
+    ((${#SESSION_MODELS[@]})) || return 0
+    [[ -n "$engine" && -z "${SEL[proxy]:-}" ]] || return 0
+    _describe_of engine "$engine"
+    [[ "$(jq -r '.endpoint.protected // false' <<<"${DESC[$engine]}")" != true ]] || return 0
+    proxy="$(rank_lookup proxy)"
+    [[ -n "$proxy" && -f "$(script_path proxy "$proxy")" ]] || proxy="$(component_names proxy | head -1)"
+    [[ -n "$proxy" ]] || return 0
+    names="$(printf '%s, ' "${SESSION_MODELS[@]}")"
+    names="${names%, }"
+    _read "$names needs a proxy to be reached from outside the VM (the engine listens on the loopback only). Add $proxy? (y/n)" y
+    if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
+        SEL[proxy]="$proxy"
+        step_options proxy
+    else
+        log_warn "without a proxy the models cannot be reached from outside the VM: none is added"
+        SESSION_MODELS=()
+        SESSION_FIT_WARN=()
+    fi
+}
+
 step_models() {
     local m s script="" suggested=0 prompt picked
     SESSION_MODELS=()
@@ -319,6 +347,7 @@ step_models() {
         if ((suggested && ! picked)); then _check_model "$script" "$m"; fi
     done
     IFS=$' \t\n'
+    _propose_proxy
     if [[ -n "$script" && "$MODELS_ORDER" == m ]]; then
         # The recommendation is printed once, in the summary that follows.
         _plan_models "$script"

@@ -9,4 +9,5 @@ none  # chat-interface
   # GPU memory: none
 4  # CPU cores
 1  # models: the first suggestion
+y  # llama3.2:3b needs a proxy: add prox? yes
 y  # confirm

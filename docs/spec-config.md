@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). The `vm` field, [Several VMs](#several-vms) and the [place of a model](#where-a-model-goes) are **proposed, not implemented**, see [spec: two VMs](spec-two-vm.md); a file with no `vm` behaves as described everywhere else. So is [What a model needs](#what-a-model-needs), which also concerns a one-VM file: one that `apply` would stop at the model step is refused by the validation instead.
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). The `vm` field, [Several VMs](#several-vms), the [place of a model](#where-a-model-goes) and [What a model needs](#what-a-model-needs) are **implemented in the validation**: `config validate` (with `--vm`), `config schema`, and `apply` (with `--vm`), tested in `tests/unit/config_vm.bats`; a file with no `vm` behaves as described everywhere else. What is **not implemented yet** is what depends on the generator and the other scripts of [spec: two VMs](spec-two-vm.md): the VM question and one script per VM, `generate --config` of a file with `vm`, the `next_steps` and the cross-VM warnings of the validation document, and the `models_not_checked` warning moved to the validation. What a model needs also concerns a one-VM file: one that `apply` would stop at the model step is refused by `config validate` and `generate --config` instead (`apply` keeps its exit 4).
 
 ## Purpose
 

@@ -166,7 +166,7 @@ full_config() {
     { "type": "engine", "name": "eng", "default": true, "options": { "port": 11500, "api-key": { "env": "KEY" } } },
     { "type": "proxy", "name": "prox" }
   ],
-  "models": [ { "name": "m1" } ]
+  "models": [ { "name": "m1", "force": true } ]
 }
 JSON
 }
@@ -177,7 +177,7 @@ JSON
     [ "$status" -eq 0 ]
     one_document
     run jq -c '[.schema_version, .ok, .target, .errors, (.plan.components | map("\(.order):\(.name)")), .plan.models, .plan.prune]' <<<"$output"
-    [ "$output" = '[1,true,"this",[],["1:eng","2:prox","3:chat"],[{"name":"m1","engine":"eng","chat_interface":"chat","force":false}],false]' ]
+    [ "$output" = '[1,true,"this",[],["1:eng","2:prox","3:chat"],[{"name":"m1","engine":"eng","chat_interface":"chat","force":true}],false]' ]
     cli config validate "$CFG" --json
     # a secret is shown as its source, never as a value
     [ "$(jq -c '.plan.components[0].options' <<<"$output")" = '{"port":11500,"api-key":{"env":"KEY"}}' ]
@@ -361,7 +361,7 @@ JSON
     [ "$output" = '$.models[0].engine unresolved_engine' ]
     run problems "$c"',{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat"},{"type":"chat-interface","name":"chat"}],"models":[{"name":"m","engine":"eng"}]}'
     [[ "$output" == *'$.components duplicate_component'* ]]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","default":true},{"type":"proxy","name":"prox"}],"models":[{"name":"m","chat_interface":"zzz"}]}'
+    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","default":true},{"type":"proxy","name":"prox"}],"models":[{"name":"m","force":true,"chat_interface":"zzz"}]}'
     [ "$output" = '$.models[0].chat_interface unresolved_chat_interface' ]
     run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng"}],"models":[{"name":"","force":"yes"}]}'
     [[ "$output" == *'$.models[0].name wrong_type'* && "$output" == *'$.models[0].force wrong_type'* ]]
@@ -369,7 +369,7 @@ JSON
 
 @test "codes: a configuration with several chat interfaces and no default is ambiguous" {
     make_fake chat-interface chat2 '["proxy"]'
-    run problems '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng"},{"type":"chat-interface","name":"chat"},{"type":"chat-interface","name":"chat2"}],"models":[{"name":"m"}]}'
+    run problems '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng"},{"type":"chat-interface","name":"chat"},{"type":"chat-interface","name":"chat2"}],"models":[{"name":"m","force":true}]}'
     [ "$output" = '$.models[0].chat_interface ambiguous_chat_interface' ]
 }
 
@@ -538,7 +538,7 @@ JSON
 
 @test "apply --json: the result of the run, a failing step stops it and is named" {
     full_config
-    jq '.components[1].options = {"port": 11500} | .components += [{"type": "provisioning", "name": "fit"}]' "$CFG" >"$CFG.2"
+    jq '.components[1].options = {"port": 11500} | .components += [{"type": "provisioning", "name": "fit"}] | del(.models[0].force)' "$CFG" >"$CFG.2"
     cli apply "$CFG.2" --json
     [ "$status" -eq 0 ]
     one_document
@@ -553,7 +553,8 @@ JSON
 
 @test "apply --json: a failure outside a component script still names the step" {
     full_config
-    KEY=x cli apply "$CFG" --json
+    jq 'del(.models[0].force)' "$CFG" >"$CFG.2"
+    KEY=x cli apply "$CFG.2" --json
     [ "$status" -eq 4 ]
     [ "$(jq -r '.ok, .failed_step, .message' <<<"$output" | paste -sd'|')" = "false|add m1|fit is required to add a model (exit 4: precondition not met)" ]
 }

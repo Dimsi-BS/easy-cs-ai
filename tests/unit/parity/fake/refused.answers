@@ -11,4 +11,5 @@ none  # chat-interface
   # ollama --port, the default
   # llmfit is not installed here: install it now? no
 m1  # models to add
+y  # m1 needs a proxy: add prox? yes
 y  # confirm

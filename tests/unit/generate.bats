@@ -100,11 +100,11 @@ ask() { ANSWERS="$(printf '%s\n' "$@")"; export ANSWERS; session; }
 
 @test "the summary can be redone from a step, or cancelled" {
     GEN_ARGS=(--config-only --output cfg.json)
-    ask none eng none "" m1 m m2 y
+    ask none eng none "" m1 y m m2 y
     [ "$status" -eq 0 ]
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m2"]' ]
     rm cfg.json
-    ask none eng none "" m1 n
+    ask none eng none "" m1 y n
     [ "$status" -eq 0 ]
     [ ! -e cfg.json ]
     [[ "$stderr" == *"cancelled"* ]]
@@ -164,7 +164,7 @@ make_warning_chat() {
 }
 
 @test "no warning section for components without a warning" {
-    valid_config
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng"},{"type":"chat-interface","name":"chat"}]}' >cfg.json
     gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"to read before creating the VM"* ]]
@@ -188,7 +188,7 @@ make_warning_chat() {
 
 valid_config() {
     cat >cfg.json <<'JSON'
-{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng","options":{"port":"9"}},{"type":"chat-interface","name":"chat"}],"models":[{"name":"m1"}]}
+{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng","options":{"port":"9"}},{"type":"chat-interface","name":"chat"}],"models":[{"name":"m1","force":true}]}
 JSON
 }
 
@@ -226,10 +226,10 @@ JSON
 
 @test "a configuration written by --config-only gives the same script as the session" {
     GEN_ARGS=("${PKG[@]}" --output a.sh)
-    ask none eng none "" "m1" y
+    ask none eng none "" "m1" y y
     [ "$status" -eq 0 ]
     GEN_ARGS=(--config-only --output cfg.json)
-    ask none eng none "" "m1" y
+    ask none eng none "" "m1" y y
     gen --config cfg.json "${PKG[@]}" --output b.sh
     [ "$status" -eq 0 ]
     diff <(grep -v '^# easy-cs-ai VM' a.sh) <(grep -v '^# easy-cs-ai VM' b.sh)
@@ -439,7 +439,7 @@ FAKE
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
     # llmfit, proxy, engine, chat; specs (RAM, GPU, cores); models: the first suggestion, then two typed names
-    ask "" none ollama none "" 16 "" 4 "1, big, unknown" y
+    ask "" none ollama none "" 16 "" 4 "1, big, unknown" y y
     [ "$status" -eq 0 ]
     # best score first, only the Ollama tags, nothing that is Too Tight
     [[ "$stderr" == *" 1) llama3.2:3b"*" 2) small:1b"* ]]
@@ -462,7 +462,7 @@ FAKE
 @test "the specs are optional, and without any there is no suggestion and no check" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none "" "" "" "" m1 y
+    ask "" none ollama none "" "" "" "" m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"no spec given"* ]]
     ! grep -q -e suggest -e check -e plan "$CALLS"
@@ -482,7 +482,7 @@ FAKE
 @test "redoing the models offers the specs given before as defaults" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none "" 16 "" 4 "" m "" "" "" "" m1 y
+    ask "" none ollama none "" 16 "" 4 "" m "" "" "" "" m1 y y
     [ "$status" -eq 0 ]
     [ "$(grep -c '^suggest --target-ram 16 --target-cpu-cores 4$' "$CALLS")" -eq 2 ]
     [[ "$stderr" == *"RAM of the VM in GB [16]"* ]]
@@ -492,14 +492,14 @@ FAKE
     make_llmfit
     export FAKE_LLMFIT=missing
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none "" m1 y
+    ask "" none ollama none "" m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"llmfit is not installed here: install it now"*"(y/n) [n]"* ]]
     [[ "$stderr" == *"sudo easy-cs-ai install provisioning llmfit"* ]]
     ! grep -q -e suggest -e check -e install "$CALLS"
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
     # a redo of the step does not ask again
-    ask "" none ollama none n m1 m m2 y
+    ask "" none ollama none n m1 y m m2 y
     [ "$(grep -o 'install it now' <<<"$stderr" | wc -l)" -eq 1 ]
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m2"]' ]
 }
@@ -508,7 +508,7 @@ FAKE
     make_llmfit
     export FAKE_LLMFIT=missing
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none y "" 16 "" "" 1 y
+    ask "" none ollama none y "" 16 "" "" 1 y y
     [ "$status" -eq 0 ]
     grep -qx install "$CALLS"
     grep -qx 'suggest --target-ram 16' "$CALLS"
@@ -519,7 +519,7 @@ FAKE
     make_llmfit
     export FAKE_LLMFIT=missing FAKE_LLMFIT_INSTALL=fail
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none y m1 y
+    ask "" none ollama none y m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"llmfit could not be installed, type the model names"* ]]
     [[ "$stderr" != *"Recommended VM"* ]]
@@ -529,7 +529,7 @@ FAKE
 
 @test "a package that ships no llmfit offers nothing to install" {
     GEN_ARGS=(--config-only --output cfg.json)
-    ask none eng none "" m1 y
+    ask none eng none "" m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"this package ships no llmfit"* ]]
     [[ "$stderr" != *"install it now"* ]]
@@ -539,7 +539,7 @@ FAKE
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
     # llmfit is installed on this machine whatever the stack: the specs are still asked
-    ask none none ollama none "" "" "" "" m1 y
+    ask none none ollama none "" "" "" "" m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"with none, the models are added unchecked"* ]]
     [ "$(jq -c '.models' cfg.json)" = '[{"name":"m1","force":true}]' ]
@@ -559,7 +559,7 @@ FAKE
 @test "the order is asked first, hardware first by default, and a wrong answer is asked again" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none x "" "" "" "" m1 y
+    ask "" none ollama none x "" "" "" "" m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"'x' is not h or m"* ]]
     [[ "$stderr" == *"Order, hardware first (h) or models first (m) [h]"* ]]
@@ -570,7 +570,7 @@ FAKE
 @test "models first: the plan of llmfit is shown as it is, once, in the summary, and nothing is stored in the configuration" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none m m1 y
+    ask "" none ollama none m m1 y y
     [ "$status" -eq 0 ]
     # no specs asked, no suggestion, no fit check: the models are sized instead
     [[ "$stderr" != *"RAM of the VM in GB"* ]]
@@ -591,7 +591,7 @@ FAKE
 @test "models first: all the models are given to the plan, in one call" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none m "m1, m2" y
+    ask "" none ollama none m "m1, m2" y y
     [ "$status" -eq 0 ]
     grep -qx 'plan m1 m2' "$CALLS"
     [ "$(grep -c '^plan' "$CALLS")" -eq 1 ]
@@ -610,7 +610,7 @@ FAKE
 @test "models first: the cores given before are passed to the plan as the vCPU" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none "" "" "" 4 "" m m "m1, unknown" y
+    ask "" none ollama none "" "" "" 4 "" m m "m1, unknown" y y
     [ "$status" -eq 0 ]
     grep -qx 'plan m1 unknown --target-cpu-cores 4' "$CALLS"
     [[ "$stderr" == *"vcpu: 4"* ]]
@@ -629,7 +629,7 @@ FAKE
 @test "models first: the order is offered again when the step is redone, and the recommendation follows the models" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
-    ask "" none ollama none m m1 m "" m2 y
+    ask "" none ollama none m m1 y m "" m2 y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"Order, hardware first (h) or models first (m) [m]"* ]]
     grep -qx 'plan m1' "$CALLS"
@@ -642,7 +642,7 @@ FAKE
 
 @test "--config: no session, so no recommendation" {
     make_llmfit
-    echo '{"schema_version":1,"components":[{"type":"engine","name":"ollama"},{"type":"provisioning","name":"llmfit"}],"models":[{"name":"m1"}]}' >cfg.json
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"ollama"},{"type":"provisioning","name":"llmfit"}],"models":[{"name":"m1"}]}' >cfg.json
     gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"Recommended VM"* ]]
@@ -650,12 +650,57 @@ FAKE
 }
 
 @test "--config: the warning follows a model with force and no llmfit, and nothing else changes" {
-    echo '{"schema_version":1,"components":[{"type":"engine","name":"eng"}],"models":[{"name":"m1","force":true}]}' >cfg.json
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng"}],"models":[{"name":"m1","force":true}]}' >cfg.json
     gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"models not checked for fit on the VM: llmfit is not part of the stack"* ]]
-    echo '{"schema_version":1,"components":[{"type":"engine","name":"eng"}],"models":[{"name":"m1"}]}' >cfg.json
+    # without force, a model needs a provisioning component: the file is refused, not warned about
+    rm -f vm.sh
+    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng"}],"models":[{"name":"m1"}]}' >cfg.json
     gen --config cfg.json "${PKG[@]}" --output vm.sh </dev/null
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"needs a provisioning component"* ]]
+    [ ! -e vm.sh ]
+}
+
+# --- the proxy a model needs ----------------------------------------------------------------
+
+@test "a model on an engine that is not protected proposes a proxy: yes adds it and asks its options" {
+    make_fake proxy prox '[]' '[{"name":"server-name","default":"","secret":false,"description":"Name"}]'
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask none eng none "" m1 y llm.example.org y
     [ "$status" -eq 0 ]
-    [[ "$stderr" != *"not checked for fit"* ]]
+    [[ "$stderr" == *"m1 needs a proxy to be reached from outside the VM (the engine listens on the loopback only). Add prox? (y/n) [y]"* ]]
+    [ "$(jq -c '.components | map(.name)' cfg.json)" = '["prox","eng"]' ]
+    [ "$(jq -c '.components[0].options' cfg.json)" = '{"server-name":"llm.example.org"}' ]
+    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
+}
+
+@test "refusing the proxy takes the models out of the list, with a message" {
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask none eng none "" "m1, m2" n y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"m1, m2 needs a proxy"* ]]
+    [[ "$stderr" == *"without a proxy the models cannot be reached from outside the VM: none is added"* ]]
+    [ "$(jq -c '.components | map(.name)' cfg.json)" = '["eng"]' ]
+    [ "$(jq 'has("models")' cfg.json)" = "false" ]
+}
+
+@test "no proxy is proposed for a protected engine, with no model, or by a package that ships none" {
+    cat >"$EASY_CS_AI_HOME/engine/eng.sh" <<'FAKE'
+#!/usr/bin/env bash
+jq -n '{name: "eng", type: "engine", component_version: "9.9", requires: [], platforms: ["debian","ubuntu"], endpoint: {protected: true}, options: []}'
+FAKE
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask none eng none m1 y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"needs a proxy"* ]]
+    [ "$(jq -c '.components | map(.name)' cfg.json)" = '["eng"]' ]
+    make_fake engine eng '[]' '[]'
+    ask none eng none "" y
+    [[ "$stderr" != *"needs a proxy"* ]]
+    rm "$EASY_CS_AI_HOME/proxy/prox.sh"
+    ask eng none "" m1 y
+    [[ "$stderr" != *"needs a proxy"* ]]
+    [[ "$stderr" == *"m1"* ]]
 }

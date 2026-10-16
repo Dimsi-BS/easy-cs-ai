@@ -6,4 +6,5 @@ none  # chat-interface
   # ollama --port, the default
 m  # order: models first
 m1, m2  # models to add
+y  # m1, m2 need a proxy: add prox? yes
 y  # confirm

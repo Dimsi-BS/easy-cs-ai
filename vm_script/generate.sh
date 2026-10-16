@@ -222,6 +222,7 @@ load_config() {
     jq -e . >/dev/null 2>&1 <<<"$config" || die "$EXIT_USAGE" "$CONFIG_FILE is not valid JSON"
     desc="$(apply_describes "$config")"
     apply_validate "$config" "$desc"
+    apply_validate_models_need "$config" "$desc"
     apply_order "$config" "$desc" >/dev/null
     SESSION_CONFIG="$(jq . <<<"$config")"
     print_summary "$SESSION_CONFIG"

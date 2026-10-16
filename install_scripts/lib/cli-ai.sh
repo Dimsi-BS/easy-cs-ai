@@ -216,6 +216,7 @@ def comp_schema:
      properties: {
        type: {const: $c.type}, name: {const: $c.name},
        default: {type: "boolean", description: "make it the default of its type"},
+       vm: {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: "the VM this component belongs to, when the file describes several: on every component or on none"},
        options: {type: "object", additionalProperties: false,
                  properties: (reduce ($c.describe.options // [])[] as $o ({}; .[$o.name] = ($o | opt_schema)))}}};
 . as $cat
@@ -233,10 +234,11 @@ def comp_schema:
        properties: {
          name: {type: "string", minLength: 1, description: "model name, as the engine knows it"},
          engine: ({type: "string", description: "default: the only engine listed, else the one with default true"} + (if ($engines | length) > 0 then {enum: $engines} else {} end)),
+         vm: {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: "the VM the model is installed on, with engine its place; only in a file whose components have a vm. Default: the VM of the engine"},
          chat_interface: ({type: ["string", "null"], description: "default: like engine, none when no chat interface is listed; null for none"} + (if ($chats | length) > 0 then {enum: ($chats + [null])} else {} end)),
          force: {type: "boolean", description: "true skips the llmfit fit check"}}}}}}'
 
-readonly CONFIG_RULES='A deployment: which components, with which options, and which models. At most one entry per component, at most one default per type, the order of the entries carries no meaning (the install order comes from requires). A component required by another (see its description) must be listed or already installed. A secret option is never a plain value: give {"file": path} (mode 0600), {"env": NAME} or {"generate": true}. Validate with: easy-cs-ai config validate FILE --target fresh|this --json'
+readonly CONFIG_RULES='A deployment: which components, with which options, and which models. At most one entry per component (per VM when components carry a vm: on every component or on none, a model goes to the engine of one VM), at most one default per type (and per VM), the order of the entries carries no meaning (the install order comes from requires). A component required by another (see its description) must be listed or already installed. A secret option is never a plain value: give {"file": path} (mode 0600), {"env": NAME} or {"generate": true}. Validate with: easy-cs-ai config validate FILE --target fresh|this --json'
 
 config_schema_json() {
     catalog_json | jq -c --arg rules "$CONFIG_RULES" --argjson maxver "$APPLY_SCHEMA_VERSION" "$CONFIG_SCHEMA_JQ"
@@ -252,7 +254,8 @@ readonly CONFIG_WARNINGS_JQ='. as $cfg
      | $d.options[]? | select(.warn != null) | . as $opt
      | (if ($o | has($opt.name)) then $o[$opt.name] else $opt.default end | tostring) as $v
      | select($v == $opt.warn.when)
-     | {path: "$.components[\($i)]", component: {type: $c.type, name: $c.name}, option: $opt.name, value: $v, message: $opt.warn.message}]'
+     | {path: "$.components[\($i)]", component: {type: $c.type, name: $c.name}, option: $opt.name, value: $v, message: $opt.warn.message}
+       + (if ($c.vm | type) == "string" then {vm: $c.vm} else {} end)]'
 
 # shellcheck disable=SC2016
 readonly CONFIG_PLAN_JQ='. as $cfg
@@ -262,24 +265,48 @@ readonly CONFIG_PLAN_JQ='. as $cfg
         + (if $installed != null then {installed: ($installed | index($c.name) != null)} else {} end)],
      models: $models, prune: $prune}'
 
-# config_report <config> <target> [<prune>]: print the document of `config validate`
+# config_report <config> <target> [<prune> [<vm>]]: print the document of `config validate`
 # (see docs/spec-capabilities.md): errors, warnings and the plan. <config> is
 # valid JSON. The target is this (this machine) or fresh (a new VM, what is
-# installed here is ignored).
+# installed here is ignored). A file that names VMs is validated in whole, then
+# planned one slice at a time (`plan.vms`); <vm> keeps that slice alone, with its
+# errors and warnings and those of no VM.
 config_report() {
-    local config="$1" target="$2" prune="${3:-false}" desc errors warnings plan=null order models installed=null hostids='[]'
+    local config="$1" target="$2" prune="${3:-false}" vm="${4:-}" desc errors warnings plan=null order models installed=null hostids='[]'
+    local named=0 v slice vmplans='[]' vmlist
     if [[ "$target" == fresh ]]; then
         export EASY_CS_AI_ASSUME_EMPTY=1
     else
         hostids="$(host_ids_json)"
     fi
+    apply_named "$config" && named=1
     desc="$(apply_describes "$config")"
     errors="$(apply_problems "$config" "$desc" true "$hostids")"
     warnings="$(jq -c --argjson desc "$desc" "$CONFIG_WARNINGS_JQ" <<<"$config" 2>/dev/null)" || warnings='[]'
+    if [[ -n "$vm" ]]; then
+        errors="$(jq -c --arg vm "$vm" 'map(select(.vm == null or .vm == $vm))' <<<"$errors")"
+        warnings="$(jq -c --arg vm "$vm" 'map(select(.vm == null or .vm == $vm))' <<<"$warnings")"
+    fi
+    [[ "$target" != this ]] || installed="$(state_list | jq -R . | jq -sc .)"
     if [[ "$errors" == '[]' ]]; then
-        if order="$(apply_order "$config" "$desc" 2>/dev/null)"; then
+        if ((named)); then
+            if [[ -n "$vm" ]]; then vmlist="$vm"; else vmlist="$(apply_vms "$config")"; fi
+            while IFS= read -r v; do
+                [[ -n "$v" ]] || continue
+                slice="$(apply_slice "$config" "$v")"
+                if order="$(apply_order "$slice" "$desc" 2>/dev/null)"; then
+                    models="$(apply_models "$slice" | jq -R 'select(length > 0) | split("\t") | {name: .[0], vm: "'"$v"'", engine: .[1], chat_interface: (if .[2] == "null" then null else .[2] end), force: (.[3] == "true")}' | jq -sc .)"
+                    plan="$(jq -c --argjson order "$(jq -R 'select(length > 0) | split(" ") | {type: .[0], name: .[1]}' <<<"$order" | jq -sc .)" \
+                        --argjson models "$models" --argjson installed "$installed" --argjson prune "$prune" "$CONFIG_PLAN_JQ" <<<"$slice")"
+                    vmplans="$(jq -c --arg v "$v" --argjson p "$plan" '. + [{vm: $v} + $p]' <<<"$vmplans")"
+                else
+                    errors="$(jq -c --arg v "$v" '. + [{path: "$.components", vm: $v, code: "circular_requirement", message: "the requirements of the listed components are circular"}]' <<<"$errors")"
+                fi
+            done <<<"$vmlist"
+            plan="$(jq -c '{vms: .}' <<<"$vmplans")"
+            [[ "$errors" == '[]' ]] || plan=null
+        elif order="$(apply_order "$config" "$desc" 2>/dev/null)"; then
             models="$(apply_models "$config" | jq -R 'select(length > 0) | split("\t") | {name: .[0], engine: .[1], chat_interface: (if .[2] == "null" then null else .[2] end), force: (.[3] == "true")}' | jq -sc .)"
-            [[ "$target" != this ]] || installed="$(state_list | jq -R . | jq -sc .)"
             plan="$(jq -c --argjson order "$(jq -R 'select(length > 0) | split(" ") | {type: .[0], name: .[1]}' <<<"$order" | jq -sc .)" \
                 --argjson models "$models" --argjson installed "$installed" --argjson prune "$prune" "$CONFIG_PLAN_JQ" <<<"$config")"
         else
@@ -295,12 +322,13 @@ config_report_text() {
     local doc="$1" line
     while IFS= read -r line; do
         log_error "$line"
-    done < <(jq -r '.errors[] | "\(.path): \(.message)"' <<<"$doc")
+    done < <(jq -r '.errors[] | "\(.path): \(.message)\(if .vm then " (VM \(.vm))" else "" end)"' <<<"$doc")
     while IFS= read -r line; do
         log_info "$line"
-    done < <(jq -r '.plan // empty | (.components[] | "plan: install \(.type) \(.name) \(.options | to_entries | map("--\(.key) \(.value)") | join(" "))"),
-        (.models[] | "plan: add \(.name) to \(.engine) (chat interface: \(.chat_interface // "none"))"),
-        (if .prune then "plan: prune what the file does not name" else empty end)' <<<"$doc")
+    done < <(jq -r '.plan // empty | (if .vms then .vms[] else . end) | (if .vm then "[\(.vm)] " else "" end) as $t
+        | (.components[] | "plan: \($t)install \(.type) \(.name) \(.options | to_entries | map("--\(.key) \(.value)") | join(" "))"),
+        (.models[] | "plan: \($t)add \(.name) to \(.engine) (chat interface: \(.chat_interface // "none"))"),
+        (if .prune then "plan: \($t)prune what the file does not name" else empty end)' <<<"$doc")
     while IFS= read -r line; do
         log_warn "$line"
     done < <(jq -r '.warnings[] | "\(.component.name) --\(.option)=\(.value): \(.message)"' <<<"$doc")
@@ -344,7 +372,7 @@ not_json_document() {
 }
 
 cmd_config() {
-    local sub="${1:-}" source="" target=this arg doc rc
+    local sub="${1:-}" source="" target=this vm="" arg doc rc
     case "$sub" in
     schema)
         shift
@@ -362,6 +390,11 @@ cmd_config() {
                 target="$1"
                 shift
                 ;;
+            --vm)
+                [[ $# -gt 0 ]] || fail "$EXIT_USAGE" "--vm needs a VM name"
+                vm="$1"
+                shift
+                ;;
             -) source="-" ;;
             -*) fail "$EXIT_USAGE" "unknown option: $arg" ;;
             *) [[ -z "$source" ]] || fail "$EXIT_USAGE" "one configuration file at a time"; source="$arg" ;;
@@ -373,7 +406,9 @@ cmd_config() {
         if ((CONFIG_NOT_JSON)); then
             doc="$(not_json_document "$target")"
         else
-            doc="$(config_report "$CONFIG_TEXT" "$target")"
+            # a file that names VMs: --this is one machine, so it needs --vm; --vm must fit the file
+            apply_select_vm "$CONFIG_TEXT" "$vm" "$([[ "$target" == this ]] && printf 1 || printf 0)"
+            doc="$(config_report "$CONFIG_TEXT" "$target" false "$vm")"
         fi
         if ((_OPT_JSON)); then
             printf '%s\n' "$doc"

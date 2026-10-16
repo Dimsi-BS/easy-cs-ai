@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed, not implemented. The open questions at the end do not block starting.
+**Status:** proposed, being implemented. Done: the `vm` field, the slices, the place of a model, `apply --vm`, `config validate --vm` and what a model needs (see [spec: config](spec-config.md)), and the proposal of a proxy for a one-VM session ([journey, step 4](spec-journey.md#4-models)). Not done: the VM question and the passes per VM, one script per VM, the next steps, the warnings and `list-upstreams`, `certificate_names`, `add-endpoint` with a key and a certificate. The open questions at the end do not block starting.
 
 ## Purpose
 
