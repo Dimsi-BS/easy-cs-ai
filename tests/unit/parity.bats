@@ -179,7 +179,7 @@ parity() {
 @test "parity: models named first, the VM they need is shown and nothing of it is stored" {
     llmfit_ready
     parity fake models-first
-    grep -qx 'plan m1 m2' "$CALLS"
+    grep -qx 'plan m1@ollama m2@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama' "$CALLS"
 }
 
 # --- the shipped scripts ------------------------------------------------------------------------

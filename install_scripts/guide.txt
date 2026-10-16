@@ -23,15 +23,22 @@ Procedure
          easy-cs-ai provisioning llmfit check MODEL --target-ram GB ...
        answers {"fits", "reason"}.
     b) MODELS FIRST, the user has models in mind: which VM do they need?
-         easy-cs-ai provisioning llmfit plan MODEL... --json
-           [--chat-interface] [--target-cpu-cores N]
+         easy-cs-ai provisioning llmfit plan MODEL@ENGINE... --json
+           --component TYPE/NAME... [--target-cpu-cores N]
+       with one --component per component of THAT VM (engine/ollama,
+       proxy/nginx, chat-interface/librechat...) and the engine of each model
+       after an @. Call it once per VM. With components and no model it
+       answers for a VM that holds none ("stack", no llmfit needed): when it
+       has an engine, say that the models come on top of those figures.
        Read quantisations.best and quantisations.default (the 8-bit and the
        usual 4-bit weights): each has ram_no_gpu (VM without GPU), gpu_memory
        and gpu_ram (VM with a GPU), disk, and in each model_gb, margin_gb and
        total_gb. "unsized" lists the models llmfit does not know: say that the
        figures do not cover them. Give the user the model figure and the
        margin side by side, and say the margin is an ESTIMATE; never present
-       a total as measured. Do not pick GPU or CPU for them.
+       a total as measured. Do not pick GPU or CPU for them. "components"
+       lists what each component declares (with its source) and "undeclared"
+       what it could not cover: say so, the margin is then incomplete.
     These are early opinions: the fit is checked again on the VM.
     llmfit must be installed (easy-cs-ai install provisioning llmfit): ask
     the user before installing it. Without --json, suggest and plan print a

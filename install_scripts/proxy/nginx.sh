@@ -266,6 +266,7 @@ describe() {
         component_version: "distribution package", requires: [], provides: ["https", "api-key"],
         platforms: ["debian", "ubuntu"], health_timeout: $ht,
         native: { command: "nginx" },
+        resources: { ram_gb: 0, disk_gb: 0, source: "guess", basis: "Small beside the rest, to measure" },
         options: [
           { name: "port", env: "EASY_CS_AI_NGINX_PORT", default: "443", secret: false, type: "integer", min: 1, max: 65535, description: "HTTPS port" },
           { name: "bind", env: "EASY_CS_AI_NGINX_BIND", default: "0.0.0.0", secret: false, description: "Listening address" },

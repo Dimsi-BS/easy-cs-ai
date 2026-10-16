@@ -248,15 +248,46 @@ _read_order() {
     done
 }
 
+# _component_args: --component <type>/<name> for each component of the VM, one argument per line.
+_component_args() {
+    local t
+    for t in "${TYPES[@]}"; do
+        [[ -z "${SEL[$t]:-}" ]] || printf '%s\n' --component "$t/${SEL[$t]}"
+    done
+}
+
+# _plan_stack: a VM that ends with no model is sized from its components alone, from the same
+# action (docs/spec-model-fit.md#a-stack-with-no-model). llmfit itself is not needed, only its
+# script: a package that ships none has no recommendation, and says so.
+_plan_stack() {
+    local script args=() line
+    ((${#SESSION_MODELS[@]} == 0)) || return 0
+    SESSION_PLAN=""
+    while IFS= read -r line; do args+=("$line"); done < <(_component_args)
+    ((${#args[@]})) || return 0
+    script="$(script_path provisioning llmfit)"
+    if [[ ! -f "$script" ]]; then
+        SESSION_PLAN="  no recommendation: this package ships no sizing component"
+        return 0
+    fi
+    [[ -z "$TARGET_CORES" ]] || args+=(--target-cpu-cores "$TARGET_CORES")
+    SESSION_PLAN="$(bash "$script" plan "${args[@]}" 2>/dev/null)" || {
+        log_warn "the components could not be sized, no VM recommendation"
+        SESSION_PLAN=""
+    }
+}
+
 # _plan_models <script>: what the VM needs for the models of the session, from
 # `provisioning llmfit plan` (sizes and estimated margin are the action's, the generator
 # only prints them). The action announces each model on stderr, which llmfit's slowness needs.
 _plan_models() {
-    local script="$1" args=()
+    local script="$1" args=() m line
     SESSION_PLAN=""
     ((${#SESSION_MODELS[@]})) || return 0
-    args=("${SESSION_MODELS[@]}")
-    [[ -z "${SEL[chat-interface]:-}" ]] || args+=(--chat-interface)
+    # each model with the engine it goes to, and the components of the VM: their declared resources
+    # make the margin
+    for m in "${SESSION_MODELS[@]}"; do args+=("$m@${SEL[engine]}"); done
+    while IFS= read -r line; do args+=("$line"); done < <(_component_args)
     [[ -z "$TARGET_CORES" ]] || args+=(--target-cpu-cores "$TARGET_CORES")
     SESSION_PLAN="$(bash "$script" plan "${args[@]}")" || {
         log_warn "llmfit could not size the models, no VM recommendation"
@@ -305,7 +336,7 @@ step_models() {
     SESSION_FIT_WARN=()
     SESSION_PLAN=""
     SUGGESTIONS=()
-    [[ -n "${SEL[engine]:-}" ]] || return 0
+    [[ -n "${SEL[engine]:-}" ]] || { _plan_stack; return 0; }
     # Looking for llmfit and asking its status can take a moment before anything is asked.
     [[ ! -f "$(script_path provisioning llmfit)" ]] || printf '  checking whether llmfit is available on this machine, a few seconds...
 ' >&2
@@ -352,6 +383,7 @@ step_models() {
         # The recommendation is printed once, in the summary that follows.
         _plan_models "$script"
     fi
+    _plan_stack
 }
 
 # --- Configuration and summary --------------------------------------------------------

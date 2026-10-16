@@ -161,6 +161,7 @@ describe() {
         component_version: $cv, requires: [], provides: ["openai-api"],
         platforms: ["debian", "ubuntu"], health_timeout: $ht,
         native: { command: "ollama", env: { OLLAMA_HOST: "{bind}:{port}" } },
+        resources: { ram_gb: 1, disk_gb: 2, per_model: false, gpu: { utilization: 0.9, fixed_gb: 1 }, source: "guess", basis: "The process of the engine; the disk is the release archive, about 1.4 GB with its GPU libraries, rounded up" },
         options: [
           { name: "port", env: "EASY_CS_AI_OLLAMA_PORT", default: "11434", secret: false, type: "integer", min: 1, max: 65535, description: "Listening port" },
           { name: "bind", env: "EASY_CS_AI_OLLAMA_BIND", default: "127.0.0.1", secret: false, description: "Listening address" },

@@ -32,7 +32,8 @@ POSITIONAL=()
 TARGET_ARGS=()
 COUNT=$SUGGEST_COUNT    # suggest: how many models to list
 PLAN_CORES=""           # plan: the vCPU of the VM, reported as given
-CHAT_INTERFACE=0        # plan: a chat interface is in the stack
+CHAT_INTERFACE=0        # plan: a chat interface is in the stack (shorthand of --component chat-interface/librechat)
+PLAN_COMPONENTS=()      # plan: the components of the VM, as <type>/<name>
 
 usage() {
     cat <<EOF
@@ -44,9 +45,11 @@ Actions: $ACTIONS
   check <model>           {"fits": true|false, "reason": "…"} for a model
   size <model>            what a model needs, whatever this machine is (JSON): memory and
                           disk for the best and the default quantisation
-  plan <model>…           the VM the models need: the figures of size plus an estimated
+  plan [<model>[@<engine>]…]
+                          the VM the models need: the figures of size plus an estimated
                           margin, for the best and the default quantisation (text, or
-                          JSON with --json)
+                          JSON with --json). With components and no model, the VM of a
+                          stack that holds none
 
 Options of suggest and check, to size for another machine:
   --target-ram <GB>       RAM of the machine to size for (llmfit --ram)
@@ -55,7 +58,10 @@ Options of suggest and check, to size for another machine:
 
 Options of plan:
   --target-cpu-cores <n>  vCPU of the VM, reported as given (llmfit does not size them)
-  --chat-interface        a chat interface is in the stack: adds its share of the margin
+  --component <type>/<name>
+                          a component of the VM (repeatable): its declared resources join
+                          the margin
+  --chat-interface        shorthand of --component chat-interface/librechat
 
 Options:
   --version <x.y.z>       llmfit version (default $DEFAULT_VERSION, EASY_CS_AI_LLMFIT_VERSION)
@@ -153,6 +159,18 @@ parse_args() {
             [[ "$ACTION" == plan ]] || die "$EXIT_USAGE" "--chat-interface only applies to plan"
             CHAT_INTERFACE=1
             ;;
+        --component | --component=*)
+            [[ "$ACTION" == plan ]] || die "$EXIT_USAGE" "--component only applies to plan"
+            if [[ "$opt" == *=* ]]; then
+                value="${opt#*=}"
+            else
+                [[ $# -gt 0 ]] || die "$EXIT_USAGE" "--component needs a value (<type>/<name>)"
+                value="$1"
+                shift
+            fi
+            [[ "$value" =~ ^[a-z][a-z-]*/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "$EXIT_USAGE" "--component needs <type>/<name>, got '$value'"
+            PLAN_COMPONENTS+=("$value")
+            ;;
         --default) MAKE_DEFAULT=1 ;;
         --force) FORCE=1 ;;
         # `uninstall --all --purge` forwards --purge to every component: llmfit keeps no data, nothing to purge
@@ -184,6 +202,7 @@ describe() {
         component_version: $cv, requires: [], provides: ["model-fit"],
         platforms: ["debian", "ubuntu"], health_timeout: $ht,
         native: { command: "llmfit" },
+        resources: { ram_gb: 0, disk_gb: 0, source: "guess", basis: "A binary and a catalogue, no service" },
         options: [
           { name: "version", env: "EASY_CS_AI_LLMFIT_VERSION", default: $cv, secret: false, description: "llmfit version to install" },
           { name: "health-timeout", env: "EASY_CS_AI_LLMFIT_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, type: "integer", min: 0, description: "Seconds allowed to the verification (llmfit recommend --json)" },
@@ -199,7 +218,8 @@ describe() {
           ],
           plan: [
             { name: "target-cpu-cores", type: "integer", min: 1, description: "vCPU of the VM, reported as given: llmfit does not size them" },
-            { name: "chat-interface", type: "boolean", description: "A chat interface is in the stack: adds its share of the margin" }
+            { name: "component", type: "string", repeatable: true, description: "A component of the VM, as <type>/<name>: its declared resources join the estimated margin" },
+            { name: "chat-interface", type: "boolean", description: "Shorthand of --component chat-interface/librechat" }
           ],
           check: [
             { name: "target-ram", type: "integer", min: 1, description: "RAM in GB of the machine to size for, instead of this one" },
@@ -532,53 +552,181 @@ cmd_size() {
     size_model "$bin" "$model" || exit "$EXIT_ERROR"
 }
 
-# plan <model>…: the VM the models need (docs/spec-model-fit.md#recommended-vm). The figures are
-# llmfit's, through `size`; the margin on top of them is estimated, and defined here and nowhere
-# else, so that the generator and an agent show the same numbers. A model llmfit cannot size is
-# listed in `unsized`, never guessed.
-cmd_plan() {
-    local bin m n=0 out doc sized='[]' unsized='[]'
-    ((${#POSITIONAL[@]})) || die "$EXIT_USAGE" "plan needs at least one model name"
-    require_installed
-    bin="$(llmfit_bin)"
-    for m in "${POSITIONAL[@]}"; do
-        n=$((n + 1))
-        # llmfit takes several seconds per model: say what is going on.
-        log_info "sizing $m with llmfit ($n/${#POSITIONAL[@]}), a few seconds..."
-        if out="$(size_model "$bin" "$m" quiet)" &&
-            jq -e '[.best.cpu_gb, .best.gpu_gb, .best.disk_gb, .default.cpu_gb, .default.gpu_gb, .default.disk_gb] | all(. != null)' <<<"$out" >/dev/null 2>&1; then
-            sized="$(jq -c --arg t "$m" --argjson e "$out" '. + [$e + {typed: $t}]' <<<"$sized")"
-        else
-            unsized="$(jq -c --arg t "$m" '. + [$t]' <<<"$unsized")"
+# --- plan: the VM a stack needs ---------------------------------------------------------
+#
+# plan [<model>[@<engine>]…] [--component <type>/<name>]… (docs/spec-model-fit.md#declared-resources).
+# The figures of the models are llmfit's, through `size`; what runs around them is estimated, from
+# the `resources` each component declares in its `describe` and from two constants of this action
+# (the system), and defined here and nowhere else, so that the generator and an agent show the
+# same numbers. A model llmfit cannot size is listed in `unsized`, a component that declares no
+# resources in `undeclared`: a figure is never invented.
+
+readonly PLAN_SYSTEM_RAM_GB=1 PLAN_SYSTEM_DISK_GB=10
+
+# plan_component <type>/<name>: the entry of a component of the VM, on stdout. Its resources come
+# from the `describe` of the sibling script, found next to the lib/ directory (the script stays
+# standalone: an absent script, a describe that fails or has no resources leaves it undeclared).
+plan_component() {
+    local ref="$1" type name script desc res
+    type="${ref%%/*}"
+    name="${ref#*/}"
+    script="${LIB_DIR%/}"
+    script="${script%/*}/$type/$name.sh"
+    if [[ -f "$script" ]]; then
+        if ! desc="$(bash "$script" describe 2>/dev/null)" || ! jq -e . >/dev/null 2>&1 <<<"$desc"; then
+            log_warn "describe of $ref failed or is not JSON: its resources are not covered"
+            desc='{}'
         fi
+    else
+        desc='{}'
+    fi
+    res="$(jq -c --arg t "$type" --arg n "$name" '
+        .resources as $r
+        | if $r == null then {type: $t, name: $n, declared: false}
+          elif ($r | type) == "object"
+               and ([$r.ram_gb, $r.disk_gb] | all(type == "number" and . >= 0))
+               and (($r.source // "") | IN("measured", "vendor", "guess"))
+               and (($r.basis // null) | type) == "string"
+          then {type: $t, name: $n, declared: true, ram_gb: $r.ram_gb, disk_gb: $r.disk_gb, source: $r.source, basis: $r.basis}
+               + (if $t == "engine" then {per_model: ($r.per_model == true),
+                    gpu: (if ($r.gpu | type) == "object" and (($r.gpu.utilization // null) | type) == "number" and (($r.gpu.fixed_gb // null) | type) == "number"
+                          then {utilization: $r.gpu.utilization, fixed_gb: $r.gpu.fixed_gb} else null end)} else {} end)
+          else {type: $t, name: $n, declared: false, invalid: true} end' <<<"$desc")"
+    if [[ "$(jq -r '.invalid // false' <<<"$res")" == true ]]; then
+        log_warn "the resources declared by $ref are malformed: not covered"
+        res="$(jq -c 'del(.invalid)' <<<"$res")"
+    fi
+    printf '%s\n' "$res"
+}
+
+# The arithmetic, one jq program. Arguments: $sized (the models llmfit sized, each with the engine
+# it was asked for, null when none), $unsized (the names it could not size), $comps (the entries of
+# plan_component), $cores (the vCPU as given, or ""), $modelsnamed (a model was named) and the two
+# constants of the system. See docs/spec-model-fit.md#declared-resources for each rule.
+# shellcheck disable=SC2016
+readonly PLAN_JQ='
+def r2: . * 100 | round / 100;
+def tkey: gsub("-"; "_");
+def sum: add // 0;
+def max0: max // 0;
+def engs: [$comps[] | select(.type == "engine")];
+# the engine a model is sized on: the one it names, else the only engine named, else none (generic)
+def eff($m): $m.engine // (if (engs | length) == 1 then engs[0].name else null end);
+def groups:
+  if (engs | length) > 0 then
+    [engs[] | . as $e | {name: .name, generic: false, per_model: (.per_model // false), gpu: (.gpu // null),
+       ram: (if .declared then .ram_gb else 0 end), disk: (if .declared then .disk_gb else 0 end),
+       models: [$sized[] | select(eff(.) == $e.name)]}]
+  elif ($sized | length) > 0 then
+    [{name: null, generic: true, per_model: false, gpu: null, ram: 1, disk: 0, models: $sized}]
+  else [] end;
+def ram_of($g): if $g.generic then 1 elif $g.per_model then $g.ram * ($g.models | length) else $g.ram end;
+def mem($g; $q; $f): [$g.models[] | .[$q][$f]] | if $g.per_model then sum else max0 end;
+def rule($g): $g.gpu // {utilization: 0.9, fixed_gb: 1};
+def gpu_fig($g; $q): rule($g) as $r
+  | if ($g.models | length) == 0 then 0
+    elif $g.per_model then [$g.models[] | .[$q].gpu_gb / $r.utilization + $r.fixed_gb] | sum
+    else (([$g.models[] | .[$q].gpu_gb] | max) / $r.utilization + $r.fixed_gb) end;
+def basis($g): rule($g) as $r
+  | "model / \($r.utilization), \($r.fixed_gb) for the CUDA context"
+    + (if $g.per_model then ", each model, summed" else "" end)
+    + (if $g.generic then " (generic engine, none declared)" elif $g.gpu == null then " (generic GPU rule, \($g.name) declares none)" else "" end);
+def typesum($f; $t): [$comps[] | select(.type == $t and .declared) | .[$f]] | sum;
+def other_types: [$comps[] | .type | select(. != "engine" and . != "chat-interface")] | unique;
+def parts($sys; $eng; $f):
+  ({system: $sys, engine: $eng, chat_interface: typesum($f; "chat-interface")}
+   + ([other_types[] as $t | {key: ($t | tkey), value: typesum($f; $t)}] | from_entries))
+  | map_values(r2);
+def total($mp; $model): (($mp | to_entries | map(.value) | sum) + $model) | ceil;
+def part($model; $total): {model_gb: ($model | r2), margin_gb: (($total - $model) | r2), total_gb: $total};
+def quant($q):
+  groups as $gs
+  | ($gs | map(mem(.; $q; "cpu_gb")) | max0) as $cpu
+  | ($gs | map(mem(.; $q; "gpu_gb")) | max0) as $gpum
+  | ($gs | map({g: ., fig: gpu_fig(.; $q)}) | max_by(.fig)) as $top
+  | ($sized | map(.[$q].disk_gb) | sum) as $disk
+  | parts($sys_ram; ($gs | map(ram_of(.)) | sum); "ram_gb") as $rp
+  | parts($sys_disk; ($gs | map(.disk) | sum); "disk_gb") as $dp
+  | total($rp; $cpu) as $ram
+  | total($rp; 0) as $gpuram
+  | (($top.fig // 0) | ceil) as $vram
+  | total($dp; $disk) as $dtotal
+  | {quants: ($sized | map(.[$q].quant) | unique),
+     ram_no_gpu: (part($cpu; $ram) + {total_mb: ($ram * 1024), margin_parts: $rp}),
+     gpu_memory: (part($gpum; $vram) + {margin_basis: basis($top.g)}),
+     gpu_ram: (part(0; $gpuram) + {total_mb: ($gpuram * 1024), margin_parts: $rp}),
+     disk: (part($disk; $dtotal) + {margin_parts: $dp})};
+def stack:
+  groups as $gs
+  | parts($sys_ram; ($gs | map(ram_of(.)) | sum); "ram_gb") as $rp
+  | parts($sys_disk; ($gs | map(.disk) | sum); "disk_gb") as $dp
+  | total($rp; 0) as $ram
+  | total($dp; 0) as $disk
+  | {ram_no_gpu: (part(0; $ram) + {total_mb: ($ram * 1024), margin_parts: $rp}),
+     disk: (part(0; $disk) + {margin_parts: $dp}),
+     models_included: (if (engs | length) > 0 then false else null end)};
+{context: ($sized | map(.context) | map(select(. != null)) | first // null),
+ vcpu: (if $cores == "" then null else ($cores | tonumber) end),
+ chat_interface: ([$comps[] | select(.type == "chat-interface")] | length > 0),
+ components: ($comps | map({type, name, declared} + (if .declared then {ram_gb, disk_gb, source} else {} end))),
+ undeclared: ([$comps[] | select(.declared | not) | "\(.type)/\(.name)"]
+              + (if (engs | length) == 0 and ($sized | length) > 0 then ["engine (generic)"] else [] end)),
+ models: $sized,
+ unsized: $unsized,
+ quantisations: (if ($sized | length) == 0 then null else {best: quant("best"), default: quant("default")} end),
+ stack: (if $modelsnamed then null else stack end)}'
+
+cmd_plan() {
+    local bin m n=0 total=0 out doc sized='[]' unsized='[]' comps='[]' ref typed engine entry
+    local -a refs=() engines=() names=() meng=()
+    local -A seen=()
+    # The components of the VM; --chat-interface is the shorthand of one of them.
+    for ref in "${PLAN_COMPONENTS[@]}" $( ((CHAT_INTERFACE)) && printf '%s' chat-interface/librechat); do
+        [[ -z "${seen[$ref]:-}" ]] || continue
+        seen[$ref]=1
+        refs+=("$ref")
+        [[ "${ref%%/*}" != engine ]] || engines+=("${ref#*/}")
     done
-    doc="$(jq -n --argjson sized "$sized" --argjson unsized "$unsized" --argjson chat "$CHAT_INTERFACE" --arg cores "$PLAN_CORES" '
-        def r2: . * 100 | round / 100;
-        def part($model; $total): {model_gb: ($model | r2), margin_gb: (($total - $model) | r2), total_gb: $total};
-        (if $chat == 1 then 4 else 0 end) as $chat_gb
-        | {context: ($sized | map(.context) | map(select(. != null)) | first // null),
-           vcpu: (if $cores == "" then null else ($cores | tonumber) end),
-           chat_interface: ($chat == 1),
-           models: $sized,
-           unsized: $unsized,
-           quantisations: (if ($sized | length) == 0 then null else
-             ["best", "default"] | map(. as $q
-               | ($sized | map(.[$q].cpu_gb) | max) as $cpu
-               | ($sized | map(.[$q].gpu_gb) | max) as $gpu
-               | ($sized | map(.[$q].disk_gb) | add) as $disk
-               | (($cpu + 2 + $chat_gb) | ceil) as $ram
-               | (($gpu / 0.9 + 1) | ceil) as $vram
-               | (2 + $chat_gb) as $gpuram
-               | (($disk + 20) | ceil) as $dtotal
-               | {key: $q, value: {
-                   quants: ($sized | map(.[$q].quant) | unique),
-                   ram_no_gpu: (part($cpu; $ram) + {total_mb: ($ram * 1024),
-                       margin_parts: {engine: 1, system: 1, chat_interface: $chat_gb}}),
-                   gpu_memory: (part($gpu; $vram) + {margin_basis: "model / 0.9, 1 for the CUDA context"}),
-                   gpu_ram: (part(0; $gpuram) + {total_mb: ($gpuram * 1024),
-                       margin_parts: {system_and_engine: 2, chat_interface: $chat_gb}}),
-                   disk: (part($disk; $dtotal) + {margin_parts: {system_and_components: 20}})}})
-             | from_entries end)}')"
+    ((${#POSITIONAL[@]} + ${#refs[@]})) || die "$EXIT_USAGE" "plan needs at least one model name or one --component"
+    # A model is <model> or <model>@<engine>, the engine being one of the components named.
+    for m in "${POSITIONAL[@]}"; do
+        if [[ "$m" == *@* ]]; then
+            typed="${m%%@*}"
+            engine="${m#*@}"
+            [[ -n "$typed" && -n "$engine" ]] || die "$EXIT_USAGE" "'$m': a model and an engine are expected around the @"
+            [[ " ${engines[*]:-} " == *" $engine "* ]] || die "$EXIT_USAGE" "model $typed names the engine '$engine', which is not an engine/<name> of --component (declared: ${engines[*]:-none})"
+        else
+            typed="$m"
+            engine=""
+            ((${#engines[@]} <= 1)) || die "$EXIT_USAGE" "model $m needs @<engine>: several engines are named (${engines[*]})"
+        fi
+        names+=("$typed")
+        meng+=("$engine")
+    done
+    for ref in "${refs[@]}"; do
+        entry="$(plan_component "$ref")"
+        comps="$(jq -c --argjson e "$entry" '. + [$e]' <<<"$comps")"
+    done
+    if ((${#names[@]})); then
+        require_installed
+        bin="$(llmfit_bin)"
+        total=${#names[@]}
+        for i in "${!names[@]}"; do
+            m="${names[$i]}"
+            n=$((n + 1))
+            # llmfit takes several seconds per model: say what is going on.
+            log_info "sizing $m with llmfit ($n/$total), a few seconds..."
+            if out="$(size_model "$bin" "$m" quiet)" &&
+                jq -e '[.best.cpu_gb, .best.gpu_gb, .best.disk_gb, .default.cpu_gb, .default.gpu_gb, .default.disk_gb] | all(. != null)' <<<"$out" >/dev/null 2>&1; then
+                sized="$(jq -c --arg t "$m" --arg e "${meng[$i]}" --argjson o "$out" '. + [$o + {typed: $t, engine: (if $e == "" then null else $e end)}]' <<<"$sized")"
+            else
+                unsized="$(jq -c --arg t "$m" '. + [$t]' <<<"$unsized")"
+            fi
+        done
+    fi
+    doc="$(jq -n --argjson sized "$sized" --argjson unsized "$unsized" --argjson comps "$comps" --arg cores "$PLAN_CORES" \
+        --argjson modelsnamed "$( ((${#names[@]})) && printf true || printf false)" \
+        --argjson sys_ram "$PLAN_SYSTEM_RAM_GB" --argjson sys_disk "$PLAN_SYSTEM_DISK_GB" "$PLAN_JQ")"
     if wants_json; then
         printf '%s\n' "$doc"
     else
@@ -587,22 +735,42 @@ cmd_plan() {
 }
 
 # render_plan <document>: the text of plan, for a person. The margin is always shown as estimated,
-# with what it is made of, never as a total that looks measured.
+# with what it is made of and how reliable each part is, never as a total that looks measured.
+# shellcheck disable=SC2016
+readonly PLAN_TEXT_JQ='
+def n: . * 100 | round / 100;
+def rank: {guess: 0, vendor: 1, measured: 2};
+def least($s): $s | min_by(rank[.]);
+def source_of($k): ([.components[] | select((.type | gsub("-"; "_")) == $k and .declared) | .source]) as $s
+  | if $k == "system" then "constant" elif ($s | length) > 0 then least($s) elif $k == "engine" then "generic" else "guess" end;
+def parts($mp): . as $d | $mp | to_entries | map(select(.value > 0) | .key as $k | "\(.value) \($k | gsub("_"; " ")) (\($d | source_of($k)))") | join(", ");
+def sources: [.components[] | select(.declared) | .source];
+def reliability: if (sources | length) > 0 then "  the margin is as reliable as its least reliable part: \(least(sources))" else empty end;
+def uncovered: if (.undeclared | length) > 0 then "  not covered: \(.undeclared | join(", ")), the margin is incomplete" else empty end;
+. as $d
+| if .stack != null then
+    "\nVM with no model: RAM \(.stack.ram_no_gpu.total_gb) GB, disk \(.stack.disk.total_gb) GB, estimated from the components",
+    "  RAM: \(.stack.ram_no_gpu.total_gb) GB (\(.stack.ram_no_gpu.total_mb) MB) = \(.stack.ram_no_gpu.margin_gb) estimated margin (\($d | parts($d.stack.ram_no_gpu.margin_parts)))",
+    "  disk: \(.stack.disk.total_gb) GB = \(.stack.disk.margin_gb) estimated (\($d | parts($d.stack.disk.margin_parts)))",
+    (if .stack.models_included == false then "  GPU memory: not sized, no model" else empty end),
+    "  vCPU: \(if .vcpu != null then .vcpu else "not sized" end)",
+    reliability, uncovered,
+    (if .stack.models_included == false then "  models not included: add the memory, GPU memory and disk of each model you will install on this VM" else empty end)
+  elif .quantisations == null then "\nRecommended VM:"
+  else "\nRecommended VM, from llmfit (context of \(.context // "?") tokens) plus an ESTIMATED margin, an early opinion:",
+    (.models[] | "  \(.typed): best \(.best.quant) \(.best.cpu_gb | n) GB, default \(.default.quant) \(.default.cpu_gb | n) GB, disk \(.best.disk_gb | n) or \(.default.disk_gb | n) GB\(if .moe then " (mixture of experts, figure less reliable)" else "" end)"),
+    "  vCPU: \(if .vcpu != null then .vcpu else "not sized by llmfit" end)",
+    (["best", "default"][] as $q | .quantisations[$q] as $x
+      | "  with the \($q) quantisation (\($x.quants | join(", "))):",
+        "    VM without GPU: RAM \($x.ram_no_gpu.total_gb) GB (\($x.ram_no_gpu.total_mb) MB) = \($x.ram_no_gpu.model_gb) model + \($x.ram_no_gpu.margin_gb) estimated margin (\($d | parts($x.ram_no_gpu.margin_parts)))",
+        "    VM with a GPU:  GPU memory \($x.gpu_memory.total_gb) GB = \($x.gpu_memory.model_gb) model + \($x.gpu_memory.margin_gb) estimated margin (\($x.gpu_memory.margin_basis)); RAM \($x.gpu_ram.total_gb) GB (\($x.gpu_ram.total_mb) MB), estimated (\($d | parts($x.gpu_ram.margin_parts)))",
+        "    disk: \($x.disk.total_gb) GB = \($x.disk.model_gb) models + \($x.disk.margin_gb) estimated (\($d | parts($x.disk.margin_parts)))"),
+    reliability, uncovered
+  end,
+  (.unsized[] | "  \(.): not estimated (llmfit does not know it), the recommendation does not cover it")'
+
 render_plan() {
-    jq -r '
-      def n: . * 100 | round / 100;
-      def parts: .margin_parts | to_entries | map(select(.value > 0) | "\(.value) \(.key | gsub("_"; " "))") | join(", ");
-      if .quantisations == null then "\nRecommended VM:"
-      else "\nRecommended VM, from llmfit (context of \(.context // "?") tokens) plus an ESTIMATED margin, an early opinion:",
-        (.models[] | "  \(.typed): best \(.best.quant) \(.best.cpu_gb | n) GB, default \(.default.quant) \(.default.cpu_gb | n) GB, disk \(.best.disk_gb | n) or \(.default.disk_gb | n) GB\(if .moe then " (mixture of experts, figure less reliable)" else "" end)"),
-        "  vCPU: \(if .vcpu != null then .vcpu else "not sized by llmfit" end)",
-        (["best", "default"][] as $q | .quantisations[$q] as $x
-          | "  with the \($q) quantisation (\($x.quants | join(", "))):",
-            "    VM without GPU: RAM \($x.ram_no_gpu.total_gb) GB (\($x.ram_no_gpu.total_mb) MB) = \($x.ram_no_gpu.model_gb) model + \($x.ram_no_gpu.margin_gb) estimated margin (\($x.ram_no_gpu | parts))",
-            "    VM with a GPU:  GPU memory \($x.gpu_memory.total_gb) GB = \($x.gpu_memory.model_gb) model + \($x.gpu_memory.margin_gb) estimated margin (\($x.gpu_memory.margin_basis)); RAM \($x.gpu_ram.total_gb) GB (\($x.gpu_ram.total_mb) MB), estimated",
-            "    disk: \($x.disk.total_gb) GB = \($x.disk.model_gb) models + \($x.disk.margin_parts.system_and_components) estimated for the system and components")
-      end,
-      (.unsized[] | "  \(.): not estimated (llmfit does not know it), the recommendation does not cover it")' <<<"$1"
+    jq -r "$PLAN_TEXT_JQ" <<<"$1"
 }
 
 # --- main -------------------------------------------------------------------------------

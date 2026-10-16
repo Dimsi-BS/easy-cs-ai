@@ -486,7 +486,7 @@ JSON
     # the two orders of the model choice are a step of their own, with what an agent needs to read the answers
     [[ "$output" == *" 3. Choose the models. There are TWO ORDERS"* ]]
     [[ "$output" == *"HARDWARE FIRST"*"provisioning llmfit suggest --json"*"check MODEL"* ]]
-    [[ "$output" == *"MODELS FIRST"*"provisioning llmfit plan MODEL... --json"*"quantisations.best"*"margin_gb"*"unsized"*"ESTIMATE"* ]]
+    [[ "$output" == *"MODELS FIRST"*"provisioning llmfit plan MODEL@ENGINE... --json"*"--component TYPE/NAME"*"quantisations.best"*"margin_gb"*"unsized"*"ESTIMATE"* ]]
     [[ "$output" == *" 9. Never run"* ]]
     [[ "$output" != "{"* ]]
     cli guide now

@@ -413,9 +413,9 @@ plan)
     chat=no cores=none names=()
     while (($#)); do
         case "$1" in
-        --chat-interface) chat=yes ;;
+        --component) [[ "$2" == chat-interface/* ]] && chat=yes; shift ;;
         --target-cpu-cores) cores="$2"; shift ;;
-        *) names+=("$1") ;;
+        *) names+=("${1%%@*}") ;;
         esac
         shift
     done
@@ -574,7 +574,7 @@ FAKE
     [ "$status" -eq 0 ]
     # no specs asked, no suggestion, no fit check: the models are sized instead
     [[ "$stderr" != *"RAM of the VM in GB"* ]]
-    grep -qx 'plan m1' "$CALLS"
+    grep -qx 'plan m1@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama' "$CALLS"
     ! grep -q -e suggest -e check "$CALLS"
     # the text of the action, with the progress it announced while llmfit was slow
     [[ "$stderr" == *"fake: sizing m1"* ]]
@@ -593,7 +593,7 @@ FAKE
     GEN_ARGS=(--config-only --output cfg.json)
     ask "" none ollama none m "m1, m2" y y
     [ "$status" -eq 0 ]
-    grep -qx 'plan m1 m2' "$CALLS"
+    grep -qx 'plan m1@ollama m2@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama' "$CALLS"
     [ "$(grep -c '^plan' "$CALLS")" -eq 1 ]
     [[ "$stderr" == *"FAKE RECOMMENDATION for m1 m2"* ]]
 }
@@ -603,7 +603,7 @@ FAKE
     GEN_ARGS=(--config-only --output cfg.json)
     ask "" "" ollama chat m m1 y
     [ "$status" -eq 0 ]
-    grep -qx 'plan m1 --chat-interface' "$CALLS"
+    grep -qx 'plan m1@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama --component chat-interface/chat' "$CALLS"
     [[ "$stderr" == *"(chat interface: yes, vcpu: none)"* ]]
 }
 
@@ -612,18 +612,20 @@ FAKE
     GEN_ARGS=(--config-only --output cfg.json)
     ask "" none ollama none "" "" "" 4 "" m m "m1, unknown" y y
     [ "$status" -eq 0 ]
-    grep -qx 'plan m1 unknown --target-cpu-cores 4' "$CALLS"
+    grep -qx 'plan m1@ollama unknown@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama --target-cpu-cores 4' "$CALLS"
     [[ "$stderr" == *"vcpu: 4"* ]]
     [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1","unknown"]' ]
 }
 
-@test "models first: no model, no plan" {
+@test "models first: no model, the stack is sized from its components alone" {
     make_llmfit
     GEN_ARGS=(--config-only --output cfg.json)
     ask "" none ollama none m "" y
     [ "$status" -eq 0 ]
-    ! grep -q '^plan' "$CALLS"
-    [[ "$stderr" != *"FAKE RECOMMENDATION"* ]]
+    # a VM with no model is sized from its components, with no model and no proxy asked for
+    grep -qx 'plan --component provisioning/llmfit --component engine/ollama' "$CALLS"
+    [ "$(grep -c '^plan' "$CALLS")" -eq 1 ]
+    [[ "${stderr##*Summary}" == *"FAKE RECOMMENDATION"* ]]
 }
 
 @test "models first: the order is offered again when the step is redone, and the recommendation follows the models" {
@@ -632,8 +634,8 @@ FAKE
     ask "" none ollama none m m1 y m "" m2 y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"Order, hardware first (h) or models first (m) [m]"* ]]
-    grep -qx 'plan m1' "$CALLS"
-    grep -qx 'plan m2' "$CALLS"
+    grep -qx 'plan m1@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama' "$CALLS"
+    grep -qx 'plan m2@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama' "$CALLS"
     # the summary shows the second one only
     [[ "${stderr##*Summary}" == *"FAKE RECOMMENDATION for m2 "* ]]
     [[ "${stderr##*Summary}" != *"FAKE RECOMMENDATION for m1 "* ]]
@@ -703,4 +705,21 @@ FAKE
     ask eng none "" m1 y
     [[ "$stderr" != *"needs a proxy"* ]]
     [[ "$stderr" == *"m1"* ]]
+}
+
+# --- the VM with no model ---------------------------------------------------------------------
+
+@test "a package that ships no sizing component says so for a VM with no model, and still ends well" {
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask none eng none "" "" y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"no recommendation: this package ships no sizing component"* ]]
+    [ -s cfg.json ]
+}
+
+@test "a session with a model does not size the stack with no model" {
+    GEN_ARGS=(--config-only --output cfg.json)
+    ask none eng none "" m1 y y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"no recommendation"* ]]
 }

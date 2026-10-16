@@ -363,7 +363,7 @@ FAKE
     run jq -r '(.action_options.suggest | map(.name) | join(" ")), (.action_options.check | map(.name) | join(" ")), (.action_options.plan | map(.name) | join(" ")), (.options | map(.name) | join(" ")), (.action_options | has("recommend") | tostring)' <<<"$output"
     [ "${lines[0]}" = "target-ram target-vram target-cpu-cores n" ]
     [ "${lines[1]}" = "target-ram target-vram target-cpu-cores" ]
-    [ "${lines[2]}" = "target-cpu-cores chat-interface" ]
+    [ "${lines[2]}" = "target-cpu-cores component chat-interface" ]
     [[ "${lines[3]}" != *target* ]]
     [ "${lines[4]}" = "false" ]
 }
@@ -400,21 +400,164 @@ FAKE
     chmod +x "$BATS_TEST_TMPDIR/bin/llmfit"
 }
 
-@test "plan: the figures of llmfit, an estimated margin, the totals rounded up, for both quantisations" {
+# A fake tree of components for `plan`: EASY_CS_AI_LIB points at its lib/ directory, whose parent
+# holds the <type>/ directories, where only `describe` answers (docs/spec-script-contract.md).
+#   engine/one    1 GB of RAM, 2 of disk, one process, GPU rule 0.9 and 1
+#   engine/per    1 GB of RAM per model, 2 of disk, one instance per model, GPU rule 0.9 and 1
+#   engine/nogpu  1 GB of RAM, 2 of disk, resources but no GPU rule
+#   chat-interface/chat  2 GB of RAM, 6 of disk
+#   proxy/prox    0.5 GB of RAM, 0.5 of disk
+#   proxy/bare    no resources; proxy/broken answers something that is not JSON; no script for engine/ghost
+make_tree() {
+    local t="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$t"/{engine,chat-interface,proxy,provisioning}
+    ln -s "$(cd "$BATS_TEST_DIRNAME/../../install_scripts/lib" && pwd)" "$t/lib"
+    fake_component engine one '{"ram_gb":1,"disk_gb":2,"per_model":false,"gpu":{"utilization":0.9,"fixed_gb":1},"source":"guess","basis":"b"}'
+    fake_component engine per '{"ram_gb":1,"disk_gb":2,"per_model":true,"gpu":{"utilization":0.9,"fixed_gb":1},"source":"vendor","basis":"b"}'
+    fake_component engine nogpu '{"ram_gb":1,"disk_gb":2,"source":"guess","basis":"b"}'
+    fake_component chat-interface chat '{"ram_gb":2,"disk_gb":6,"source":"measured","basis":"b"}'
+    fake_component proxy prox '{"ram_gb":0.5,"disk_gb":0.5,"source":"guess","basis":"b"}'
+    fake_component proxy bare ''
+    printf '#!/usr/bin/env bash\necho "not json"\n' >"$t/proxy/broken.sh"
+    export EASY_CS_AI_LIB="$t/lib"
+}
+
+# fake_component <type> <name> <resources-json, or empty for none>
+fake_component() {
+    local f="$BATS_TEST_TMPDIR/tree/$1/$2.sh" r="${3:-null}"
+    [[ -n "$3" ]] || r=null
+    printf '#!/usr/bin/env bash\n[[ "$1" == describe ]] && echo '"'"'{"name":"%s","type":"%s","resources":%s}'"'"'\n' "$2" "$1" "$r" >"$f"
+}
+
+@test "plan: the margin is the system plus what the components declare, for both quantisations" {
     llmfit install
     make_planning_llmfit
+    make_tree
+    llmfit plan hf/m --component engine/one --component chat-interface/chat --component proxy/prox --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.context, .vcpu, .chat_interface, .unsized, .undeclared]' <<<"$output")" = '[8192,null,true,[],[]]' ]
+    [ "$(jq -c '.models[0] | [.typed, .name, .engine]' <<<"$output")" = '["hf/m","hf/m",null]' ]
+    [ "$(jq -c '.quantisations.best.quants' <<<"$output")" = '["Q8_0"]' ]
+    # RAM without GPU: 9.93 + 1 system + 1 engine + 2 chat + 0.5 proxy = 14.43, rounded up once
+    [ "$(jq -c '.quantisations.best.ram_no_gpu' <<<"$output")" = '{"model_gb":9.93,"margin_gb":5.07,"total_gb":15,"total_mb":15360,"margin_parts":{"system":1,"engine":1,"chat_interface":2,"proxy":0.5}}' ]
+    # GPU memory: 10.43 / 0.9 + 1 = 12.59
+    [ "$(jq -c '.quantisations.best.gpu_memory' <<<"$output")" = '{"model_gb":10.43,"margin_gb":2.57,"total_gb":13,"margin_basis":"model / 0.9, 1 for the CUDA context"}' ]
+    # RAM with a GPU: 1 + 1 + 2 + 0.5 = 4.5
+    [ "$(jq -c '.quantisations.best.gpu_ram' <<<"$output")" = '{"model_gb":0,"margin_gb":5,"total_gb":5,"total_mb":5120,"margin_parts":{"system":1,"engine":1,"chat_interface":2,"proxy":0.5}}' ]
+    # disk: 8.43 + 10 system + 2 + 6 + 0.5 = 26.93
+    [ "$(jq -c '.quantisations.best.disk' <<<"$output")" = '{"model_gb":8.43,"margin_gb":18.57,"total_gb":27,"margin_parts":{"system":10,"engine":2,"chat_interface":6,"proxy":0.5}}' ]
+    [ "$(jq -c '.quantisations.default.ram_no_gpu | [.total_gb, .total_mb]' <<<"$output")" = '[11,11264]' ]
+    [ "$(jq -r '.quantisations.default.quants[]' <<<"$output")" = "Q4_K_M" ]
+    # every part has its source in the document
+    [ "$(jq -c '.components' <<<"$output")" = '[{"type":"engine","name":"one","declared":true,"ram_gb":1,"disk_gb":2,"source":"guess"},{"type":"chat-interface","name":"chat","declared":true,"ram_gb":2,"disk_gb":6,"source":"measured"},{"type":"proxy","name":"prox","declared":true,"ram_gb":0.5,"disk_gb":0.5,"source":"guess"}]' ]
+}
+
+@test "plan: the three parts of the margin have the same keys, the keys of the other types only when named" {
+    llmfit install
+    make_planning_llmfit
+    make_tree
+    llmfit plan hf/m --component engine/one --json
+    [ "$(jq -c '.quantisations.best | [.ram_no_gpu, .gpu_ram, .disk] | map(.margin_parts | keys)' <<<"$output")" = '[["chat_interface","engine","system"],["chat_interface","engine","system"],["chat_interface","engine","system"]]' ]
+    [ "$(jq -c '.quantisations.best.disk.margin_parts' <<<"$output")" = '{"system":10,"engine":2,"chat_interface":0}' ]
+    llmfit plan hf/m --component engine/one --component proxy/prox --component provisioning/fit --json
+    [ "$(jq -c '.quantisations.best | [.ram_no_gpu, .gpu_ram, .disk] | map(.margin_parts | keys)' <<<"$output")" = '[["chat_interface","engine","provisioning","proxy","system"],["chat_interface","engine","provisioning","proxy","system"],["chat_interface","engine","provisioning","proxy","system"]]' ]
+}
+
+@test "plan: one instance per model adds up, one process counts the largest, on the same models" {
+    llmfit install
+    make_planning_llmfit
+    make_tree
+    # hf/m is 9.93 / 10.43 GB, hf/small a third of that: 3.31 / 3.48
+    llmfit plan hf/m hf/small --component engine/one --json
+    [ "$status" -eq 0 ]
+    # the largest counts: RAM 9.93 + 1 + 1, GPU 10.43 / 0.9 + 1 = 12.59, disks add up
+    [ "$(jq -c '.quantisations.best | [.ram_no_gpu.total_gb, .gpu_memory.total_gb, .gpu_ram.total_gb, .disk.model_gb]' <<<"$output")" = '[12,13,2,11.24]' ]
+    llmfit plan hf/m hf/small --component engine/per --json
+    [ "$status" -eq 0 ]
+    # the sum: RAM 13.24 + 1 system + 1 per model, GPU (10.43 / 0.9 + 1) + (3.48 / 0.9 + 1) = 17.45, RAM with a GPU 1 + 2
+    [ "$(jq -c '.quantisations.best | [.ram_no_gpu.total_gb, .gpu_memory.total_gb, .gpu_ram.total_gb, .disk.model_gb]' <<<"$output")" = '[17,18,3,11.24]' ]
+    [[ "$(jq -r '.quantisations.best.gpu_memory.margin_basis' <<<"$output")" == *"each model, summed"* ]]
+}
+
+@test "plan: a model carries its engine, which picks the engine it is counted on" {
+    llmfit install
+    make_planning_llmfit
+    make_tree
+    llmfit plan hf/m@one hf/small@per --component engine/one --component engine/per --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.models[] | [.typed, .name, .engine]]' <<<"$output")" = '[["hf/m","hf/m","one"],["hf/small","hf/small","per"]]' ]
+    # one holds hf/m (RAM 9.93, GPU 12.59), per holds hf/small: the largest of the engines, their RAM added
+    [ "$(jq -c '.quantisations.best | [.ram_no_gpu.model_gb, .ram_no_gpu.margin_parts.engine, .ram_no_gpu.total_gb, .gpu_memory.total_gb]' <<<"$output")" = '[9.93,2,13,13]' ]
+    # a model with no @ goes to the only engine named
+    llmfit plan hf/m --component engine/one --json
+    [ "$(jq -c '.models[0].engine' <<<"$output")" = "null" ]
+}
+
+@test "plan: a model that names no engine of the call, or one of several engines, is a usage error" {
+    llmfit install
+    make_planning_llmfit
+    make_tree
+    llmfit plan hf/m --component engine/one --component engine/per --json
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"needs @<engine>"* ]]
+    llmfit plan hf/m@ghost --component engine/one --json
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"'ghost'"*"declared: one"* ]]
+    llmfit plan hf/m@one --json
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"declared: none"* ]]
+    llmfit plan hf/m@ --component engine/one --json
+    [ "$status" -eq 2 ]
+    llmfit plan @one --component engine/one --json
+    [ "$status" -eq 2 ]
+    ! grep -q "info" "$CALLS"
+}
+
+@test "plan: a component without resources, without a script or with a broken describe is undeclared and adds nothing" {
+    llmfit install
+    make_planning_llmfit
+    make_tree
+    llmfit plan hf/m --component engine/one --component proxy/bare --component proxy/ghost2 --component proxy/broken --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.undeclared' <<<"$output")" = '["proxy/bare","proxy/ghost2","proxy/broken"]' ]
+    [ "$(jq -c '.components | map([.name, .declared])' <<<"$output")" = '[["one",true],["bare",false],["ghost2",false],["broken",false]]' ]
+    [[ "$stderr" == *"describe of proxy/broken failed or is not JSON"* ]]
+    # what is declared still counts, the undeclared ones add 0 (and are not 0 declared)
+    [ "$(jq -c '.quantisations.best.ram_no_gpu.margin_parts' <<<"$output")" = '{"system":1,"engine":1,"chat_interface":0,"proxy":0}' ]
+}
+
+@test "plan: an engine with resources and no GPU rule is sized with the generic one and says so, and stays declared" {
+    llmfit install
+    make_planning_llmfit
+    make_tree
+    llmfit plan hf/m --component engine/nogpu --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.undeclared' <<<"$output")" = '[]' ]
+    [[ "$(jq -r '.quantisations.best.gpu_memory.margin_basis' <<<"$output")" == *"generic GPU rule, nogpu declares none"* ]]
+    [ "$(jq -r '.quantisations.best.gpu_memory.total_gb' <<<"$output")" = 13 ]
+}
+
+@test "plan: no component gives the generic engine of before, undeclared, with its GB in the engine part" {
+    llmfit install
+    make_planning_llmfit
+    make_tree
     llmfit plan hf/m --json
     [ "$status" -eq 0 ]
-    [ "$(jq -c '[.context, .vcpu, .chat_interface, .unsized]' <<<"$output")" = '[8192,null,false,[]]' ]
-    [ "$(jq -c '.models[0] | [.typed, .name]' <<<"$output")" = '["hf/m","hf/m"]' ]
-    # best: RAM without GPU = model + 1 engine + 1 system, GPU memory = model / 0.9 + 1, disk + 20
-    [ "$(jq -c '.quantisations.best.quants' <<<"$output")" = '["Q8_0"]' ]
-    [ "$(jq -c '.quantisations.best.ram_no_gpu' <<<"$output")" = '{"model_gb":9.93,"margin_gb":2.07,"total_gb":12,"total_mb":12288,"margin_parts":{"engine":1,"system":1,"chat_interface":0}}' ]
-    [ "$(jq -c '.quantisations.best.gpu_memory' <<<"$output")" = '{"model_gb":10.43,"margin_gb":2.57,"total_gb":13,"margin_basis":"model / 0.9, 1 for the CUDA context"}' ]
-    [ "$(jq -c '.quantisations.best.gpu_ram' <<<"$output")" = '{"model_gb":0,"margin_gb":2,"total_gb":2,"total_mb":2048,"margin_parts":{"system_and_engine":2,"chat_interface":0}}' ]
-    [ "$(jq -c '.quantisations.best.disk' <<<"$output")" = '{"model_gb":8.43,"margin_gb":20.57,"total_gb":29,"margin_parts":{"system_and_components":20}}' ]
-    [ "$(jq -c '.quantisations.default.ram_no_gpu | [.total_gb, .total_mb]' <<<"$output")" = '[9,9216]' ]
-    [ "$(jq -r '.quantisations.default.quants[]' <<<"$output")" = "Q4_K_M" ]
+    [ "$(jq -c '[.components, .undeclared, .chat_interface]' <<<"$output")" = '[[],["engine (generic)"],false]' ]
+    [ "$(jq -c '.quantisations.best | [.ram_no_gpu, .gpu_memory, .gpu_ram, .disk]' <<<"$output")" = '[{"model_gb":9.93,"margin_gb":2.07,"total_gb":12,"total_mb":12288,"margin_parts":{"system":1,"engine":1,"chat_interface":0}},{"model_gb":10.43,"margin_gb":2.57,"total_gb":13,"margin_basis":"model / 0.9, 1 for the CUDA context (generic engine, none declared)"},{"model_gb":0,"margin_gb":2,"total_gb":2,"total_mb":2048,"margin_parts":{"system":1,"engine":1,"chat_interface":0}},{"model_gb":8.43,"margin_gb":10.57,"total_gb":19,"margin_parts":{"system":10,"engine":0,"chat_interface":0}}]' ]
+}
+
+@test "plan: --chat-interface is the shorthand of --component chat-interface/librechat" {
+    llmfit install
+    make_planning_llmfit
+    llmfit plan hf/m --chat-interface --target-cpu-cores 4 --json
+    [ "$status" -eq 0 ]
+    short="$output"
+    [ "$(jq -c '[.vcpu, .chat_interface]' <<<"$short")" = '[4,true]' ]
+    llmfit plan hf/m --component chat-interface/librechat --target-cpu-cores 4 --json
+    [ "$output" = "$short" ]
+    # the declaration of the shipped LibreChat, not the 4 GB of before
+    [ "$(jq -c '.quantisations.best.ram_no_gpu.margin_parts.chat_interface' <<<"$short")" = 2 ]
 }
 
 @test "plan: the largest model sizes the memory, the disks add up, each model is announced" {
@@ -422,18 +565,8 @@ FAKE
     make_planning_llmfit
     llmfit plan hf/m hf/small --json
     [ "$status" -eq 0 ]
-    [ "$(jq -c '.quantisations.best | [.ram_no_gpu.model_gb, .disk.model_gb, .disk.total_gb]' <<<"$output")" = '[9.93,11.24,32]' ]
+    [ "$(jq -c '.quantisations.best | [.ram_no_gpu.model_gb, .disk.model_gb, .disk.total_gb]' <<<"$output")" = '[9.93,11.24,22]' ]
     [[ "$stderr" == *"sizing hf/m with llmfit (1/2)"*"sizing hf/small with llmfit (2/2)"* ]]
-}
-
-@test "plan: a chat interface adds its share to the RAM margin, the cores are reported as given" {
-    llmfit install
-    make_planning_llmfit
-    llmfit plan hf/m --chat-interface --target-cpu-cores 4 --json
-    [ "$status" -eq 0 ]
-    [ "$(jq -c '[.vcpu, .chat_interface]' <<<"$output")" = '[4,true]' ]
-    [ "$(jq -c '.quantisations.best.ram_no_gpu | [.total_gb, .margin_parts.chat_interface]' <<<"$output")" = '[16,4]' ]
-    [ "$(jq -c '.quantisations.best.gpu_ram | [.total_gb, .total_mb]' <<<"$output")" = '[6,6144]' ]
 }
 
 @test "plan: a model llmfit cannot size is listed apart and never guessed; nothing sized is no figure" {
@@ -445,10 +578,10 @@ FAKE
     [[ "$stderr" != *"does not know"* ]]
     llmfit plan nosuchmodel --json
     [ "$status" -eq 0 ]
-    [ "$(jq -c '[.models, .unsized, .quantisations, .context]' <<<"$output")" = '[[],["nosuchmodel"],null,null]' ]
+    [ "$(jq -c '[.models, .unsized, .quantisations, .context, .stack]' <<<"$output")" = '[[],["nosuchmodel"],null,null,null]' ]
 }
 
-@test "plan needs llmfit and a model, and takes neither --target-ram nor suggest's options" {
+@test "plan needs llmfit and a model or a component, and takes neither --target-ram nor suggest's options" {
     llmfit plan hf/m --json
     [ "$status" -eq 4 ]
     llmfit install
@@ -459,6 +592,76 @@ FAKE
     [ "$status" -eq 2 ]
     llmfit suggest --chat-interface
     [ "$status" -eq 2 ]
+    llmfit suggest --component engine/one
+    [ "$status" -eq 2 ]
+    llmfit plan hf/m --component engine
+    [ "$status" -eq 2 ]
+}
+
+# --- a stack with no model ---------------------------------------------------------------------------
+
+@test "plan: components and no model answer for a VM with no model, without calling llmfit" {
+    make_tree
+    # llmfit is not installed: a model would be exit 4, a stack with none is not
+    llmfit plan --component engine/one --component proxy/prox --target-cpu-cores 4 --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.models, .quantisations, .vcpu, .unsized, .undeclared]' <<<"$output")" = '[[],null,4,[],[]]' ]
+    # 1 system + 1 engine + 0.5 proxy = 2.5, disk 10 + 2 + 0.5 = 12.5
+    [ "$(jq -c '.stack' <<<"$output")" = '{"ram_no_gpu":{"model_gb":0,"margin_gb":3,"total_gb":3,"total_mb":3072,"margin_parts":{"system":1,"engine":1,"chat_interface":0,"proxy":0.5}},"disk":{"model_gb":0,"margin_gb":13,"total_gb":13,"margin_parts":{"system":10,"engine":2,"chat_interface":0,"proxy":0.5}},"models_included":false}' ]
+    ! grep -q llmfit "${CALLS:-/dev/null}" 2>/dev/null
+}
+
+@test "plan: a VM with no model and no engine says nothing of the models, and a per_model engine adds no RAM" {
+    make_tree
+    llmfit plan --component chat-interface/chat --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.stack.models_included, .stack.ram_no_gpu.total_gb, .stack.disk.total_gb]' <<<"$output")" = '[null,3,16]' ]
+    llmfit plan --component chat-interface/chat
+    [[ "$output" == *"VM with no model: RAM 3 GB, disk 16 GB"* ]]
+    [[ "$output" != *"models not included"* && "$output" != *"GPU memory"* ]]
+    llmfit plan --component engine/per --json
+    [ "$(jq -c '[.stack.models_included, .stack.ram_no_gpu.margin_parts.engine, .stack.disk.margin_parts.engine, .stack.ram_no_gpu.total_gb]' <<<"$output")" = '[false,0,2,1]' ]
+}
+
+@test "plan: with no model and an engine the text warns that the models come on top, and the GPU is not sized" {
+    make_tree
+    llmfit plan --component engine/one --component chat-interface/chat
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"VM with no model: RAM 4 GB, disk 18 GB"* ]]
+    [[ "$output" == *"GPU memory: not sized, no model"* ]]
+    [[ "$output" == *"vCPU: not sized"* && "$output" != *"by llmfit"* ]]
+    [[ "$output" == *"models not included: add the memory, GPU memory and disk of each model you will install on this VM"* ]]
+    [[ "$output" == *"1 system (constant), 1 engine (guess), 2 chat interface (measured)"* ]]
+}
+
+@test "plan: --chat-interface alone is a component: a stack, not exit 2" {
+    llmfit plan --chat-interface --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '[.stack != null, .chat_interface]' <<<"$output")" = '[true,true]' ]
+}
+
+# --- the declarations of the shipped components -----------------------------------------------------
+
+@test "every shipped describe declares well-formed resources" {
+    local root="${BATS_TEST_DIRNAME}/../../install_scripts" f
+    for f in "$root"/engine/*.sh "$root"/proxy/*.sh "$root"/chat-interface/*.sh "$root"/provisioning/*.sh; do
+        run bash "$f" describe
+        [ "$status" -eq 0 ]
+        run jq -e '.resources | (.ram_gb >= 0) and (.disk_gb >= 0) and (.source | IN("measured", "vendor", "guess")) and ((.basis | type) == "string" and (.basis | length) > 0)' <<<"$(bash "$f" describe)"
+        [ "$status" -eq 0 ] || { echo "$f"; false; }
+    done
+}
+
+@test "the reference stack: the RAM margin is 1 system, 1 engine and 2 chat interface, the disk adds up to 18.2" {
+    llmfit install
+    make_planning_llmfit
+    llmfit plan hf/m --component provisioning/llmfit --component proxy/nginx --component engine/ollama --component chat-interface/librechat --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.undeclared' <<<"$output")" = '[]' ]
+    [ "$(jq -c '.quantisations.best.ram_no_gpu.margin_parts' <<<"$output")" = '{"system":1,"engine":1,"chat_interface":2,"provisioning":0,"proxy":0}' ]
+    [ "$(jq -c '.quantisations.best.gpu_ram.margin_parts' <<<"$output")" = '{"system":1,"engine":1,"chat_interface":2,"provisioning":0,"proxy":0}' ]
+    [ "$(jq -c '.quantisations.best.disk.margin_parts | [.system, .engine, .chat_interface] | add' <<<"$output")" = 18.2 ]
+    [ "$(jq -c '.quantisations.best.gpu_memory.margin_basis' <<<"$output")" = '"model / 0.9, 1 for the CUDA context"' ]
 }
 
 # --- the text for a person (without --json) --------------------------------------------------------
@@ -489,31 +692,36 @@ FAKE
     [ "$(jq -c '.models' <<<"$output")" = "[]" ]
 }
 
-@test "plan prints the recommendation for a person: the margin shown as estimated, with what it is made of" {
+@test "plan prints the recommendation for a person: the margin shown as estimated, with what it is made of and its sources" {
     llmfit install
     make_planning_llmfit
-    llmfit plan hf/m hf/small
+    make_tree
+    llmfit plan hf/m hf/small --component engine/one --component chat-interface/chat
     [ "$status" -eq 0 ]
     [[ "$output" == *"Recommended VM, from llmfit (context of 8192 tokens) plus an ESTIMATED margin"* ]]
     [[ "$output" == *"hf/m: best Q8_0 9.93 GB, default Q4_K_M 6.16 GB, disk 8.43 or 4.66 GB"* ]]
     [[ "$output" == *"vCPU: not sized by llmfit"* ]]
     [[ "$output" == *"with the best quantisation (Q8_0):"* ]]
-    [[ "$output" == *"VM without GPU: RAM 12 GB (12288 MB) = 9.93 model + 2.07 estimated margin (1 engine, 1 system)"* ]]
-    [[ "$output" == *"VM with a GPU:  GPU memory 13 GB = 10.43 model + 2.57 estimated margin (model / 0.9, 1 for the CUDA context); RAM 2 GB (2048 MB), estimated"* ]]
-    [[ "$output" == *"disk: 32 GB = 11.24 models + 20 estimated for the system and components"* ]]
+    [[ "$output" == *"VM without GPU: RAM 14 GB (14336 MB) = 9.93 model + 4.07 estimated margin (1 system (constant), 1 engine (guess), 2 chat interface (measured))"* ]]
+    [[ "$output" == *"VM with a GPU:  GPU memory 13 GB = 10.43 model + 2.57 estimated margin (model / 0.9, 1 for the CUDA context); RAM 4 GB (4096 MB), estimated (1 system (constant), 1 engine (guess), 2 chat interface (measured))"* ]]
+    [[ "$output" == *"disk: 30 GB = 11.24 models + 18.76 estimated (10 system (constant), 2 engine (guess), 6 chat interface (measured))"* ]]
     [[ "$output" == *"with the default quantisation (Q4_K_M):"* ]]
+    # a total is as reliable as its least reliable part
+    [[ "$output" == *"the margin is as reliable as its least reliable part: guess"* ]]
     # the progress goes to stderr, not into the text
     [[ "$output" != *"sizing"* ]]
     [[ "$stderr" == *"sizing hf/m with llmfit (1/2)"* ]]
 }
 
-@test "plan, for a person: the chat interface and the cores, a model not estimated, a mixture of experts" {
+@test "plan, for a person: the cores, what is not covered, a model not estimated" {
     llmfit install
     make_planning_llmfit
-    llmfit plan hf/m nosuch --chat-interface --target-cpu-cores 4
+    make_tree
+    llmfit plan hf/m nosuch --component proxy/bare --target-cpu-cores 4
     [ "$status" -eq 0 ]
     [[ "$output" == *"vCPU: 4"* ]]
-    [[ "$output" == *"(1 engine, 1 system, 4 chat interface)"* ]]
+    [[ "$output" == *"not covered: proxy/bare, engine (generic), the margin is incomplete"* ]]
+    [[ "$output" == *"1 engine (generic)"* ]]
     [[ "$output" == *"nosuch: not estimated (llmfit does not know it), the recommendation does not cover it"* ]]
     llmfit plan nosuch
     [ "$status" -eq 0 ]

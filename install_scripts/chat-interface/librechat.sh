@@ -220,6 +220,7 @@ describe() {
         component_version: $cv, requires: [$proxy], provides: ["chat-ui"],
         platforms: ["debian", "ubuntu"], health_timeout: $ht,
         native: { command: "docker compose -f {compose_file}" },
+        resources: { ram_gb: 2, disk_gb: 6.2, source: "guess", basis: "api, FerretDB and PostgreSQL measured at 694 MiB at idle on 2026-10-16 with an empty database, declared three times higher for accounts and conversations (a guess); the images take about 6.2 GB (measured)" },
         options: [
           { name: "port", env: "EASY_CS_AI_LIBRECHAT_PORT", default: $port, secret: false, type: "integer", min: 1, max: 65535, description: "Listening port of LibreChat on the machine (nginx serves it over HTTPS)" },
           { name: "bind", env: "EASY_CS_AI_LIBRECHAT_BIND", default: "127.0.0.1", secret: false, description: "Listening address of LibreChat" },
