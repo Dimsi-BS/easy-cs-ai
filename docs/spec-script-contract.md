@@ -171,6 +171,8 @@ easy-cs-ai: ollama install end exit=0 duration=48s
 
   `ram_gb`, `disk_gb`, `source` and `basis` are all required when `resources` is present, and a number is never negative. A component **without** `resources` is **undeclared**, which is not the same as declaring 0: `plan` lists it as not covered, like a model it could not size, and never invents a figure for it. `catalog` carries `resources` verbatim, since it prints each `describe` as it is.
 
+  <a id="sizing-reads-describe"></a>
+
   #### Sizing reads `describe`
 
   Proposed, not implemented. `provisioning llmfit plan` needs the `resources` of the components named by `--component <type>/<name>`. It reads them by running `describe` (which needs no root and no state) of `<libdir>/<type>/<name>.sh`, where `<libdir>` is the directory that holds the `<type>/` directories of the package. `EASY_CS_AI_LIB` is the `lib/` directory (the one of `common.sh`, see [Paths and testability](#paths-and-testability)), which is a sibling of the type directories ([Layout](#layout)), so `<libdir>` is its parent: the script reads `$EASY_CS_AI_LIB/../<type>/<name>.sh`. It runs no other action of another script, and writes nothing.
