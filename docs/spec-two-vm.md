@@ -50,12 +50,15 @@ The validation of [spec: config](spec-config.md#validation) applies, with the fi
 | Code | When | Message (in substance) |
 | --- | --- | --- |
 | `engine_unreachable` | An engine that is not `protected` is on a VM with no proxy, **holds no model in the file**, and a chat interface is on another VM | The engine listens on the loopback of its VM and nothing exposes it: the chat interface of the other VM cannot reach it. Add a proxy to that VM before the first model |
+| `engine_address_unknown` | The layout of the [next steps 2 to 4](#next-steps) holds (one engine VM, not `protected`, with a proxy and at least one model, and one chat-interface VM), and the `server-name` option of that proxy is **not written in the file** | The address of the engine VM is not known yet: its proxy will take the host name of the machine as its server name, and a self-signed certificate will also cover the addresses the machine has when it is installed. The web VM must reach the engine VM by one of those names or addresses. If none does, re-run `install proxy nginx --server-name <name or address>` on the engine VM before linking the models |
+
+The second warning exists because the address of a VM is usually not known when its script is generated (it is given by the cloud when the VM is created), so the session cannot ask for it and must not leave the administrator to find the problem at step 4. It states the situation and what covers it ([the certificate](#contract-additions)) **before** anything is created, and the fix (the re-run) is also in the [next steps](#next-steps). A `server-name` written in the file, a name or an address, removes the warning. It never comes with `engine_unreachable` (that one needs no model, this one needs a model).
 
 An engine that is not `protected`, **holds a model** and has no proxy on its VM is not a warning but an **error**: `missing_requirement`, see [what a model needs](spec-config.md#what-a-model-needs). The script of that VM could not finish (`add` needs the proxy, exit 4, after the engine is installed), so the validation refuses the file before any script is written, with or without a chat interface on another VM. The warning is what remains for the valid case, an engine installed first whose models come later; it never comes with the error for the same engine.
 
-A warning has the same shape as the other warnings of [spec: capabilities](spec-capabilities.md#config-validate), with a `code` and the `vm` it is about.
+A warning has the same shape as the other warnings of [spec: capabilities](spec-capabilities.md#config-validate), with a `code` and the `vm` it is about. Both are computed on the whole file, so a validation of one slice (`--vm`) gives neither.
 
-**Where the session shows it.** The warning is about the link between two VMs, so it can only be computed once both exist: the engine pass cannot give it, since the chat interface of the `web` pass is not known yet. The summary of the **last pass** therefore lists, after its own, the warnings that **need several VMs to be computed** and concern an earlier one (today only `engine_unreachable`, about the engine VM), each naming its `vm`. Every other warning (the `warn` of an option, `models_not_checked`) is judged inside one VM and shown **once**, in the summary of the pass of that VM, never repeated at the end; the summary of an earlier pass lists only what its own VM says. A session that declines the proxy at the first pass (see [journey, step 4](spec-journey.md#4-models)) meets the warning at the end of the second.
+**Where the session shows it.** The warning is about the link between two VMs, so it can only be computed once both exist: the engine pass cannot give it, since the chat interface of the `web` pass is not known yet. The summary of the **last pass** therefore lists, after its own, the warnings that **need several VMs to be computed** and concern an earlier one (today `engine_unreachable` and `engine_address_unknown`, both about the engine VM), each naming its `vm`. Every other warning (the `warn` of an option, `models_not_checked`) is judged inside one VM and shown **once**, in the summary of the pass of that VM, never repeated at the end; the summary of an earlier pass lists only what its own VM says. A session that declines the proxy at the first pass (see [journey, step 4](spec-journey.md#4-models)) meets the warning at the end of the second.
 
 ## In the session
 
@@ -92,7 +95,7 @@ One VM for everything (1), or the web interface on a second VM, apart from the i
 
 The same file, written in one go: a program (or an agent working for a person) writes the configuration with the `vm` of each component, validates it with `config validate <file> --target fresh` (which cuts it into slices and checks each; the default target `this` is one machine and needs `--vm`, see [spec: capabilities](spec-capabilities.md#config-validate)), then runs `generate --config <file>`, which gives the same scripts the session does. There is no other path and no other flag: the answer to the VM question **is** the `vm` fields, so that [rule 2 of the journey](spec-journey.md#rules) holds without exception, and `config schema` lists the field.
 
-`generate --config <file> --json` extends its document for several VMs (see [spec: capabilities](spec-capabilities.md#commands)): `script` is `null` and `scripts` lists one entry per VM (`vm`, `path`, `bytes`, `written`, `package_version`, `package_format`), and `next_steps` carries the [next steps](#next-steps) as an array of strings. `config validate --json` carries the same `next_steps`, since they depend on the file only. They depend on **all** its VMs, so a validation of one slice alone (`--vm <name>`) has neither `next_steps` (`[]`) nor the `engine_unreachable` warning, which also needs to know what the other VMs hold. With no `vm` in the file the documents are unchanged; a file that names one VM only has `scripts` with one entry and `next_steps` `[]`.
+`generate --config <file> --json` extends its document for several VMs (see [spec: capabilities](spec-capabilities.md#commands)): `script` is `null` and `scripts` lists one entry per VM (`vm`, `path`, `bytes`, `written`, `package_version`, `package_format`), and `next_steps` carries the [next steps](#next-steps) as an array of strings. `config validate --json` carries the same `next_steps`, since they depend on the file only. They depend on **all** its VMs, so a validation of one slice alone (`--vm <name>`) has neither `next_steps` (`[]`) nor the `engine_unreachable` and `engine_address_unknown` warnings, which also need to know what the other VMs hold. With no `vm` in the file the documents are unchanged; a file that names one VM only has `scripts` with one entry and `next_steps` `[]`.
 
 The journey text of [`guide.txt`](../install_scripts/guide.txt) tells an agent to ask the user the VM question and to give the `vm` fields; a test checks that it names the same commands as the next steps.
 
@@ -108,9 +111,11 @@ Two scripts written, to run on two different VMs:
 What is left to do once the VMs are up:
   1. Run each script as root on its VM, the engine VM first.   (without steps 2 to 4:
      "Run each script as root on its VM.")
-  2. On the engine VM, read the API key and the URL of each model:
+  2. On the engine VM, read the API key, the URL of each model and the names
+     and addresses its certificate covers:
        sudo easy-cs-ai proxy nginx show-key
        easy-cs-ai proxy nginx list-upstreams
+       easy-cs-ai proxy nginx status          (certificate_names)
   3. Let the web VM reach the engine VM on the HTTPS port of its proxy
      (443 unless you set --port): firewall, security group.
   4. On the web VM, link each model:
@@ -120,8 +125,13 @@ What is left to do once the VMs are up:
      (mode 0600, or - for stdin).
      With the default self-signed certificate, copy the certificate of the
      engine VM (/etc/easy-cs-ai/nginx/server.crt) to the web VM and add
-     --ca-file <file>. The host name in <url> must be the server name of the
-     engine VM's proxy, which is the one in its certificate.
+     --ca-file <file>. The host in <url> must be one the certificate covers
+     (certificate_names, step 2): the server name printed by list-upstreams,
+     or, when no server name was given, an address of the engine VM, which
+     you put in place of the host. If the web VM can reach neither, or the
+     address changed since the proxy was installed, re-run on the engine VM
+       sudo easy-cs-ai install proxy nginx --server-name <name or address>
+     which renews the certificate (copy it again), then read step 2 again.
 Until step 4 is done, the model list of LibreChat stays empty.
 ```
 
@@ -144,7 +154,7 @@ The list is computed by the validation of [spec: capabilities](spec-capabilities
 
 ## Contract additions
 
-Two actions change, and the existing calls behave exactly as today.
+Two actions change, and a detail of `install` and `status` of the nginx proxy is added (see [The certificate of the engine VM](#the-certificate-of-the-engine-vm)). The existing calls behave exactly as today.
 
 ### `proxy nginx list-upstreams`
 
@@ -184,6 +194,15 @@ chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-
 - `easy-cs-ai add` never passes these options: it links models of an engine of the same machine. The remote link is made by hand, with the component action.
 - **To check before implementing**: that LibreChat 0.8.7 reads the key of a custom endpoint from an environment variable reference in `librechat.yaml`, and that `NODE_EXTRA_CA_CERTS` is honoured by the image. If either fails, the mechanism changes, not the options above.
 
+### The certificate of the engine VM
+
+Proposed, not implemented. The address of the engine VM is usually not known when its script is generated, and a self-signed certificate is checked against the host of the URL the web VM uses ([decision: certificates](decision-nginx-certificates.md#self-signed)). Two additions to `proxy nginx`, neither changing a call that gives a `--server-name`:
+
+- **`install` with `--tls self-signed` and no `--server-name`** adds to the names the certificate covers the **addresses the machine has when the certificate is made**: every address of global scope (not loopback, not link-local), read from the system. The certificate then covers the host name (the default server name), `localhost`, `127.0.0.1` and those addresses, so the administrator can use the name or an address he reads on the VM, without knowing it beforehand. With an explicit `--server-name`, the certificate is what it is today (that name, `localhost`, `127.0.0.1`). `EASY_CS_AI_NGINX_ADDRESSES` (space separated) replaces the detection, for the tests, as `EASY_CS_AI_HOST_IDS` does for the platform.
+- **A re-run does not remake the certificate for a new address.** The rule stays "regenerated only when the name changes": a certificate that already covers the server name is kept, since the web VM holds a copy of it and a new one would break the link. An address that changes after the install (DHCP) is not covered: the fix is the re-run with `--server-name`, which is the last lines of step 4 of the [next steps](#next-steps).
+- **`status` of nginx gains `certificate_names`**: the array of the DNS names and addresses of the certificate nginx serves, read from the certificate itself (probed, not copied from the state), `[]` when it cannot be read. It is optional, additive and not a bump of `schema_version`; the other fields of `status` are unchanged. It is what step 2 reads, so the administrator knows which host the web VM may use.
+- `provided` and `letsencrypt` certificates are the customer's or Let's Encrypt's: `install` adds nothing to them, and `certificate_names` shows what they cover. Let's Encrypt needs an explicit `--server-name` already.
+
 ## What does not change
 
 - The generated script, the configuration the session writes and the JSON of `generate` and `config validate` of a one-VM stack, byte for byte for the same decisions that give a stack able to finish; the session itself changes only by the [four changes of principle 1](#principles) (two prompts, and the two below). **The last two come from the specs this one relies on and not from the VMs**:
@@ -214,6 +233,8 @@ chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-
 - Tests of the next steps: computed by the validation from the file and the shipped `describe`s, with no script name in them (the same list whatever `--output` is); the heading of the scripts written is the generator's and is not in `next_steps`; only for at least two VMs; step 1 alone, in its wording without "the engine VM first", for a layout other than one engine VM and one chat-interface VM, or when the engine VM holds no model in the file (with a proxy: no warning, since the VM can finish and its models come later), or when the engine VM has no proxy (then it has no model, since a model would make the file invalid, and the `engine_unreachable` warning is there), or when its engine is `protected`, **with or without a proxy on its VM** (a `protected` engine needs no proxy and gets no warning; with a proxy, `list-upstreams` would be empty; either way the web VM could reach the engine directly, which the steps do not describe), with a test for each of the two cases; a validation of one slice alone with neither `next_steps` nor `engine_unreachable`; the models of the file filled in; the same lines in the text of `generate`, in `generate --json` and in `config validate --json`; only options present in the `describe` of the LibreChat script; and `guide.txt` names the same commands, and the `--component` / `<model>@<engine>` form of `plan`.
 - A file that names one VM only (`vm` on every component, one name): `apply` refused without `--vm`, one script `…-<vm>.sh` with `VM: <vm> (1 of 1)`, `scripts` with one entry and no `script` in `generate --json`, `next_steps` `[]`, and the same file without the `vm` fields giving today's script.
 - Parity: a scripted two-VM session and the equivalent hand-written file give the same configuration, the same plan (`config validate --target fresh --json`) and the same scripts ([parity test](spec-journey.md#parity)).
+- Tests of `engine_address_unknown`: given when the layout of the next steps 2 to 4 holds and the `server-name` of the engine VM's proxy is not written; not given with a `server-name` written (a name, or an address), with the engine VM holding no model (that is `engine_unreachable`'s case, never both), with a `protected` engine, with another layout, or by a validation of one slice; computed on the whole file, so shown in the summary of the last pass (not of the engine pass) and once; the same warning, with its `vm`, in `config validate --json` and in `generate --config`; it does not change an exit code.
+- `bats` tests of the certificate of the engine VM, in `EASY_CS_AI_ROOT` mode with `EASY_CS_AI_NGINX_ADDRESSES`: no `--server-name` and `--tls self-signed` gives a certificate that covers the host name, `localhost`, `127.0.0.1` and the addresses; an explicit `--server-name` gives the certificate of today (no address added); a re-run with a new address keeps the certificate, a re-run with another name makes a new one; `provided` is untouched; `status` has `certificate_names` read from the served certificate (and `[]` when it cannot be read), with no other field changed. The step 2 and 4 text names only actions and options that are in the `describe` of nginx (`status`, `install`, `--server-name`).
 - `bats` tests of `list-upstreams` in `EASY_CS_AI_ROOT` mode: the public URL of each upstream (port 443 and another port, with the server name), `[]` when there is none, exit 4 when the proxy is not installed, no root needed, nothing journaled, the API key never printed, and the action listed in `actions` of `describe`.
 - `bats` tests of `add-endpoint` in `EASY_CS_AI_ROOT` mode: without the new options the rendered files are identical to today's; with `--api-key-file` (file, stdin, too-open file refused with exit 2, never in `librechat.yaml`, state, logs or `--dry-run`); with `--ca-file` (copied, bundle rebuilt, an invalid PEM refused); idempotence; `remove-endpoint` removes the key and the certificate; `uninstall` of LibreChat with such an endpoint removes the certificate and the bundle and keeps the key file, and `uninstall --purge` removes the key too.
 - Integration test on two VMs: both scripts run, the link made as in the next steps, a message answered through the web VM, the scripts run a second time change nothing. The existing single-VM test stays as it is.
@@ -225,7 +246,7 @@ chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-
 - **A command to finish the link.** `add-endpoint` by hand is the smallest thing. A higher-level command that reads the key and the certificate from the engine VM would be easier to use, and needs access from one VM to the other that the project does not assume.
 - **The models listed by the endpoint.** With `--model`, LibreChat shows that model only (`fetch: false`). Without, it fetches the list of the engine, through the key and the TLS, which adds a network dependency at start. To settle with the first real test.
 - **Several engine VMs, or several interfaces.** The format allows them, and a model says which engine VM it goes to with its [place](spec-config.md#where-a-model-goes) (`vm` and `engine`). What stays open is the rest: the next steps assume one engine VM and one chat-interface VM, and with several, which chat interface links to which model, and with what name, is not described. Each link is an `add-endpoint`, so no new mechanism is needed.
-- **The address of the engine VM and its certificate.** A self-signed certificate is valid for the server name given to the engine VM's nginx, so the web VM must use that very name. When the address is not known at generation, the administrator re-runs `install proxy nginx --server-name <name>` on the engine VM, which renews the certificate; this could be said in the next steps.
+- **The address of the engine VM and its certificate.** Settled by the [`engine_address_unknown` warning](#validation), the [addresses added to the self-signed certificate](#the-certificate-of-the-engine-vm) and the last lines of step 4. What stays open: an address that changes after the install is not covered (the re-run with `--server-name` is the answer, a certificate that follows the address would break the copy the web VM holds), and a name that no DNS gives to the engine VM, for which the administrator must give an address.
 - **Structured next steps.** `next_steps` is an array of strings, enough for an agent that reads them and for the text. If a program has to act on a step (find the `add-endpoint` command of a model), the entries would become objects (`id`, `vm`, `text`); documents of one VM are not concerned.
 - **A `protected` engine on its own VM.** No shipped engine is `protected`, so the next steps give step 1 only for one, whether its VM has a proxy or not. Linking a chat interface to such an engine would need its URL and its key, which the [contract](spec-script-contract.md#describe) does not say how a `protected` engine publishes (a proxy action does not apply, since `add` does not front it). To specify with the first `protected` engine.
 - **More than two VMs.** With any layout other than one engine VM and one chat-interface VM, only step 1 is given and the links between the VMs are not described. A rule for a pair per link would extend it.

@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. Five additions are **proposed, not implemented**: the `endpoint.protected` of `describe` (read by the [validation](spec-config.md#what-a-model-needs)), `proxy list-upstreams`, the `--api-key-file` and `--ca-file` options of `chat-interface add-endpoint` ([spec: two VMs](spec-two-vm.md#contract-additions)), the `resources` of `describe` and the `--component` / `<model>@<engine>` of `plan` ([spec: model fit](spec-model-fit.md#declared-resources)). Two changes of `plan` are **not additive**: with the declared resources, `gpu_ram.margin_parts` and `disk.margin_parts` of the `plan` document change their keys (see [`provisioning plan`](#type-specific-actions) below), which breaks a caller that reads them; and `plan` with no model and a component (`--chat-interface` alone included) answers with a stack, exit 0, where it was a usage error, exit 2. The totals also change (the RAM margin of the reference stack from 6 to 4 GB, the disk margin from 20 to 18.2 GB, see [spec: model fit](spec-model-fit.md#values-of-the-shipped-components)), which is a change of value, not of shape.
+**Status:** accepted. Six additions are **proposed, not implemented**: the `certificate_names` of the `status` of nginx and the addresses of its self-signed certificate ([spec: two VMs](spec-two-vm.md#the-certificate-of-the-engine-vm)), the `endpoint.protected` of `describe` (read by the [validation](spec-config.md#what-a-model-needs)), `proxy list-upstreams`, the `--api-key-file` and `--ca-file` options of `chat-interface add-endpoint` ([spec: two VMs](spec-two-vm.md#contract-additions)), the `resources` of `describe` and the `--component` / `<model>@<engine>` of `plan` ([spec: model fit](spec-model-fit.md#declared-resources)). Two changes of `plan` are **not additive**: with the declared resources, `gpu_ram.margin_parts` and `disk.margin_parts` of the `plan` document change their keys (see [`provisioning plan`](#type-specific-actions) below), which breaks a caller that reads them; and `plan` with no model and a component (`--chat-interface` alone included) answers with a stack, exit 0, where it was a usage error, exit 2. The totals also change (the RAM margin of the reference stack from 6 to 4 GB, the disk margin from 20 to 18.2 GB, see [spec: model fit](spec-model-fit.md#values-of-the-shipped-components)), which is a change of value, not of shape.
 
 ## Purpose
 
@@ -190,7 +190,7 @@ easy-cs-ai: ollama install end exit=0 duration=48s
 { "schema_version": 1, "name": "ollama", "installed": true, "running": true, "healthy": true, "version": "0.5.7" }
 ```
 
-`status` probes the real system (unit state, health endpoint) and compares it to the recorded state; it does not trust the state file alone. Exit code: 0 if healthy, 6 if installed but not healthy, 4 if not installed.
+`status` probes the real system (unit state, health endpoint) and compares it to the recorded state; it does not trust the state file alone. Exit code: 0 if healthy, 6 if installed but not healthy, 4 if not installed. `proxy nginx status` also carries `certificate_names` (proposed), the DNS names and addresses of the certificate it serves, probed from the certificate, see [spec: two VMs](spec-two-vm.md#the-certificate-of-the-engine-vm).
 
 ## Exit codes
 
