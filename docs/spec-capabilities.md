@@ -169,7 +169,7 @@ Without `--json`, the problems and the plan in human form (the lines `apply --dr
 
 ## Model fit and VM sizing
 
-Which models fit a machine, and what VM some models need, are capabilities too: the actions `suggest`, `check`, `plan` and `size` of `provisioning llmfit`, with the `--target-*` options to size for a machine that is not this one. They are specified in [spec: model fit](spec-model-fit.md), and their documents follow the same conventions as the ones above.
+Which models fit a machine, and what VM some models need, are capabilities too: the actions `suggest`, `check`, `plan` and `size` of `provisioning llmfit`, with the `--target-*` options to size for a machine that is not this one. They are specified in [spec: model fit](spec-model-fit.md), and their documents follow the same conventions as the ones above. `plan` sizes a stack from the `resources` each component declares in its `describe` (proposed, see [declared resources](spec-model-fit.md#declared-resources)), which `catalog` therefore carries as it carries the rest of the `describe`.
 
 ## Contract addition: typed options in `describe`
 

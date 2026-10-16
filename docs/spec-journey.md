@@ -63,10 +63,10 @@ What can be installed, and what the target is.
 
 ### 4. Models
 
-Asked when an engine is selected (with two VMs, in the pass of the engine's VM: the chat interface is not on that VM, so the VM is sized without it and the models are not linked to it, see [spec: two VMs](spec-two-vm.md#in-the-session)). The user either has a VM imposed (**hardware first**) or has models in mind (**models first**). The detail, the actions and the sizing are in [spec: model fit](spec-model-fit.md):
+Asked when an engine is selected (with two VMs, in the pass of the engine's VM: the chat interface is not on that VM, so the VM is sized from its own components and the models are not linked to it, see [spec: two VMs](spec-two-vm.md#in-the-session)). The user either has a VM imposed (**hardware first**) or has models in mind (**models first**). The detail, the actions and the sizing are in [spec: model fit](spec-model-fit.md):
 
 - **Hardware first**: the specs of the VM (RAM, GPU memory, cores) give `suggest`; a model the user names goes through `check`.
-- **Models first**: the names give `plan`, which says what VM to ask for, the estimated margin shown apart from the model figure, and which models could not be sized.
+- **Models first**: the names give `plan`, which says what VM to ask for, the estimated margin (the sum of what the components of the VM [declare](spec-model-fit.md#declared-resources)) shown apart from the model figure, and which models or components could not be sized. A VM with no model, such as the web VM of two VMs, is sized from its components alone.
 - llmfit is optional. Without it the user gives the names, and the models are written with `force` and a warning that they are not checked for fit on the VM.
 - The specs, verdicts and recommendation are an early opinion and are **not** stored in the configuration; the fit is checked again on the target.
 

@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted, implemented (actions `suggest`, `check`, `plan` and `size` of `provisioning llmfit`, tested in `tests/unit/llmfit.bats`)
+**Status:** accepted, implemented (actions `suggest`, `check`, `plan` and `size` of `provisioning llmfit`, tested in `tests/unit/llmfit.bats`). The [declared resources](#declared-resources) and [a stack with no model](#a-stack-with-no-model) are **proposed, not implemented**: until they are, the margin below is the constants of `plan`.
 
 ## Purpose
 
@@ -32,7 +32,7 @@ A user either has a VM imposed (**hardware first**) or has models in mind (**mod
 | --- | --- | --- |
 | Hardware first | `suggest` with the `--target-*` options | The models that fit, already filtered (Ollama tag, not `Too Tight`) and ranked by score, see the [script contract](spec-script-contract.md#type-specific-actions) |
 | Hardware first, a model named by the user | `check <model>` with the `--target-*` options | `fits` and `reason` |
-| Models first | `plan <model>… [--target-cpu-cores <n>] [--chat-interface]` | The VM the models need: the model figures from llmfit, the **estimated margin** and the total, for RAM without GPU, GPU memory with a GPU, and disk, for the `best` and the `default` quantisation, plus the models llmfit could not size (`unsized`) |
+| Models first | `plan [<model>…] [--target-cpu-cores <n>] [--component <type>/<name>]…` (`--chat-interface` is kept as the shorthand of `--component chat-interface/librechat`) | The VM the models need: the model figures from llmfit, the **estimated margin** and the total, for RAM without GPU, GPU memory with a GPU, and disk, for the `best` and the `default` quantisation, plus the models llmfit could not size (`unsized`) |
 
 `suggest` and `plan` have a **text for a person by default** and the JSON documents of the [script contract](spec-script-contract.md#type-specific-actions) with `--json`. The text is rendered by the action from the same document, so the two cannot differ (see [rendering](spec-rendering.md#one-document-two-renderings)).
 
@@ -81,7 +81,7 @@ In the `m` order, once the models are named (each one is sized as the step ends,
 
 Each memory figure is given **twice**, for two quantisations, because the one an engine actually loads depends on the engine and on the model: the **best** one llmfit finds for a large target (usually `Q8_0`), and the **default** one of the model, which llmfit reports for a target too small for anything (`Q4_K_M` for every model checked). The session does not say which one the engine will use, it shows the two and the administrator decides: the default one is enough when the engine loads the usual 4-bit model, the best one covers an engine that loads more precise weights. The default figure comes from `llmfit info` asked for a **tiny target** (`--ram 1`): llmfit then falls back to that quantisation and its verdict is `Too Tight`, which the session ignores here. It relies on that fallback, so the tests must catch a change of behaviour of llmfit (see [Definition of done](#definition-of-done)).
 
-The session gets the whole recommendation, margin included, from the `plan <model>…` action of the `provisioning llmfit` component (see the [script contract](spec-script-contract.md)), called with `--chat-interface` when the stack holds one (with several VMs, the stack of the VM that holds the models: an engine VM with no chat interface gets no share for it, see [spec: two VMs](spec-two-vm.md#in-the-session)) and with the cores of the `h` order as `--target-cpu-cores`; it only prints the text it receives (the same figures are in the JSON of `--json`). `plan` is built on `size <model>`, which makes the llmfit calls below and answers one JSON document per model. A model it cannot size is `not estimated`. llmfit loads its catalogue on every call, and sizing one model took 10 to 19 seconds with the four calls in sequence (measured with llmfit 1.1.17): the action runs the four calls **together**, and the session announces each model before it sizes it (`sizing <model> with llmfit (1/3), a few seconds...`), so the wait does not look like a hang. The figures are taken so that they do not depend on the machine the session runs on: llmfit is asked for a **very large target** (`--ram`, and `--memory` for the GPU figure), so that it reports the memory of its best quantisation, and the context is the one llmfit assumes (8192 tokens, shown in the recommendation). A model name is the engine's own: a Hugging Face name (what vLLM takes) is already what `llmfit info` needs, and an Ollama tag is turned into one through the `ollama_name` field of `llmfit fit --json -n 100000`, asked for the same large target. A name that llmfit cannot resolve is `not estimated`. Nothing in the recommendation is specific to an engine: another engine only needs its own way to name a model.
+The session gets the whole recommendation, margin included, from the `plan <model>…` action of the `provisioning llmfit` component (see the [script contract](spec-script-contract.md)), called with one `--component` per component of the stack (with several VMs, the stack of the VM it sizes: an engine VM with no chat interface gets no share for it, see [spec: two VMs](spec-two-vm.md#in-the-session)) and with the cores of the `h` order as `--target-cpu-cores`; it only prints the text it receives (the same figures are in the JSON of `--json`). `plan` is built on `size <model>`, which makes the llmfit calls below and answers one JSON document per model. A model it cannot size is `not estimated`. llmfit loads its catalogue on every call, and sizing one model took 10 to 19 seconds with the four calls in sequence (measured with llmfit 1.1.17): the action runs the four calls **together**, and the session announces each model before it sizes it (`sizing <model> with llmfit (1/3), a few seconds...`), so the wait does not look like a hang. The figures are taken so that they do not depend on the machine the session runs on: llmfit is asked for a **very large target** (`--ram`, and `--memory` for the GPU figure), so that it reports the memory of its best quantisation, and the context is the one llmfit assumes (8192 tokens, shown in the recommendation). A model name is the engine's own: a Hugging Face name (what vLLM takes) is already what `llmfit info` needs, and an Ollama tag is turned into one through the `ollama_name` field of `llmfit fit --json -n 100000`, asked for the same large target. A name that llmfit cannot resolve is `not estimated`. Nothing in the recommendation is specific to an engine: another engine only needs its own way to name a model.
 
 ### Estimated margin
 
@@ -101,6 +101,50 @@ These values come from vendor documentation for some (Ubuntu, MongoDB, Meilisear
 It is shown at the end of the step and repeated in the summary, with the equivalent for a CloudStack **compute offering** (vCPU, RAM, GPU) and a disk size, so that it can be typed in as is. A model for which llmfit has no figure (see [open questions](#open-questions)) is listed as `not estimated` and the recommendation says it does not cover it: a value is never invented.
 
 Like the verdicts, the recommendation is **not** stored in the configuration and is only an early opinion; the fit is still checked on the target.
+
+### Declared resources
+
+Proposed, not implemented. The table above is today's state: the engine, chat interface and disk figures are constants written in `plan`, whatever the stack is. This section moves the part that belongs to a component into the component. The **nature of the margin does not change**: it is an estimate, shown as such, never a minimum and never a measure.
+
+**Each component declares what it adds around the models** in the `resources` of its `describe` (fields and rules in the [script contract](spec-script-contract.md#describe)): `ram_gb`, `disk_gb`, a `source` (`measured`, `vendor` or `guess`) and a `basis`, plus `per_model` and `gpu` for an engine. Adding or swapping a component is therefore a change of that component's script, never of `plan`, and the VM of a stack is the sum of what its components declare.
+
+**`plan` takes the stack as `--component <type>/<name>` (repeatable)** and reads the `resources` of each from its `describe`, the same one `catalog` prints. The arithmetic, the constants that remain and the rounding stay in `plan` and nowhere else.
+
+| Part | Computed as |
+| --- | --- |
+| RAM, VM without GPU | model memory, plus **1 GB for the system** (constant of `plan`), plus the `ram_gb` of every component named (an engine with `per_model` once per model it holds), rounded up to the next whole GB |
+| RAM, VM with a GPU | 1 GB for the system plus the same `ram_gb`, no model memory (the weights live in GPU memory), rounded up |
+| GPU memory | For each engine named, `model ÷ utilization + fixed_gb` from its `gpu` declaration, the largest of them (models are not loaded at the same time, as for the RAM); rounded up. An engine with no `gpu` declaration is sized with the generic rule below and reported undeclared |
+| Disk | The `disk_gb` of the models (llmfit), plus **10 GB for the system** (constant of `plan`, a guess), plus the `disk_gb` of every component named, rounded up |
+| No engine named | The generic engine of today: 1 GB of RAM, `model ÷ 0.9 + 1` of GPU memory, no disk, marked undeclared. It is the case of a caller that names no component |
+
+- **What does not move into a component**: the system (RAM and disk of the image, which belong to no component) and the rounding. They stay constants of `plan`, displayed as such.
+- **A component without `resources` is undeclared.** It adds nothing, is listed in `undeclared` and in the text (`not covered: <names>`), and the margin is described as incomplete. It is the same rule as a model llmfit cannot size: a figure is never invented.
+- **Every part carries its source.** The text shows `<n> <part> (<source>)` for each one (for example `4 chat interface (guess)`), and the JSON carries it in `components[].source`, so that the least reliable figure is the one a reader sees, not the total alone. A total is as reliable as its least reliable part, and the text says which it is.
+- The JSON keeps the `margin_parts` of today (`engine`, `system`, `chat_interface`, each 0 when absent) and adds one key per other type named (`proxy`, `provisioning`), keyed by type so that a document read by an existing caller keeps its meaning.
+
+#### Values of the shipped components
+
+Starting values, to calibrate (see [open questions](#open-questions)). RAM and the GPU rule reproduce today's constants, so the RAM and GPU figures of a stack do not move; only the disk changes, since two parts become sourced:
+
+| Component | `ram_gb` | `disk_gb` | `source` | `basis` |
+| --- | --- | --- | --- | --- |
+| `engine/ollama` | 1 | 2 | `guess` | The process of the engine (today's constant); the disk is the release archive, about 1.4 GB with its GPU libraries (see [`install`](spec-script-contract.md#behaviour-of-install)), rounded up. `gpu`: `utilization` 0.9, `fixed_gb` 1, the rule of the table above |
+| `chat-interface/librechat` | 4 | 6.2 | `guess` (the RAM is a guess, the disk is measured: the object takes the least reliable) | LibreChat 1 to 2 GB, its databases about 1 GB, Meilisearch 0.5 to 1 GB (table above); the images take about 6.2 GB on disk (see [LibreChat](decision-librechat-install.md#2-the-stack-its-pinning-and-its-unit)) |
+| `proxy/nginx` | 0 | 0 | `guess` | Small beside the rest; to measure |
+| `provisioning/llmfit` | 0 | 0 | `guess` | A binary and a catalogue, no service |
+
+With the system's 10 GB, the disk margin of the reference stack (Ollama, LibreChat, nginx, llmfit) becomes 18.2 GB (the total is rounded up) instead of the 20 GB constant of today. This is not a better figure, it is a different split of a guess: it is the least reliable part of the table and the text says so through the source.
+
+### A stack with no model
+
+Proposed, not implemented. `plan` with at least one `--component` and **no model** answers for a VM that holds no model: this is the web VM of [spec: two VMs](spec-two-vm.md#topology), whose chat interface comes up with an empty model list.
+
+- No llmfit call is made, so llmfit does not need to be installed for it (exit 4 is only for a model to size).
+- The document has `models: []`, no `quantisations` and a `stack` entry: the RAM (1 GB of system plus the declared `ram_gb`, rounded up) and the disk (10 GB of system plus the declared `disk_gb`, rounded up), each as `margin_parts` and `total_gb` with `model_gb` 0. There is no GPU figure: with no engine there is no GPU memory to size.
+- The text says `VM with no model: RAM <n> GB, disk <m> GB` followed by the estimated parts and their sources, and the same `not covered` line for undeclared components.
+- With no model and no component, it is a usage error (exit 2), as today.
+- The session calls it for a pass with no models, so that every VM of a [two-VM session](spec-two-vm.md#in-the-session) gets a recommendation.
 
 ## llmfit is optional
 
@@ -124,10 +168,17 @@ The warning comes from the configuration (a model with `force` and no provisioni
 - `bats` tests of the `size` action of the llmfit script with a fake llmfit binary (the four calls, an Ollama tag, an unknown model), and of the order of the models step with a fake llmfit: `h` as the default, `m` computing the recommended VM from the models (memory for the two quantisations, GPU or CPU, disk, CloudStack equivalent), the margin shown apart and labelled `estimated margin` with its breakdown, no chat interface in the stack giving no chat part, a Hugging Face name and an Ollama tag both resolved, a model without a figure listed as `not estimated`, the recommendation printed once, in the summary, and absent from the configuration, the order offered again as the default when the step is redone.
 - A test of the default-quantisation fallback against the real llmfit when it is installed (skipped otherwise): `info` with `--ram 1` reports a quantisation and a memory for a few models, so that a change of behaviour of llmfit is caught at its upgrade.
 - `bats` tests of the model step with a fake llmfit script: the session prints what `suggest` and `plan` return and computes nothing itself (a changed margin or filter in the fake shows up unchanged in the output).
+- Tests of the [declared resources](#declared-resources), with fake components whose `describe` carries `resources`: the margin is the system constants plus the sum of the declarations (RAM with and without GPU, GPU memory from the `gpu` rule, disk), `per_model` counts the RAM once per model, two engines give the largest GPU figure, a component without `resources` is `undeclared` and adds nothing, `0` is declared and not undeclared, the source of each part is in the text and in `components`, no `--component` gives today's generic engine, and `--chat-interface` gives the same document as `--component chat-interface/librechat`. For the shipped components, the RAM and GPU figures of the reference stack are those of today, and a test checks that every shipped `describe` has a well-formed `resources` (numbers not negative, a known `source`, a `basis`).
+- Tests of [a stack with no model](#a-stack-with-no-model): `plan --component …` with no model gives `stack`, no llmfit call (llmfit absent is not exit 4), the text line, and no model and no component is exit 2.
 
 ## Open questions
 
-- **Sizing from a model**: [checked with llmfit 1.1.17](#sizing-checked-with-llmfit). What stays open is **calibrating the [estimated margin](#estimated-margin)**: measuring the real consumption of the stack (engine, chat interface, databases) on a fresh VM, and whether an engine should declare its own overhead in its `describe` instead of the session's constant. What also stays open is that the default-quantisation figure relies on a **fallback of llmfit** (a tiny target gives the model default), not on a documented option: to watch at each llmfit upgrade, and to replace by an option if llmfit gains one. A **mixture-of-experts** model (`is_moe`) does not follow the rule below: its memory does not move with the quantisation (17.1 GB from `Q2_K` to `Q8_0` for `Qwen3-30B-A3B`), its disk size is larger than its memory, and the figure differs between a CPU and a GPU target (17.1 and 15.6 GB). For those the recommendation shows the figure as reported and flags it as less reliable.
+- **Sizing from a model**: [checked with llmfit 1.1.17](#sizing-checked-with-llmfit). What stays open is **calibrating the [estimated margin](#estimated-margin)**: measuring the real consumption of the stack (engine, chat interface, databases) on a fresh VM, with `docker stats` and `free`, and replacing the `guess` of each [declaration](#declared-resources) by a `measured`. What also stays open is that the default-quantisation figure relies on a **fallback of llmfit** (a tiny target gives the model default), not on a documented option: to watch at each llmfit upgrade, and to replace by an option if llmfit gains one. A **mixture-of-experts** model (`is_moe`) does not follow the rule below: its memory does not move with the quantisation (17.1 GB from `Q2_K` to `Q8_0` for `Qwen3-30B-A3B`), its disk size is larger than its memory, and the figure differs between a CPU and a GPU target (17.1 and 15.6 GB). For those the recommendation shows the figure as reported and flags it as less reliable.
+- **How `plan` reads the declarations.** `plan` is a layer 1 script and the `describe` it needs are those of its siblings. Either it runs the `describe` of the scripts shipped next to it (the layer stays independent of the CLI, and the lookup is an implementation detail to settle), or the CLI passes the declarations to it. The first is assumed here, since it keeps `provisioning llmfit plan` usable on its own.
+- **One `source` per component.** A component whose RAM is a guess and whose disk is measured (LibreChat) is declared `guess`, so a measured figure is not shown as such. A `source` per figure would say more and cost a heavier `describe`.
+- **Sizing from a configuration.** A program that has written a file with `vm` fields lists the components of each VM again to call `plan`. A `plan --config <file> --vm <name>` would read them from the file, as `config validate` does, at the price of a second way to reach the same action. Not specified until the two-VM session is implemented.
+- **The preflight floors.** `install` refuses a VM below its own floors (Ollama: 6 GB on `/usr/local`, LibreChat: 12 GB free on `/var/lib/docker`), which are neither the estimate nor the minimum of a running stack. Whether they should be declared too, so that the recommendation never gives a VM that the preflight refuses, is open: the disk estimate of the reference stack (18.2 GB plus the models) is well above them, but a smaller stack is not.
+- **GPU memory shared between instances.** The `gpu` rule is per model for an engine that runs one instance per model; how several instances share one GPU is already open in the [script contract](spec-script-contract.md#engines-with-one-instance-per-model) and is not settled by `per_model`, which counts RAM only.
 
 ## Sizing checked with llmfit
 
