@@ -125,7 +125,7 @@ The validation also checks, for each model, what [`add`](spec-cli.md#add) will n
 - It is the same decision as `add` makes, read from the file and from the `describe` of the engine: the validation never runs an action. An engine whose `describe` does not say it is protected is not.
 - A model with no chat interface is not concerned by the chat interface: only the proxy and a provisioning component are needed.
 - A VM with an engine and **no model** needs no proxy to validate (the engine may receive its models later), see the [`engine_unreachable` warning](spec-two-vm.md#validation).
-- **The session does not write the proxy error**: when models are named without a proxy on their VM it proposes one, and a refusal takes the models out ([journey, step 4](spec-journey.md#4-models)). The error is for a file written by hand or by a program, and for a session whose package ships no proxy to propose, where the summary shows it.
+- **The session does not write the proxy error**: when models are named without a proxy on their VM it proposes one, and a refusal takes the models out in a one-VM session, or sends the engine pass of two VMs back to its components ([journey, step 4](spec-journey.md#4-models)). The error is for a file written by hand or by a program, and for a session whose package ships no proxy to propose, where the summary shows it.
 
 ## `apply`
 
