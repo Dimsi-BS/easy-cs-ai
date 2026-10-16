@@ -8,7 +8,7 @@ See also: [.github/workflows](../.github/workflows/README.md), which runs these 
 
 ## Unit tests
 
-`bats --recursive tests/unit`, in `EASY_CS_AI_ROOT` mode (no root, no package, service or Docker change). Run by CI with `shellcheck`. `package.bats` covers `package/build.sh` and `package/build-native.sh` (the latter with a fake `nfpm`, so no download). `cli_ai.bats` covers the machine interface of the CLI (`catalog`, `host`, `config schema` / `validate`, `guide`, the `--json` result documents, see [docs/spec-capabilities](../docs/spec-capabilities.md) and [docs/spec-rendering](../docs/spec-rendering.md)).
+`bats --recursive tests/unit`, in `EASY_CS_AI_ROOT` mode (no root, no package, service or Docker change). Run by CI with `shellcheck`. `package.bats` covers `package/build.sh` and `package/build-native.sh` (the latter with a fake `nfpm`, so no download). `parity.bats` plays scenarios in the interactive session and checks them against the same decisions written as a configuration file (same configuration, plan and script), see [parity scenarios](unit/parity/README.md) and [docs/spec-journey](../docs/spec-journey.md#parity). `cli_ai.bats` covers the machine interface of the CLI (`catalog`, `host`, `config schema` / `validate`, `guide`, the `--json` result documents, see [docs/spec-capabilities](../docs/spec-capabilities.md) and [docs/spec-rendering](../docs/spec-rendering.md)).
 
 ## Packaging tests
 

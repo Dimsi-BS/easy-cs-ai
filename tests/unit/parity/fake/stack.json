@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "components": [
+    { "type": "proxy", "name": "prox" },
+    { "type": "engine", "name": "ollama", "options": { "port": 9999 } },
+    { "type": "chat-interface", "name": "chat" }
+  ],
+  "models": [{ "name": "m1", "force": true }, { "name": "m2", "force": true }]
+}

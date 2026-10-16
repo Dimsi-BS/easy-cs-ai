@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "components": [{ "type": "engine", "name": "ollama" }],
+  "models": [{ "name": "m1", "force": true }]
+}

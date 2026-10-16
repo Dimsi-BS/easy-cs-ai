@@ -1,0 +1,33 @@
+# The default stack of the shipped scripts, every option left at its default, one model.
+  # provisioning: llmfit, the rank 1
+  # proxy: nginx
+  # engine: ollama
+  # chat-interface: librechat (requires nginx, which is selected)
+  # llmfit options: defaults (version, health-timeout, lock-timeout)
+  # llmfit options: defaults (version, health-timeout, lock-timeout)
+  # llmfit options: defaults (version, health-timeout, lock-timeout)
+  # nginx options: defaults (the two secrets are not asked)
+  # nginx options: defaults (the two secrets are not asked)
+  # nginx options: defaults (the two secrets are not asked)
+  # nginx options: defaults (the two secrets are not asked)
+  # nginx options: defaults (the two secrets are not asked)
+  # nginx options: defaults (the two secrets are not asked)
+  # nginx options: defaults (the two secrets are not asked)
+  # nginx options: defaults (the two secrets are not asked)
+  # nginx options: defaults (the two secrets are not asked)
+  # nginx options: defaults (the two secrets are not asked)
+  # ollama options: defaults
+  # ollama options: defaults
+  # ollama options: defaults
+  # ollama options: defaults
+  # ollama options: defaults
+  # librechat options: defaults (open registration warns)
+  # librechat options: defaults (open registration warns)
+  # librechat options: defaults (open registration warns)
+  # librechat options: defaults (open registration warns)
+  # librechat options: defaults (open registration warns)
+  # librechat options: defaults (open registration warns)
+  # librechat options: defaults (open registration warns)
+  # llmfit is not installed here: install it now? no
+llama3.2:3b  # models to add
+y  # confirm

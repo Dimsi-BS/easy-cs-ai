@@ -1,0 +1,12 @@
+# llmfit in the stack and ready: the specs of the VM, a suggestion, the first one is picked.
+  # provisioning: llmfit, the rank 1
+none  # proxy
+  # engine: ollama
+none  # chat-interface
+  # ollama --port, the default
+  # order: hardware first, the default
+16  # RAM of the VM in GB
+  # GPU memory: none
+4  # CPU cores
+1  # models: the first suggestion
+y  # confirm

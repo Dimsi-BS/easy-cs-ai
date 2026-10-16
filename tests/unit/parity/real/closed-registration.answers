@@ -1,0 +1,30 @@
+# No llmfit, a server name, the registration closed: nothing warns, the model is added unchecked.
+none  # provisioning
+  # proxy: nginx
+  # engine: ollama
+  # chat-interface: librechat
+  # nginx --port
+  # nginx --bind
+  # nginx --site-port
+ai.example.org  # nginx --server-name
+  # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
+  # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
+  # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
+  # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
+  # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
+  # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
+  # ollama options: defaults
+  # ollama options: defaults
+  # ollama options: defaults
+  # ollama options: defaults
+  # ollama options: defaults
+  # librechat --port
+  # librechat --bind
+  # librechat --db-port
+false  # librechat --allow-registration
+  # librechat --version
+  # librechat --health-timeout
+  # librechat --lock-timeout
+  # llmfit is not installed here: install it now? no
+llama3.2:3b  # models to add
+y  # confirm

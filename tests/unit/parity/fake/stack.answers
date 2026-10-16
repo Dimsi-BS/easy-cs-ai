@@ -1,0 +1,11 @@
+# Engine, chat interface, and the proxy it requires; one option changed, a default that warns.
+none  # provisioning
+none  # proxy, it is proposed below
+  # engine: ollama
+chat  # chat-interface
+y  # chat requires proxy: add proxy prox?
+9999  # ollama --port
+  # chat --allow-registration: the default (true), which warns
+  # llmfit is not installed here: install it now? no
+m1, m2  # models to add
+y  # confirm

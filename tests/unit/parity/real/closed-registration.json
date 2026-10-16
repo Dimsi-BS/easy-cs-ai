@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "components": [
+    { "type": "proxy", "name": "nginx", "options": { "server-name": "ai.example.org" } },
+    { "type": "engine", "name": "ollama" },
+    { "type": "chat-interface", "name": "librechat", "options": { "allow-registration": false } }
+  ],
+  "models": [{ "name": "llama3.2:3b", "force": true }]
+}

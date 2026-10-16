@@ -1,0 +1,9 @@
+# llmfit in the stack and ready: the models are named, the VM they need is only shown.
+  # provisioning: llmfit
+none  # proxy
+  # engine: ollama
+none  # chat-interface
+  # ollama --port, the default
+m  # order: models first
+m1, m2  # models to add
+y  # confirm

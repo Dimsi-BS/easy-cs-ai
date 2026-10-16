@@ -1,0 +1,14 @@
+# The decisions of `stack`, with a wrong answer, then the models redone from the summary.
+zzz  # provisioning: not one of the components, asked again
+none  # provisioning
+none  # proxy
+  # engine: ollama
+chat  # chat-interface
+y  # add proxy prox
+9999  # ollama --port
+  # chat --allow-registration: the default
+  # llmfit is not installed here: install it now? no
+wrong  # models to add
+m  # redo the models
+m1, m2  # models to add
+y  # confirm

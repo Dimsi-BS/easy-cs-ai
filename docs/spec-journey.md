@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. The two ways to walk it exist (see [implementation status](#implementation-status)); the parity test is not done yet.
+**Status:** accepted. The two ways to walk it exist (see [implementation status](#implementation-status)); the parity test is in `tests/unit/parity.bats`.
 
 ## Purpose
 
@@ -113,12 +113,14 @@ A change that adds a question but no field, or a rule inside a step, breaks rule
 
 The two ways must give the same result for the same decisions. The test that guarantees it: a scenario played in the session (answers scripted on stdin) and the same decisions written as a configuration file, then `generate --config`, must give the **same configuration**, the **same plan** (`config validate --target fresh --json`) and the **same script**. A change made on one side only fails it.
 
+The decisions of a scenario are written **by hand**, as a program would write them from `catalog --json` and `config schema`, and not produced by the session, otherwise the test would compare the session with itself. Two things are compared as decisions rather than as bytes: an option written `9999` or `"9999"` (values are strings, numbers or booleans, see [spec: config](spec-config.md#format)), and the order of the keys of the configuration. The test also holds that what the session shows is what the plan says (components in order, models, the warnings of the options), that a session asks a question for every option of every shipped component, and that the guide names only commands and options that exist. See [`tests/unit/parity.bats`](../tests/unit/parity.bats) and [its scenarios](../tests/unit/parity/README.md).
+
 ## Implementation status
 
 - **Session**: `vm_script/generate.sh` and `vm_script/lib/questions.sh`, reached through `easy-cs-ai generate`.
 - **Programmatic**: `install_scripts/lib/cli-ai.sh` (`catalog`, `host`, `config`, `guide`, the result documents) and `install_scripts/lib/cli-apply.sh` (the validation shared with the session).
 - **Guide**: its text is the single file `install_scripts/guide.txt`, shipped in the package (next to `ranks.conf`) and printed as it is by `guide`. It is written by hand for the final reader, so a change to a step updates this spec, the session and `guide.txt` together. `tests/unit/cli_ai.bats` checks that it names the commands and the two orders of the models step, not that it follows this spec.
-- **Not done**: the parity test above.
+- **Parity test**: `tests/unit/parity.bats`, with the scenarios in `tests/unit/parity/` (a fake catalog and the shipped scripts). It does not cover an agent: it holds that the configuration the guide leads to is the one the session produces.
 
 ## Open questions
 

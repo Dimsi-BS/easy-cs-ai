@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "components": [
+    { "type": "provisioning", "name": "llmfit" },
+    { "type": "engine", "name": "ollama" }
+  ],
+  "models": [{ "name": "llama3.2:3b" }]
+}
