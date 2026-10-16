@@ -599,3 +599,176 @@ lc() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ -f "$STATE/components/librechat.json" ]
     [ -f "$CONF/docker-compose.yml" ]
 }
+
+# --- an endpoint on another machine: a key and a certificate ---------------------------------
+
+KEY=sk-the-key_0123456789.abc
+mk_cert() {
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 30 -subj "/CN=$2" \
+        -addext "subjectAltName=DNS:$2" -keyout "$BATS_TEST_TMPDIR/$1.key" -out "$BATS_TEST_TMPDIR/$1.crt" 2>/dev/null
+}
+mk_key() { printf '%s\n' "${2:-$KEY}" >"$BATS_TEST_TMPDIR/$1"; chmod 600 "$BATS_TEST_TMPDIR/$1"; }
+secret_of() { printf '%s/librechat-endpoint-%s.env' "$SECRETS" "$1"; }
+
+@test "add-endpoint declares the options of the remote link in its describe" {
+    lc describe
+    [ "$(jq -c '.action_options["add-endpoint"] | map(.name)' <<<"$output")" = '["model","api-key-file","ca-file"]' ]
+}
+
+@test "without the new options the rendered files are the ones of a local endpoint, byte for byte" {
+    lc install
+    compose_before="$(cat "$CONF/docker-compose.yml")"
+    lc add-endpoint e1 http://127.0.0.1:11434/v1 --model m
+    [ "$(cat "$CONF/docker-compose.yml")" = "$compose_before" ]
+    run ! grep -q 'NODE_EXTRA_CA_CERTS\|librechat-endpoint\|ca-bundle' "$CONF/docker-compose.yml"
+    grep -q '      apiKey: "unused"' "$CONF/librechat.yaml"
+    grep -q '    env_file: ' "$CONF/docker-compose.yml"
+    [ ! -e "$CONF/ca-bundle.crt" ]
+    [ "$(jq -c '.endpoints' "$STATE/components/librechat.json")" = '[{"name":"e1","url":"http://127.0.0.1:11434/v1","model":"m"}]' ]
+}
+
+@test "--api-key-file: a secret file of its own, an environment reference in the yaml, the key nowhere else" {
+    lc install
+    mk_key k.txt
+    : >"$CALLS"
+    lc add-endpoint e1 https://llm.test/e1/v1 --model m --api-key-file "$BATS_TEST_TMPDIR/k.txt"
+    [ "$status" -eq 0 ]
+    f="$(secret_of e1)"
+    [ "$(cat "$f")" = "EASY_CS_AI_KEY_E1=$KEY" ]
+    [ "$(stat -c %a "$f")" = 600 ]
+    # librechat.yaml carries a reference, the container reads the value from its environment file
+    grep -qF '      apiKey: "${EASY_CS_AI_KEY_E1}"' "$CONF/librechat.yaml"
+    grep -qF "      - /etc/easy-cs-ai/secrets/librechat-endpoint-e1.env" "$CONF/docker-compose.yml"
+    grep -qF "      - /etc/easy-cs-ai/secrets/librechat.env" "$CONF/docker-compose.yml"
+    # the key is in no other file, not in the state, the logs or the output
+    run ! grep -rqF "$KEY" "$CONF" "$STATE"
+    [[ "$output" != *"$KEY"* && "$stderr" != *"$KEY"* ]]
+    # the path is in the secrets of the state, the value nowhere; the endpoint is recorded with a mark
+    [ "$(jq -c '.secrets | map(select(test("endpoint")))' "$STATE/components/librechat.json")" = '["/etc/easy-cs-ai/secrets/librechat-endpoint-e1.env"]' ]
+    [ "$(jq -c '.endpoints' "$STATE/components/librechat.json")" = '[{"name":"e1","url":"https://llm.test/e1/v1","model":"m","key":true}]' ]
+}
+
+@test "--api-key-file - reads stdin, a file that is too open is refused with exit 2, and --dry-run shows no key" {
+    lc install
+    run --separate-stderr bash -c 'printf "%s\n" "$1" | bash "$0" add-endpoint e1 https://llm.test/v1 --api-key-file -' "$SCRIPT" "$KEY"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$(secret_of e1)")" = "EASY_CS_AI_KEY_E1=$KEY" ]
+    mk_key open.txt
+    chmod 644 "$BATS_TEST_TMPDIR/open.txt"
+    lc add-endpoint e2 https://llm.test/v2 --api-key-file "$BATS_TEST_TMPDIR/open.txt"
+    [ "$status" -eq 2 ]
+    [ ! -e "$(secret_of e2)" ]
+    mk_key ok.txt
+    lc add-endpoint e3 https://llm.test/v3 --api-key-file "$BATS_TEST_TMPDIR/ok.txt" --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output$stderr" != *"$KEY"* ]]
+    [ ! -e "$(secret_of e3)" ]
+    # a key the container could not read as it is written is refused
+    mk_key bad.txt 'a b$c'
+    lc add-endpoint e4 https://llm.test/v4 --api-key-file "$BATS_TEST_TMPDIR/bad.txt"
+    [ "$status" -eq 2 ]
+    lc add-endpoint e5 https://llm.test/v5 --api-key-file "$BATS_TEST_TMPDIR/missing"
+    [ "$status" -eq 2 ]
+}
+
+@test "--ca-file: the certificate is copied, the bundle rebuilt and trusted by the api container" {
+    lc install
+    mk_cert c1 llm1.test
+    mk_cert c2 llm2.test
+    lc add-endpoint e1 https://llm1.test/v1 --ca-file "$BATS_TEST_TMPDIR/c1.crt"
+    [ "$status" -eq 0 ]
+    cmp "$CONF/ca-e1.crt" "$BATS_TEST_TMPDIR/c1.crt"
+    cmp "$CONF/ca-bundle.crt" "$BATS_TEST_TMPDIR/c1.crt"
+    grep -q 'NODE_EXTRA_CA_CERTS: /etc/easy-cs-ai/ca-bundle.crt' "$CONF/docker-compose.yml"
+    grep -qF "      - /etc/easy-cs-ai/librechat/ca-bundle.crt:/etc/easy-cs-ai/ca-bundle.crt:ro" "$CONF/docker-compose.yml"
+    lc add-endpoint e2 https://llm2.test/v1 --ca-file "$BATS_TEST_TMPDIR/c2.crt"
+    # the endpoints share one bundle, rebuilt from all of them
+    [ "$(grep -c 'BEGIN CERTIFICATE' "$CONF/ca-bundle.crt")" -eq 2 ]
+    [ "$(jq -c '.files | map(select(test("ca-")))' "$STATE/components/librechat.json")" = '["/etc/easy-cs-ai/librechat/ca-bundle.crt","/etc/easy-cs-ai/librechat/ca-e1.crt","/etc/easy-cs-ai/librechat/ca-e2.crt"]' ]
+    [ "$(jq -c '.endpoints | map(.ca)' "$STATE/components/librechat.json")" = '[true,true]' ]
+}
+
+@test "--ca-file refuses something that is not a PEM certificate" {
+    lc install
+    printf 'not a certificate\n' >"$BATS_TEST_TMPDIR/bad.crt"
+    lc add-endpoint e1 https://llm.test/v1 --ca-file "$BATS_TEST_TMPDIR/bad.crt"
+    [ "$status" -eq 2 ]
+    lc add-endpoint e1 https://llm.test/v1 --ca-file "$BATS_TEST_TMPDIR/absent.crt"
+    [ "$status" -eq 2 ]
+    [ ! -e "$CONF/ca-e1.crt" ]
+}
+
+@test "the same key and certificate again change nothing, a new one replaces the old" {
+    lc install
+    mk_key k.txt
+    mk_cert c1 llm1.test
+    mk_cert c2 llm2.test
+    lc add-endpoint e1 https://llm1.test/v1 --model m --api-key-file "$BATS_TEST_TMPDIR/k.txt" --ca-file "$BATS_TEST_TMPDIR/c1.crt"
+    state="$(cat "$STATE/components/librechat.json")"
+    : >"$CALLS"
+    lc add-endpoint e1 https://llm1.test/v1 --model m --api-key-file "$BATS_TEST_TMPDIR/k.txt" --ca-file "$BATS_TEST_TMPDIR/c1.crt"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"force-recreate"* ]]
+    [ "$(cat "$STATE/components/librechat.json")" = "$state" ]
+    # a new key
+    mk_key k2.txt other-key-value-98765
+    lc add-endpoint e1 https://llm1.test/v1 --model m --api-key-file "$BATS_TEST_TMPDIR/k2.txt" --ca-file "$BATS_TEST_TMPDIR/c1.crt"
+    [[ "$stderr" == *"force-recreate"* ]]
+    [ "$(cat "$(secret_of e1)")" = "EASY_CS_AI_KEY_E1=other-key-value-98765" ]
+    # a new certificate: the container is recreated although the compose file does not change
+    lc add-endpoint e1 https://llm1.test/v1 --model m --api-key-file "$BATS_TEST_TMPDIR/k2.txt" --ca-file "$BATS_TEST_TMPDIR/c2.crt"
+    [[ "$stderr" == *"force-recreate"* ]]
+    cmp "$CONF/ca-bundle.crt" "$BATS_TEST_TMPDIR/c2.crt"
+    # the same endpoint with no option goes back to the local link: no key, no certificate
+    lc add-endpoint e1 https://llm1.test/v1 --model m
+    [ ! -e "$(secret_of e1)" ] && [ ! -e "$CONF/ca-e1.crt" ] && [ ! -e "$CONF/ca-bundle.crt" ]
+    grep -q '      apiKey: "unused"' "$CONF/librechat.yaml"
+    run ! grep -q 'NODE_EXTRA_CA_CERTS' "$CONF/docker-compose.yml"
+}
+
+@test "remove-endpoint removes the key, the certificate and its share of the bundle" {
+    lc install
+    mk_key k.txt
+    mk_cert c1 llm1.test
+    mk_cert c2 llm2.test
+    lc add-endpoint e1 https://llm1.test/v1 --api-key-file "$BATS_TEST_TMPDIR/k.txt" --ca-file "$BATS_TEST_TMPDIR/c1.crt"
+    lc add-endpoint e2 https://llm2.test/v1 --ca-file "$BATS_TEST_TMPDIR/c2.crt"
+    lc remove-endpoint e1
+    [ "$status" -eq 0 ]
+    [ ! -e "$(secret_of e1)" ] && [ ! -e "$CONF/ca-e1.crt" ]
+    cmp "$CONF/ca-bundle.crt" "$BATS_TEST_TMPDIR/c2.crt"
+    run ! grep -q 'EASY_CS_AI_KEY_E1' "$CONF/librechat.yaml" "$CONF/docker-compose.yml"
+    [ "$(jq -c '[(.secrets | map(select(test("endpoint")))), (.files | map(select(test("ca-e1"))))]' "$STATE/components/librechat.json")" = '[[],[]]' ]
+    lc remove-endpoint e2
+    [ ! -e "$CONF/ca-bundle.crt" ]
+}
+
+@test "uninstall removes the certificates and the bundle and keeps the key, --purge removes the key too" {
+    lc install
+    mk_key k.txt
+    mk_cert c1 llm1.test
+    lc add-endpoint e1 https://llm1.test/v1 --api-key-file "$BATS_TEST_TMPDIR/k.txt" --ca-file "$BATS_TEST_TMPDIR/c1.crt"
+    lc uninstall
+    [ "$status" -eq 0 ]
+    [ ! -e "$CONF/ca-e1.crt" ] && [ ! -e "$CONF/ca-bundle.crt" ]
+    [ ! -d "$CONF" ]
+    [ -f "$(secret_of e1)" ]
+    lc install
+    lc add-endpoint e1 https://llm1.test/v1 --api-key-file "$BATS_TEST_TMPDIR/k.txt"
+    lc uninstall --purge
+    [ "$status" -eq 0 ]
+    [ ! -e "$(secret_of e1)" ]
+}
+
+@test "a reinstall keeps the remote endpoints and their files" {
+    lc install
+    mk_key k.txt
+    mk_cert c1 llm1.test
+    lc add-endpoint e1 https://llm1.test/v1 --model m --api-key-file "$BATS_TEST_TMPDIR/k.txt" --ca-file "$BATS_TEST_TMPDIR/c1.crt"
+    lc install
+    [ "$status" -eq 0 ]
+    [ -f "$(secret_of e1)" ] && [ -f "$CONF/ca-bundle.crt" ]
+    grep -qF 'EASY_CS_AI_KEY_E1' "$CONF/librechat.yaml"
+    grep -q 'NODE_EXTRA_CA_CERTS' "$CONF/docker-compose.yml"
+    [ "$(jq -c '.secrets | map(select(test("endpoint")))' "$STATE/components/librechat.json")" = '["/etc/easy-cs-ai/secrets/librechat-endpoint-e1.env"]' ]
+}

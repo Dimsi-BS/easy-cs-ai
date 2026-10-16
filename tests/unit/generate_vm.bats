@@ -387,3 +387,39 @@ JSON
         [[ "$output" == *"$w"* ]] || { echo "the guide does not name: $w"; false; }
     done
 }
+
+# --- with the shipped scripts ---------------------------------------------------------------
+
+@test "with the shipped scripts the next steps are the four, and name only actions and options that exist" {
+    export EASY_CS_AI_HOME="$REAL"
+    cat >real.json <<'JSON'
+{
+  "schema_version": 1,
+  "components": [
+    { "type": "proxy", "name": "nginx", "vm": "engine" },
+    { "type": "engine", "name": "ollama", "vm": "engine" },
+    { "type": "proxy", "name": "nginx", "vm": "web" },
+    { "type": "chat-interface", "name": "librechat", "vm": "web" }
+  ],
+  "models": [ { "name": "llama3.2:3b", "force": true, "vm": "engine", "engine": "ollama" } ]
+}
+JSON
+    run --separate-stderr bash "$CLI" config validate real.json --target fresh --json
+    [ "$status" -eq 0 ]
+    [ "$(jq '.next_steps | length' <<<"$output")" -eq 4 ]
+    text="$(jq -r '.next_steps | join("\n")' <<<"$output")"
+    [[ "$text" == *"easy-cs-ai proxy nginx list-upstreams"* && "$text" == *"chat-interface librechat add-endpoint"* ]]
+    [[ "$text" == *"--model llama3.2:3b --api-key-file <file>"* && "$text" == *"--ca-file <file>"* ]]
+    nginx="$(bash "$REAL/proxy/nginx.sh" describe)"
+    librechat="$(bash "$REAL/chat-interface/librechat.sh" describe)"
+    for a in show-key list-upstreams status install; do
+        jq -e --arg a "$a" '.actions | index($a)' <<<"$nginx" >/dev/null
+    done
+    jq -e '.options | map(.name) | index("server-name")' <<<"$nginx" >/dev/null
+    for o in model api-key-file ca-file; do
+        jq -e --arg o "$o" '.action_options["add-endpoint"] | map(.name) | index($o)' <<<"$librechat" >/dev/null
+    done
+    jq -e '.actions | index("add-endpoint")' <<<"$librechat" >/dev/null
+    # and the address warning, since nothing says the name of the engine VM yet
+    [ "$(jq -c '[.warnings[] | select(.code == "engine_address_unknown") | .vm]' <<<"$(bash "$CLI" config validate real.json --target fresh --json)")" = '["engine"]' ]
+}

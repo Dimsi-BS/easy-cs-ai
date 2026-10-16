@@ -3,7 +3,7 @@
 # docs/spec-script-contract.md, search/nginx.md and docs/decision-nginx-certificates.md.
 #
 #   nginx.sh <action> [options]
-#   actions: install uninstall status describe add-upstream remove-upstream add-site remove-site show-key
+#   actions: install uninstall status describe add-upstream remove-upstream list-upstreams add-site remove-site show-key
 set -euo pipefail
 
 readonly NAME=nginx
@@ -16,7 +16,7 @@ readonly NGX_DIR_LOGICAL=/etc/nginx/easy-cs-ai
 readonly UPSTREAM_DIR=/etc/nginx/easy-cs-ai/upstreams
 readonly SITE_DIR=/etc/nginx/easy-cs-ai/sites
 readonly HEALTH_PATH=/easy-cs-ai/health
-readonly ACTIONS="install uninstall status describe add-upstream remove-upstream add-site remove-site show-key"
+readonly ACTIONS="install uninstall status describe add-upstream remove-upstream list-upstreams add-site remove-site show-key"
 readonly ACME_CONF=/etc/nginx/conf.d/easy-cs-ai-acme.conf
 readonly ACME_ROOT=/var/www/easy-cs-ai-acme
 readonly LE_DIR=/etc/letsencrypt
@@ -40,6 +40,7 @@ Actions: $ACTIONS
 
   add-upstream <name> <url>   expose an internal HTTP URL under /<name>/ (prints its public URL)
   remove-upstream <name>      stop exposing it
+  list-upstreams              the models the proxy fronts with the URL a client of another machine uses (JSON)
   add-site <name> <url>       serve a web site (browsers, no API key) on --site-port (prints its public URL)
   remove-site <name>          stop serving it
   show-key                    print the API key (the only action that prints a secret)
@@ -386,6 +387,37 @@ cert_matches() {
         openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -qF "$SERVER_NAME"
 }
 
+# machine_addresses: the addresses of global scope of this machine (not loopback, not link-local), one
+# per line. EASY_CS_AI_NGINX_ADDRESSES (space separated) replaces the detection, for the tests; in
+# test mode without it there is none, the machine running the tests is not the one being installed.
+machine_addresses() {
+    if [[ -n "${EASY_CS_AI_NGINX_ADDRESSES+x}" ]]; then
+        # shellcheck disable=SC2086
+        [[ -z "$EASY_CS_AI_NGINX_ADDRESSES" ]] || printf '%s\n' $EASY_CS_AI_NGINX_ADDRESSES
+        return 0
+    fi
+    ! is_test_root || return 0
+    if command -v ip >/dev/null 2>&1; then
+        ip -o addr show scope global 2>/dev/null | awk '{ sub(/\/.*/, "", $4); print $4 }'
+    elif command -v hostname >/dev/null 2>&1; then
+        # shellcheck disable=SC2046
+        printf '%s\n' $(hostname -I 2>/dev/null)
+    fi
+}
+
+# certificate_addresses: ",IP:<address>" for each address of the machine, only for a self-signed
+# certificate with no --server-name (the address of the VM is usually not known when its script is
+# generated, docs/spec-two-vm.md#the-certificate-of-the-engine-vm). With a name given the certificate
+# is the one of the name, as before.
+certificate_addresses() {
+    local addr
+    [[ -z "$SERVER_NAME_GIVEN" && "$TLS" == self-signed ]] || return 0
+    while IFS= read -r addr; do
+        [[ "$addr" =~ ^[0-9A-Fa-f.:]+$ && "$addr" != 127.0.0.1 && "$addr" != "$SERVER_NAME" ]] || continue
+        printf ',IP:%s' "$addr"
+    done < <(machine_addresses | sort -u)
+}
+
 make_certificate() {
     local cert key san
     cert="$(root_path "$(tls_cert_file)")"
@@ -403,9 +435,10 @@ make_certificate() {
     else
         san="DNS:$SERVER_NAME"
     fi
+    san="$san,DNS:localhost,IP:127.0.0.1$(certificate_addresses)"
     log_info "generating a self-signed certificate for $SERVER_NAME"
     (umask 077 && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
-        -subj "/CN=$SERVER_NAME" -addext "subjectAltName=$san,DNS:localhost,IP:127.0.0.1" \
+        -subj "/CN=$SERVER_NAME" -addext "subjectAltName=$san" \
         -keyout "$key" -out "$cert" 2>/dev/null) || die "$EXIT_ERROR" "could not generate the certificate"
     chmod 0644 "$cert"
     chmod 0600 "$key"
@@ -782,8 +815,23 @@ cmd_status() {
         rc=$EXIT_PRECONDITION
     fi
     jq -n --argjson i "$installed" --argjson r "$running" --argjson h "$healthy" --argjson v "$version" \
-        '{ schema_version: 1, name: "nginx", installed: $i, running: $r, healthy: $h, version: $v }'
+        --argjson names "$(certificate_names)" \
+        '{ schema_version: 1, name: "nginx", installed: $i, running: $r, healthy: $h, version: $v, certificate_names: $names }'
     return "$rc"
+}
+
+# certificate_names: the DNS names and the addresses of the certificate nginx serves, as a JSON array,
+# read from the certificate itself and not from the state (docs/spec-two-vm.md): what the administrator
+# needs to know to pick the host of the URL the web VM uses. [] when it cannot be read.
+certificate_names() {
+    local cert out
+    cert="$(root_path "$(cert_path)")"
+    if [[ -r "$cert" ]] && out="$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null)"; then
+        out="$(sed -n '2,$p' <<<"$out" | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/^DNS://; s/^IP Address://' | grep . || true)"
+        printf '%s' "$out" | jq -R . | jq -sc .
+    else
+        printf '[]\n'
+    fi
 }
 
 # --- upstreams ----------------------------------------------------------------------
@@ -851,6 +899,20 @@ do_remove_upstream() {
         files: ((.files // []) | map(select(. != $f)))
       }')"
     log_info "upstream $name is removed"
+}
+
+# list-upstreams: the models the proxy fronts, each with the URL a client of another machine uses (the
+# state keeps the internal URL of the engine, which no other machine can use). Read-only: no root, no
+# lock, not journaled; it answers whether the proxy is healthy or not. It never prints the API key.
+cmd_list_upstreams() {
+    _require_jq
+    require_installed
+    local name list='[]'
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        list="$(jq -c --arg n "$name" --arg u "$(public_url "$name")" '. + [{name: $n, url: $u}]' <<<"$list")"
+    done < <(state_read "$NAME" | jq -r '(.upstreams // [])[].name')
+    jq -n --argjson l "$list" '$l'
 }
 
 cmd_remove_upstream() {
@@ -1006,6 +1068,7 @@ main() {
     status) cmd_status ;;
     add-upstream) cmd_add_upstream ;;
     remove-upstream) cmd_remove_upstream ;;
+    list-upstreams) cmd_list_upstreams ;;
     add-site) cmd_add_site ;;
     remove-site) cmd_remove_site ;;
     show-key) cmd_show_key ;;

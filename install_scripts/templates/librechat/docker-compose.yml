@@ -9,9 +9,11 @@ services:
     image: ${LC_IMAGE_API}
     network_mode: host
     restart: unless-stopped
-    env_file: ${LC_ENV_FILE}
+#@API_ENV@
+#@API_ENVIRONMENT@
     volumes:
       - ${LC_YAML_FILE}:/app/librechat.yaml:ro
+#@API_VOLUMES@
     depends_on:
       ferretdb:
         condition: service_started

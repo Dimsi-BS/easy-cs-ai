@@ -41,7 +41,7 @@ readonly PROXY_SCRIPT="$LIB_DIR/../proxy/$PROXY.sh"
 # shellcheck source=../lib/common.sh
 source "$LIB_DIR/common.sh"
 
-ACTION="" FORCE=0 PURGE=0 MAKE_DEFAULT=0 ENDPOINT_MODEL=""
+ACTION="" FORCE=0 PURGE=0 MAKE_DEFAULT=0 ENDPOINT_MODEL="" ENDPOINT_KEY_FILE="" ENDPOINT_CA_FILE=""
 POSITIONAL=()
 
 usage() {
@@ -50,7 +50,8 @@ Usage: librechat.sh <action> [options]
 
 Actions: $ACTIONS
 
-  add-endpoint <name> <url> [--model <model>]   declare an OpenAI-compatible endpoint (prints its URL)
+  add-endpoint <name> <url> [--model <model>] [--api-key-file <path|->] [--ca-file <path>]
+                                                declare an OpenAI-compatible endpoint (prints its URL)
   remove-endpoint <name>                        remove it
 
 Options:
@@ -60,6 +61,8 @@ Options:
   --allow-registration <b>   true (default) or false: may anyone create an account
   --version <x.y.z>          LibreChat version (default $DEFAULT_VERSION, EASY_CS_AI_LIBRECHAT_VERSION)
   --model <model>            add-endpoint: the model the endpoint serves (else the engine's list is fetched)
+  --api-key-file <path>      add-endpoint: the API key the endpoint expects (mode 0600, or - for stdin), kept as a secret
+  --ca-file <path>           add-endpoint: the certificate (or CA) the endpoint is verified against, for a self-signed or private-CA proxy
   --health-timeout <s>       seconds to wait for LibreChat (default $HEALTH_TIMEOUT)
   --lock-timeout <s>         wait for a busy component lock instead of failing
   --default                  install: make LibreChat the default chat interface
@@ -127,6 +130,18 @@ parse_args() {
             shift
             ;;
         --model=*) ENDPOINT_MODEL="${opt#*=}" ;;
+        --api-key-file)
+            [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$opt needs a value"
+            ENDPOINT_KEY_FILE="$1"
+            shift
+            ;;
+        --api-key-file=*) ENDPOINT_KEY_FILE="${opt#*=}" ;;
+        --ca-file)
+            [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$opt needs a value"
+            ENDPOINT_CA_FILE="$1"
+            shift
+            ;;
+        --ca-file=*) ENDPOINT_CA_FILE="${opt#*=}" ;;
         --default) MAKE_DEFAULT=1 ;;
         --force) FORCE=1 ;;
         --purge) PURGE=1 ;;
@@ -207,6 +222,16 @@ compose_file() { printf '%s/docker-compose.yml\n' "$(conf_dir)"; }
 yaml_file() { printf '%s/librechat.yaml\n' "$(conf_dir)"; }
 env_file() { printf '%s/secrets/librechat.env\n' "$(config_dir_logical)"; }
 db_env_file() { printf '%s/secrets/librechat-db.env\n' "$(config_dir_logical)"; }
+# The key of an endpoint on another machine is a secret of its own, read by the api container
+# through its environment (the file holds one variable) and never written in librechat.yaml. Its
+# certificate is public: one file per endpoint and one bundle of them all, since the container takes one.
+endpoint_key_file() { printf '%s/secrets/librechat-endpoint-%s.env\n' "$(config_dir_logical)" "$1"; }
+endpoint_ca_file() { printf '%s/ca-%s.crt\n' "$(conf_dir)" "$1"; }
+ca_bundle_file() { printf '%s/ca-bundle.crt\n' "$(conf_dir)"; }
+# endpoint_key_var <name>: the environment variable that holds the key of an endpoint.
+endpoint_key_var() { printf 'EASY_CS_AI_KEY_%s\n' "$(tr 'a-z.-' 'A-Z__' <<<"$1")"; }
+# where the bundle is seen in the api container
+readonly CA_BUNDLE_IN_CONTAINER=/etc/easy-cs-ai/ca-bundle.crt
 unit_file() { printf '/etc/systemd/system/%s\n' "$UNIT"; }
 
 # --- describe / helpers -----------------------------------------------------------
@@ -232,7 +257,14 @@ describe() {
           { name: "health-timeout", env: "EASY_CS_AI_LIBRECHAT_HEALTH_TIMEOUT", default: ($ht | tostring), secret: false, type: "integer", min: 0, description: "Seconds to wait for LibreChat after start" },
           { name: "lock-timeout", env: "EASY_CS_AI_LIBRECHAT_LOCK_TIMEOUT", default: "0", secret: false, type: "integer", min: 0, description: "Seconds to wait for a busy component lock" }
         ],
-        actions: ($actions | split(" "))
+        actions: ($actions | split(" ")),
+        action_options: {
+          "add-endpoint": [
+            { name: "model", type: "string", description: "The model the endpoint serves; without it the list of the engine is fetched" },
+            { name: "api-key-file", type: "string", description: "The API key the endpoint expects: a file of mode 0600 or stricter, or - for stdin, never on the command line" },
+            { name: "ca-file", type: "string", description: "PEM certificate (or CA) the endpoint is verified against, for a proxy with a self-signed or private-CA certificate" }
+          ]
+        }
       }'
 }
 
@@ -373,7 +405,7 @@ endpoints_block() {
     jq -r '
       if length == 0 then empty else
         "endpoints:\n  custom:",
-        (.[] | "    - name: \"\(.name)\"\n      apiKey: \"unused\"\n      baseURL: \"\(.url)\"\n      models:\n        default: [\"\(.model // .name)\"]\n        fetch: \(if .model then "false" else "true" end)\n      titleConvo: false\n      modelDisplayLabel: \"\(.name)\"")
+        (.[] | "    - name: \"\(.name)\"\n      apiKey: \"\(if .key then "${EASY_CS_AI_KEY_" + (.name | ascii_upcase | gsub("[.-]"; "_")) + "}" else "unused" end)\"\n      baseURL: \"\(.url)\"\n      models:\n        default: [\"\(.model // .name)\"]\n        fetch: \(if .model then "false" else "true" end)\n      titleConvo: false\n      modelDisplayLabel: \"\(.name)\"")
       end' <<<"$1"
 }
 
@@ -384,23 +416,67 @@ render_yaml() {
     render_template "$TEMPLATE_DIR/librechat.yaml" "$(yaml_file)" 0644 root:root
 }
 
-# render_all <endpoints-json>: every generated file. Sets YAML_CHANGED and
-# returns 0 when one changed, 10 when none.
-render_all() {
-    local identical=1 rc pair template dest mode
-    YAML_CHANGED=0
+# export_render_vars: the variables the templates read, from the options of the run.
+export_render_vars() {
     LC_BIND="$BIND" LC_PORT="$PORT" LC_DB_PORT="$DB_PORT" LC_ALLOW_REGISTRATION="$ALLOW_REG"
     LC_DOMAIN="$(public_domain)"
     LC_IMAGE_API="$IMAGE_API" LC_IMAGE_FERRETDB="$IMAGE_FERRETDB" LC_IMAGE_POSTGRES="$IMAGE_POSTGRES"
     LC_ENV_FILE="$(env_file)" LC_DB_ENV_FILE="$(db_env_file)" LC_YAML_FILE="$(yaml_file)"
     LC_CONF_DIR="$(conf_dir)" LC_COMPOSE_FILE="$(compose_file)"
+    LC_CA_BUNDLE="$(ca_bundle_file)" LC_CA_IN_CONTAINER="$CA_BUNDLE_IN_CONTAINER"
     LC_DOCKER_BIN="$(command -v "$(_docker_bin)" 2>/dev/null || printf '/usr/bin/docker')"
     export LC_BIND LC_PORT LC_DB_PORT LC_ALLOW_REGISTRATION LC_DOMAIN LC_IMAGE_API LC_IMAGE_FERRETDB LC_IMAGE_POSTGRES \
-        LC_ENV_FILE LC_DB_ENV_FILE LC_YAML_FILE LC_CONF_DIR LC_COMPOSE_FILE LC_DOCKER_BIN
+        LC_ENV_FILE LC_DB_ENV_FILE LC_YAML_FILE LC_CONF_DIR LC_COMPOSE_FILE LC_DOCKER_BIN LC_CA_BUNDLE LC_CA_IN_CONTAINER
+}
+
+# render_compose <endpoints-json>: docker-compose.yml. The api container reads the key of each endpoint
+# on another machine from the environment file of that key, and trusts the certificates of the bundle.
+# The markers of the template become what the endpoints need, and nothing when none needs anything,
+# so the file is the one of a stack with local endpoints only. 0 when it changed, 10 when identical.
+# shellcheck disable=SC2016  # the ${...} are for the template, not for this shell
+render_compose() {
+    local eps="$1" tmp line name rc=0 block_env block_environment="" block_vols=""
+    block_env='    env_file: ${LC_ENV_FILE}'
+    if jq -e 'any(.[]; .key)' >/dev/null <<<"$eps"; then
+        block_env=$'    env_file:\n      - ${LC_ENV_FILE}'
+        while IFS= read -r name; do
+            block_env+=$'\n      - '"$(endpoint_key_file "$name")"
+        done < <(jq -r '.[] | select(.key) | .name' <<<"$eps")
+    fi
+    if jq -e 'any(.[]; .ca)' >/dev/null <<<"$eps"; then
+        block_environment=$'    environment:\n      NODE_EXTRA_CA_CERTS: ${LC_CA_IN_CONTAINER}'
+        block_vols='      - ${LC_CA_BUNDLE}:${LC_CA_IN_CONTAINER}:ro'
+    fi
+    tmp="$(mktemp)"
+    while IFS= read -r line; do
+        case "$line" in
+        '#@API_ENV@') printf '%s\n' "$block_env" ;;
+        '#@API_ENVIRONMENT@') [[ -z "$block_environment" ]] || printf '%s\n' "$block_environment" ;;
+        '#@API_VOLUMES@') [[ -z "$block_vols" ]] || printf '%s\n' "$block_vols" ;;
+        *) printf '%s\n' "$line" ;;
+        esac
+    done <"$TEMPLATE_DIR/docker-compose.yml" >"$tmp"
+    render_template "$tmp" "$(compose_file)" 0644 root:root || rc=$?
+    rm -f "$tmp"
+    return "$rc"
+}
+
+# render_all <endpoints-json>: every generated file. Sets YAML_CHANGED and
+# returns 0 when one changed, 10 when none.
+render_all() {
+    local identical=1 rc pair template dest mode
+    YAML_CHANGED=0
+    export_render_vars
     mkdir -p "$(root_path "$(conf_dir)")"
     track_file "$(conf_dir)"
+    rc=0
+    render_compose "$1" || rc=$?
+    if ((rc == 0)); then
+        identical=0
+    elif ((rc != 10)); then
+        exit "$rc"
+    fi
     for pair in \
-        "docker-compose.yml|$(compose_file)|0644" \
         "db.env|$(db_env_file)|0600" \
         "librechat.env|$(env_file)|0600" \
         "easy-cs-ai-librechat.service|$(unit_file)|0644"; do
@@ -446,7 +522,8 @@ show_logs() {
 
 record_state() {
     local json files secrets
-    secrets="$(jq -nc --arg a "$(env_file)" --arg b "$(db_env_file)" '[$a, $b]')"
+    # the keys of the endpoints on other machines, recorded by add-endpoint, stay with the two files of the stack
+    secrets="$(jq -nc --arg a "$(env_file)" --arg b "$(db_env_file)" --argjson extra "$(state_read "$NAME" 2>/dev/null | jq -c '.secrets // []' || printf '[]')" '[$a, $b] + ($extra - [$a, $b])')"
     files="$( (pending_read "$NAME"; state_read "$NAME" 2>/dev/null || true) |
         jq -sc --argjson s "$secrets" '[.[] | (.files // [])[]] | unique | map(select(. as $f | $s | index($f) | not))')"
     json="$(jq -n --arg v "$VERSION" --arg sv "$SCRIPT_VERSION" --arg port "$PORT" --arg bind "$BIND" \
@@ -586,6 +663,10 @@ do_uninstall() {
     if ((PURGE)); then
         remove_path "$(env_file)"
         remove_path "$(db_env_file)"
+        # and the keys of the endpoints on other machines
+        while IFS= read -r path; do
+            [[ -n "$path" ]] && remove_path "$path"
+        done < <(jq -rs '[.[] | (.secrets // [])[]] | unique[]' <<<"$state $pending")
     else
         # user data: the database holds the password of db.env, and LibreChat's keys decrypt what it stored
         log_info "the database and the secrets are kept (--purge removes them)"
@@ -666,21 +747,27 @@ check_endpoint_model() {
     fi
 }
 
-# apply_endpoints <new-endpoints-json>: write librechat.yaml, then recreate only the
-# api container when it changed, and wait for it. A failure restores the old file
-# and exits 6, the state untouched. Returns 0 either way when nothing failed.
+# apply_endpoints <new-endpoints-json>: write docker-compose.yml and librechat.yaml, then recreate only
+# the api container when one of them or a file it reads (a key, the bundle) changed, and wait for it. A
+# failure restores the old files and exits 6, the state untouched. Returns 0 either way when nothing
+# failed. FILES_CHANGED is 1 when the caller changed a key file or a certificate.
+FILES_CHANGED=0
 apply_endpoints() {
-    local new="$1" old rc=0
+    local new="$1" old rc=0 rc2=0
     old="$(current_endpoints)"
-    render_yaml "$new" || rc=$?
+    export_render_vars
+    render_compose "$new" || rc=$?
     ((rc == 0 || rc == 10)) || exit "$rc"
-    ((rc == 0)) || return 0
+    render_yaml "$new" || rc2=$?
+    ((rc2 == 0 || rc2 == 10)) || exit "$rc2"
+    ((rc == 0 || rc2 == 0 || FILES_CHANGED)) || return 0
     compose up -d --no-deps --force-recreate api
     if is_test_root; then
         return 0
     fi
     if ! wait_for_http "$(local_url)/readyz" "$HEALTH" ""; then
         log_error "LibreChat does not answer after the change, restoring the previous endpoints"
+        render_compose "$old" || true
         render_yaml "$old" || true
         compose up -d --no-deps --force-recreate api || true
         show_logs
@@ -688,20 +775,119 @@ apply_endpoints() {
     fi
 }
 
+# put_file <logical-path> <mode>: the content on stdin, atomically. Returns 0 when the file changed,
+# 10 when it was identical (and sets FILES_CHANGED when it changed).
+put_file() {
+    local path="$1" mode="$2" dest tmp
+    dest="$(root_path "$path")"
+    mkdir -p "${dest%/*}"
+    tmp="$(mktemp "${dest%/*}/.${dest##*/}.XXXXXX")"
+    cat >"$tmp"
+    if [[ -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
+        rm -f "$tmp"
+        return 10
+    fi
+    chmod "$mode" "$tmp"
+    mv -f "$tmp" "$dest"
+    FILES_CHANGED=1
+}
+
+# drop_file <logical-path>: remove a file, noting that the api container must be recreated.
+drop_file() {
+    local dest
+    dest="$(root_path "$1")"
+    [[ -e "$dest" ]] || return 0
+    rm -f "$dest"
+    FILES_CHANGED=1
+}
+
+# rebuild_bundle <endpoints-json>: the certificates of the endpoints that have one, in one file (the
+# api container takes one); no bundle when none has.
+rebuild_bundle() {
+    local name rc=0
+    if jq -e 'any(.[]; .ca)' >/dev/null <<<"$1"; then
+        put_file "$(ca_bundle_file)" 0644 < <(
+            while IFS= read -r name; do
+                cat "$(root_path "$(endpoint_ca_file "$name")")"
+            done < <(jq -r '.[] | select(.ca) | .name' <<<"$1")
+        ) || rc=$?
+        ((rc == 0 || rc == 10)) || exit "$rc"
+    else
+        drop_file "$(ca_bundle_file)"
+    fi
+}
+
+# state_secrets_files <endpoints-json>: the state `secrets` and `files` after a change of endpoints: the
+# key files and the certificates (with the bundle) of the endpoints are the only ones that move.
+write_endpoints_state() {
+    local new="$1" st
+    st="$(state_read "$NAME")"
+    state_write "$NAME" "$(jq --argjson e "$new" --arg conf "$(conf_dir)/" --arg sec "$(config_dir_logical)/secrets/librechat-endpoint-" \
+        --arg bundle "$(ca_bundle_file)" '
+        ([$e[] | select(.key) | $sec + .name + ".env"]) as $keys
+        | ([$e[] | select(.ca) | $conf + "ca-" + .name + ".crt"]) as $cas
+        | { name: .name, type: .type, endpoints: $e,
+            secrets: (((.secrets // []) | map(select(startswith($sec) | not))) + $keys),
+            files: (((.files // []) | map(select((startswith($conf + "ca-") | not))))
+                    + $cas + (if ($cas | length) > 0 then [$bundle] else [] end) | unique) }' <<<"$st")"
+}
+
+# key_value <file|->: the API key of an endpoint, read once: a file of mode 0600 or stricter, or stdin. It
+# is written in an environment file, so a character that file would read differently is refused.
+key_value() {
+    local key
+    key="$(read_secret "$1")" || exit "$?"
+    [[ "$key" =~ ^[A-Za-z0-9._~+/=:-]{1,512}$ ]] || die "$EXIT_USAGE" "the API key has a character that cannot be given to the container (letters, digits and . _ ~ + / = : - are accepted)"
+    printf '%s\n' "$key"
+}
+
 do_add_endpoint() {
-    local name="$1" url="$2" model="$3" new
-    new="$(current_endpoints | jq -c --arg n "$name" --arg u "$url" --arg m "$model" '
-        (map(select(.name != $n))) + [{ name: $n, url: $u } + (if $m != "" then { model: $m } else {} end)]')"
+    local name="$1" url="$2" model="$3" key="$4" ca="$5" new rc=0 var other
+    FILES_CHANGED=0
+    var="$(endpoint_key_var "$name")"
+    other="$(current_endpoints | jq -r --arg n "$name" --arg v "$var" '.[] | select(.name != $n and .key and (("EASY_CS_AI_KEY_" + (.name | ascii_upcase | gsub("[.-]"; "_"))) == $v)) | .name' | head -n 1)"
+    if [[ -n "$key" && -n "$other" ]]; then
+        die "$EXIT_USAGE" "the key of $name would share its variable with the endpoint $other: choose another name"
+    fi
+    mkdir -p "$(root_path "$(config_dir_logical)/secrets")"
+    chmod 0700 "$(root_path "$(config_dir_logical)/secrets")"
+    if [[ -n "$key" ]]; then
+        put_file "$(endpoint_key_file "$name")" 0600 < <(printf '%s=%s\n' "$var" "$key") || rc=$?
+        ((rc == 0 || rc == 10)) || exit "$rc"
+    else
+        drop_file "$(endpoint_key_file "$name")"
+    fi
+    rc=0
+    if [[ -n "$ca" ]]; then
+        put_file "$(endpoint_ca_file "$name")" 0644 <"$ca" || rc=$?
+        ((rc == 0 || rc == 10)) || exit "$rc"
+    else
+        drop_file "$(endpoint_ca_file "$name")"
+    fi
+    new="$(current_endpoints | jq -c --arg n "$name" --arg u "$url" --arg m "$model" --argjson k "$([[ -n "$key" ]] && printf true || printf false)" --argjson c "$([[ -n "$ca" ]] && printf true || printf false)" '
+        (map(select(.name != $n))) + [{ name: $n, url: $u } + (if $m != "" then { model: $m } else {} end)
+            + (if $k then { key: true } else {} end) + (if $c then { ca: true } else {} end)]')"
+    rebuild_bundle "$new"
     apply_endpoints "$new"
-    state_write "$NAME" "$(state_read "$NAME" | jq --argjson e "$new" '{ name: .name, type: .type, endpoints: $e }')"
+    write_endpoints_state "$new"
     log_info "endpoint $name declared ($url)"
     jq -n --arg u "$url" '{ url: $u }'
 }
 
 cmd_add_endpoint() {
+    local key="" ca=""
     check_endpoint_name "${POSITIONAL[0]:-}"
     check_endpoint_url "${POSITIONAL[1]:-}"
     check_endpoint_model "$ENDPOINT_MODEL"
+    if [[ -n "$ENDPOINT_CA_FILE" ]]; then
+        [[ -r "$ENDPOINT_CA_FILE" ]] || die "$EXIT_USAGE" "certificate not readable: $ENDPOINT_CA_FILE"
+        openssl x509 -in "$ENDPOINT_CA_FILE" -noout >/dev/null 2>&1 || die "$EXIT_USAGE" "$ENDPOINT_CA_FILE is not a PEM certificate"
+        ca="$ENDPOINT_CA_FILE"
+    fi
+    # the key is read once, here: stdin cannot be read twice and nothing goes through a command line
+    if [[ -n "$ENDPOINT_KEY_FILE" ]]; then
+        key="$(key_value "$ENDPOINT_KEY_FILE")" || exit "$?"
+    fi
     require_root
     require_installed
     if is_dry_run; then
@@ -709,14 +895,18 @@ cmd_add_endpoint() {
         return 0
     fi
     with_component_lock "$TYPE" "$NAME" add-endpoint run_logged add-endpoint do_add_endpoint \
-        "${POSITIONAL[0]}" "${POSITIONAL[1]}" "$ENDPOINT_MODEL"
+        "${POSITIONAL[0]}" "${POSITIONAL[1]}" "$ENDPOINT_MODEL" "$key" "$ca"
 }
 
 do_remove_endpoint() {
     local name="$1" new
+    FILES_CHANGED=0
     new="$(current_endpoints | jq -c --arg n "$name" 'map(select(.name != $n))')"
+    drop_file "$(endpoint_key_file "$name")"
+    drop_file "$(endpoint_ca_file "$name")"
+    rebuild_bundle "$new"
     apply_endpoints "$new"
-    state_write "$NAME" "$(state_read "$NAME" | jq --argjson e "$new" '{ name: .name, type: .type, endpoints: $e }')"
+    write_endpoints_state "$new"
     log_info "endpoint $name is removed"
 }
 

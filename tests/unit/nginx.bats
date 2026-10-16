@@ -715,3 +715,129 @@ le() { nginx install --tls letsencrypt --server-name ai.example.org --tls-accept
     [ -f "$SYS/etc/letsencrypt/live/ai.example.org/fullchain.pem" ]
     [[ "$stderr" == *"is kept (--purge deletes it)"* ]]
 }
+
+# --- list-upstreams ------------------------------------------------------------------
+
+@test "list-upstreams gives the URL a client of another machine uses, with the port of the install" {
+    nginx install --server-name ai.test
+    nginx add-upstream ollama-llama3.2-3b http://127.0.0.1:11434
+    nginx add-upstream m2 http://127.0.0.1:8001
+    nginx list-upstreams
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.' <<<"$output")" = '[{"name":"ollama-llama3.2-3b","url":"https://ai.test/ollama-llama3.2-3b/v1"},{"name":"m2","url":"https://ai.test/m2/v1"}]' ]
+    # not the internal URL of the engine, the one that no other machine can use
+    [[ "$output" != *"127.0.0.1"* ]]
+    nginx install --server-name ai.test --port 9443
+    nginx list-upstreams
+    [ "$(jq -r '.[0].url' <<<"$output")" = "https://ai.test:9443/ollama-llama3.2-3b/v1" ]
+}
+
+@test "list-upstreams is [] when the proxy fronts nothing and exit 4 when it is not installed" {
+    nginx list-upstreams
+    [ "$status" -eq 4 ]
+    nginx install --server-name ai.test
+    nginx list-upstreams
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.' <<<"$output")" = '[]' ]
+}
+
+@test "list-upstreams is read-only: nothing journaled, no lock, never the API key" {
+    nginx install --server-name ai.test
+    nginx add-upstream m http://127.0.0.1:8001
+    journal="$STATE/journal.log"
+    before="$(cat "$journal" 2>/dev/null | wc -l)"
+    state="$(cat "$STATE/components/nginx.json")"
+    key="$(cat "$SECRETS/nginx.api-key")"
+    # a held lock does not stop a read
+    EASY_CS_AI_LOCK_HELD=0 nginx list-upstreams
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"$key"* && "$stderr" != *"$key"* ]]
+    [ "$(cat "$journal" 2>/dev/null | wc -l)" -eq "$before" ]
+    [ "$(cat "$STATE/components/nginx.json")" = "$state" ]
+}
+
+@test "list-upstreams is among the actions of describe" {
+    nginx describe
+    run jq -e '.actions | index("list-upstreams")' <<<"$output"
+    [ "$status" -eq 0 ]
+}
+
+# --- the certificate of the engine VM ------------------------------------------------
+
+san() { openssl x509 -in "$SYS/etc/easy-cs-ai/nginx/server.crt" -noout -ext subjectAltName; }
+
+@test "self-signed with no --server-name covers the host name, localhost and the addresses of the machine" {
+    export EASY_CS_AI_NGINX_ADDRESSES="10.1.2.3 192.168.7.9"
+    nginx install
+    [ "$status" -eq 0 ]
+    run san
+    [[ "$output" == *"DNS:localhost"* && "$output" == *"IP Address:127.0.0.1"* ]]
+    [[ "$output" == *"IP Address:10.1.2.3"* && "$output" == *"IP Address:192.168.7.9"* ]]
+    host="$(hostname -f 2>/dev/null || hostname)"
+    [[ "$output" == *"DNS:$host"* ]]
+}
+
+@test "an explicit --server-name gives the certificate of today: no address added" {
+    export EASY_CS_AI_NGINX_ADDRESSES="10.1.2.3"
+    nginx install --server-name ai.test
+    run san
+    [[ "$output" == *"DNS:ai.test"* && "$output" == *"DNS:localhost"* ]]
+    [[ "$output" != *"10.1.2.3"* ]]
+}
+
+@test "without the variable, test mode adds no address, and none for a name given as an address" {
+    nginx install
+    run san
+    [[ "$output" != *"IP Address:10."* ]]
+    export EASY_CS_AI_NGINX_ADDRESSES=""
+    nginx install --server-name 10.9.9.9
+    run san
+    [[ "$output" == *"IP Address:10.9.9.9"* ]]
+}
+
+@test "a re-run keeps the certificate for a new address, and a new name makes a new one" {
+    export EASY_CS_AI_NGINX_ADDRESSES="10.1.2.3"
+    nginx install
+    cert="$(cat "$SYS/etc/easy-cs-ai/nginx/server.crt")"
+    export EASY_CS_AI_NGINX_ADDRESSES="10.4.5.6"
+    nginx install
+    [ "$(cat "$SYS/etc/easy-cs-ai/nginx/server.crt")" = "$cert" ]
+    run san
+    [[ "$output" == *"10.1.2.3"* && "$output" != *"10.4.5.6"* ]]
+    # the way out is the re-run with a name, which the certificate does not cover yet
+    nginx install --server-name 10.4.5.6
+    [ "$(cat "$SYS/etc/easy-cs-ai/nginx/server.crt")" != "$cert" ]
+    run san
+    [[ "$output" == *"IP Address:10.4.5.6"* ]]
+}
+
+@test "provided is untouched by the addresses" {
+    export EASY_CS_AI_NGINX_ADDRESSES="10.1.2.3"
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 30 \
+        -subj "/CN=cust.test" -addext "subjectAltName=DNS:cust.test" -keyout "$BATS_TEST_TMPDIR/k.pem" -out "$BATS_TEST_TMPDIR/c.pem" 2>/dev/null
+    chmod 600 "$BATS_TEST_TMPDIR/k.pem"
+    nginx install --server-name cust.test --tls provided --tls-cert "$BATS_TEST_TMPDIR/c.pem" --tls-key-file "$BATS_TEST_TMPDIR/k.pem"
+    [ "$status" -eq 0 ]
+    run san
+    [[ "$output" == *"DNS:cust.test"* && "$output" != *"10.1.2.3"* ]]
+}
+
+@test "status gains certificate_names, read from the served certificate, and nothing else changes" {
+    export EASY_CS_AI_NGINX_ADDRESSES="10.1.2.3"
+    nginx status
+    [ "$(jq -c '.certificate_names' <<<"$output")" = '[]' ]
+    nginx install
+    nginx status
+    host="$(hostname -f 2>/dev/null || hostname)"
+    [ "$(jq -c '.certificate_names' <<<"$output")" = "[\"$host\",\"localhost\",\"127.0.0.1\",\"10.1.2.3\"]" ]
+    run jq -r 'keys | join(",")' <<<"$output"
+    [ "$output" = "certificate_names,healthy,installed,name,running,schema_version,version" ]
+    # what it reads is the certificate on disk, not the state
+    jq 'del(.params)' "$STATE/components/nginx.json" >"$BATS_TEST_TMPDIR/s.json" && cp "$BATS_TEST_TMPDIR/s.json" "$STATE/components/nginx.json"
+    nginx status
+    [[ "$(jq -c '.certificate_names' <<<"$output")" == *"10.1.2.3"* ]]
+    # a certificate that cannot be read gives []
+    rm "$SYS/etc/easy-cs-ai/nginx/server.crt"
+    nginx status
+    [ "$(jq -c '.certificate_names' <<<"$output")" = '[]' ]
+}
