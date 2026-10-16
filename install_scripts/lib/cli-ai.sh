@@ -265,6 +265,82 @@ readonly CONFIG_PLAN_JQ='. as $cfg
         + (if $installed != null then {installed: ($installed | index($c.name) != null)} else {} end)],
      models: $models, prune: $prune}'
 
+# The warnings that come from the validation itself and the next steps of a file that names VMs, see
+# docs/spec-two-vm.md: `models_not_checked` (per VM), `engine_unreachable` and `engine_address_unknown`
+# (computed on the whole file, so never by a validation of one slice), and the instructions the
+# administrator follows once the VMs are up. Arguments: $desc and $installed, like the validation.
+# Output: {warnings, next_steps}. The text of a step names only actions and options the `describe`
+# of the scripts declares, so the CLI never gives a command that fails.
+# shellcheck disable=SC2016
+readonly CONFIG_CROSS_JQ='. as $cfg | '"$APPLY_COMMON_JQ"'
+def vm_has($v; $t): any(comps[]; .vm == $v and .type == $t);
+def eng_on($v): [comps[] | select(.vm == $v and .type == "engine")];
+def protected($c): ($desc["engine/\($c.name)"].endpoint.protected // false);
+def models_on($v): [places[] | select(.p.err == null and .p.vm == $v) | .m];
+def vmw($v): if $v != null then {vm: $v} else {} end;
+def layout: if named and (vms | length) == 2 then
+    ([vms[] as $e | vms[] as $w | select($e != $w and vm_has($e; "engine") and (vm_has($e; "chat-interface") | not)
+        and vm_has($w; "chat-interface") and (eng_on($w) | length) == 0) | {e: $e, w: $w}][0]) else null end;
+def proxy_of($v): [comps[] | select(.vm == $v and .type == "proxy")][0];
+def exposed($l): $l != null and vm_has($l.e; "proxy") and (eng_on($l.e) | all(protected(.) | not));
+def tls_of($p): ($p.options.tls // ($desc["proxy/\($p.name)"].options[]? | select(.name == "tls") | .default) // "self-signed");
+def not_checked: [(if named then vms else [null] end)[] as $v
+  | select(any(places[]; .p.err == null and .p.vm == $v and .m.force == true) and ((listed("provisioning"; $v) | length) == 0))
+  | {path: "$.models", code: "models_not_checked", message: "models not checked for fit on the VM: llmfit is not part of the stack"} + vmw($v)];
+def unreachable: if named then [vms[] as $v
+  | select(any(eng_on($v)[]; protected(.) | not) and (vm_has($v; "proxy") | not) and (models_on($v) | length) == 0
+           and any(vms[]; . != $v and vm_has(.; "chat-interface")))
+  | {path: "$.components", code: "engine_unreachable", vm: $v,
+     message: "The engine listens on the loopback of its VM and nothing exposes it: the chat interface of the other VM cannot reach it. Add a proxy to that VM before the first model"}] else [] end;
+def address_unknown: layout as $l | if exposed($l) and (models_on($l.e) | length) > 0 then
+    (proxy_of($l.e)) as $p
+    | if ($p.options // {} | has("server-name") | not) and tls_of($p) == "self-signed" then
+        [{path: "$.components", code: "engine_address_unknown", vm: $l.e,
+          message: "The address of the engine VM is not known yet: its proxy will take the host name of the machine as its server name, and a self-signed certificate will also cover the addresses the machine has when it is installed. The web VM must reach the engine VM by one of those names or addresses. If none does, re-run `install proxy \($p.name)` on the engine VM with the options it was installed with and `--server-name <name or address>` (an option left out returns to its default), before linking the models"}]
+      else [] end
+  else [] end;
+def steps: layout as $l | if (vms | length) < 2 then [] else
+    (if exposed($l) then proxy_of($l.e) else null end) as $p
+    | ([comps[] | select(.vm == $l.w and .type == "chat-interface")][0]) as $c
+    | (if $l != null and $p != null and (models_on($l.e) | length) > 0 and $c != null
+          and (["install", "status", "show-key", "list-upstreams"] - ($desc["proxy/\($p.name)"].actions // []) | length) == 0
+          and (["model", "api-key-file", "ca-file"] - (($desc["chat-interface/\($c.name)"].action_options["add-endpoint"] // []) | map(.name)) | length) == 0
+       then true else false end) as $full
+    | [(if $full then "Run each script as root on its VM, the \($l.e) VM first." else "Run each script as root on its VM." end)]
+      + (if $full then
+          ["On the \($l.e) VM, read the API key, the URL of each model and the names\nand addresses its certificate covers:\n  sudo easy-cs-ai proxy \($p.name) show-key\n  easy-cs-ai proxy \($p.name) list-upstreams\n  easy-cs-ai proxy \($p.name) status          (certificate_names)",
+           "Let the \($l.w) VM reach the \($l.e) VM on the HTTPS port of its proxy\n(443 unless you set --port): firewall, security group.",
+           "On the \($l.w) VM, link each model:\n"
+           + ([models_on($l.e)[] | "  sudo easy-cs-ai chat-interface \($c.name) add-endpoint <name> <url> \\n    --model \(.name) --api-key-file <file>"] | join("\n"))
+           + "\n<name> is free, <url> is the one read in step 2, <file> holds the key\n(mode 0600, or - for stdin).\nWith the default self-signed certificate, copy the certificate of the\nengine VM (/etc/easy-cs-ai/nginx/server.crt) to the web VM and add\n--ca-file <file>. The host in <url> must be one the certificate covers\n(certificate_names, step 2): the server name printed by list-upstreams,\nor, when no server name was given, an address of the engine VM, which\nyou put in place of the host. If the web VM can reach neither, or the\naddress changed since the proxy was installed, re-run on the engine VM\n  sudo easy-cs-ai install proxy \($p.name) <the options it was installed with> \\n    --server-name <name or address>\n(an option left out returns to its default) which renews a self-signed\ncertificate (copy it again), then read step 2 again."]
+        else [] end)
+  end;
+{warnings: (not_checked + unreachable + address_unknown), next_steps: steps}'
+
+# config_cross <config> <desc>: {warnings, next_steps}, see CONFIG_CROSS_JQ.
+config_cross() {
+    jq -c --argjson desc "$2" --argjson installed '{}' "$CONFIG_CROSS_JQ" <<<"$1"
+}
+
+# next_steps_text <next_steps-json>: what a person reads after the scripts are written. The title,
+# the numbering and the closing line are the rendering's, the steps are the validation's.
+next_steps_text() {
+    local steps="$1" n i line total
+    total="$(jq 'length' <<<"$steps")"
+    ((total > 0)) || return 0
+    printf '\nWhat is left to do once the VMs are up:\n'
+    for ((i = 0; i < total; i++)); do
+        n=$((i + 1))
+        jq -r --argjson i "$i" '.[$i]' <<<"$steps" | {
+            local first=1
+            while IFS= read -r line; do
+                if ((first)); then printf '  %s. %s\n' "$n" "$line"; first=0; else printf '     %s\n' "$line"; fi
+            done
+        }
+    done
+    ((total < 2)) || printf 'Until step %s is done, the model list of the chat interface stays empty.\n' "$total"
+}
+
 # config_report <config> <target> [<prune> [<vm>]]: print the document of `config validate`
 # (see docs/spec-capabilities.md): errors, warnings and the plan. <config> is
 # valid JSON. The target is this (this machine) or fresh (a new VM, what is
@@ -273,7 +349,7 @@ readonly CONFIG_PLAN_JQ='. as $cfg
 # errors and warnings and those of no VM.
 config_report() {
     local config="$1" target="$2" prune="${3:-false}" vm="${4:-}" desc errors warnings plan=null order models installed=null hostids='[]'
-    local named=0 v slice vmplans='[]' vmlist
+    local named=0 v slice vmplans='[]' vmlist cross steps='[]'
     if [[ "$target" == fresh ]]; then
         export EASY_CS_AI_ASSUME_EMPTY=1
     else
@@ -283,10 +359,16 @@ config_report() {
     desc="$(apply_describes "$config")"
     errors="$(apply_problems "$config" "$desc" true "$hostids")"
     warnings="$(jq -c --argjson desc "$desc" "$CONFIG_WARNINGS_JQ" <<<"$config" 2>/dev/null)" || warnings='[]'
+    # what the validation itself warns about, and the steps left once the VMs are up
+    cross="$(config_cross "$config" "$desc" 2>/dev/null)" || cross='{"warnings":[],"next_steps":[]}'
     if [[ -n "$vm" ]]; then
+        # a validation of one slice gives neither the warnings nor the steps that need the other VMs
+        cross="$(jq -c '.warnings |= map(select(.code != "engine_unreachable" and .code != "engine_address_unknown")) | .next_steps = []' <<<"$cross")"
         errors="$(jq -c --arg vm "$vm" 'map(select(.vm == null or .vm == $vm))' <<<"$errors")"
         warnings="$(jq -c --arg vm "$vm" 'map(select(.vm == null or .vm == $vm))' <<<"$warnings")"
+        cross="$(jq -c --arg vm "$vm" '.warnings |= map(select(.vm == null or .vm == $vm))' <<<"$cross")"
     fi
+    warnings="$(jq -c --argjson c "$cross" '. + $c.warnings' <<<"$warnings")"
     [[ "$target" != this ]] || installed="$(state_list | jq -R . | jq -sc .)"
     if [[ "$errors" == '[]' ]]; then
         if ((named)); then
@@ -305,6 +387,7 @@ config_report() {
             done <<<"$vmlist"
             plan="$(jq -c '{vms: .}' <<<"$vmplans")"
             [[ "$errors" == '[]' ]] || plan=null
+            [[ "$errors" != '[]' ]] || steps="$(jq -c '.next_steps' <<<"$cross")"
         elif order="$(apply_order "$config" "$desc" 2>/dev/null)"; then
             models="$(apply_models "$config" | jq -R 'select(length > 0) | split("\t") | {name: .[0], engine: .[1], chat_interface: (if .[2] == "null" then null else .[2] end), force: (.[3] == "true")}' | jq -sc .)"
             plan="$(jq -c --argjson order "$(jq -R 'select(length > 0) | split(" ") | {type: .[0], name: .[1]}' <<<"$order" | jq -sc .)" \
@@ -314,7 +397,8 @@ config_report() {
         fi
     fi
     jq -nc --argjson sv "$AI_SCHEMA_VERSION" --arg target "$target" --argjson e "$errors" --argjson w "$warnings" --argjson p "$plan" \
-        '{schema_version: $sv, ok: ($e | length == 0), target: $target, errors: $e, warnings: $w, plan: $p}'
+        --argjson named "$named" --argjson ns "$steps" \
+        '{schema_version: $sv, ok: ($e | length == 0), target: $target, errors: $e, warnings: $w, plan: $p} + (if $named == 1 then {next_steps: $ns} else {} end)'
 }
 
 # config_report_text <document>: the human form of a report, on stderr.
@@ -331,7 +415,8 @@ config_report_text() {
         (if .prune then "plan: \($t)prune what the file does not name" else empty end)' <<<"$doc")
     while IFS= read -r line; do
         log_warn "$line"
-    done < <(jq -r '.warnings[] | "\(.component.name) --\(.option)=\(.value): \(.message)"' <<<"$doc")
+    done < <(jq -r '.warnings[] | (if .code then .message else "\(.component.name) --\(.option)=\(.value): \(.message)" end) + (if .vm then " (VM \(.vm))" else "" end)' <<<"$doc")
+    next_steps_text "$(jq -c '.next_steps // []' <<<"$doc")" >&2
 }
 
 # config_exit_code <document> [<missing-requirement-code>]: 0 when ok, else 2;

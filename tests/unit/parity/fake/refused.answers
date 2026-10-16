@@ -1,3 +1,4 @@
+  # one VM, the default
 # The dependency is refused, the session goes back to the components and ends on the minimal stack.
 none  # provisioning
 none  # proxy

@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). What concerns several VMs (one script per VM, the `VM:` header line, the next steps, the per-VM `--json` documents) is **proposed, not implemented**, see [spec: two VMs](spec-two-vm.md); one VM behaves as described.
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). What concerns several VMs (one script per VM, the `VM:` header line, the next steps, the per-VM `--json` documents) is **implemented** (`vm_script/generate.sh`, `tests/unit/generate_vm.bats`), see [spec: two VMs](spec-two-vm.md); one VM behaves as described.
 
 ## Purpose
 

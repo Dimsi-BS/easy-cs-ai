@@ -1,3 +1,4 @@
+  # one VM, the default
 # llmfit in the stack and ready: the models are named, the VM they need is only shown.
   # provisioning: llmfit
 none  # proxy

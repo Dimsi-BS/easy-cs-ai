@@ -128,8 +128,10 @@ parity() {
     # what the session shows is what the plan says
     [ "$(summary_order "$session_err")" = "$(jq -r '.plan.components[] | "\(.type) \(.name)"' <<<"$plan")" ]
     [ "$(summary_models "$session_err")" = "$(jq -r '[.plan.models[].name] | if length == 0 then "none" else join(", ") end' <<<"$plan")" ]
-    diff -u <(jq -r '.warnings[] | "    \(.component.name) --\(.option)=\(.value): \(.message)"' <<<"$plan" | sort -u) \
+    diff -u <(jq -r '.warnings[] | select(.option != null) | "    \(.component.name) --\(.option)=\(.value): \(.message)"' <<<"$plan" | sort -u) \
         <(summary_warnings "$session_err")
+    # and the ones the validation raises itself (a code, no option) are shown too
+    while IFS= read -r msg; do [[ "$session_err" == *"$msg"* ]]; done < <(jq -r '.warnings[] | select(.code != null and .vm == null) | .message' <<<"$plan")
 
     # same plan: the document of the generator on the oracle is the document of `config validate`
     run --separate-stderr bash "$GEN" --config "$oracle" --json "${PKG[@]}" --output c.sh
@@ -159,7 +161,7 @@ parity() {
     # `parity` compared the warnings of the plan with the summary of the session; here the
     # default does warn, so that comparison was not about nothing
     run --separate-stderr bash "$CLI" config validate "$PARITY/fake/stack.json" --target fresh --json
-    [ "$(jq -r '.warnings | length' <<<"$output")" = 1 ]
+    [ "$(jq -r '[.warnings[] | select(.option != null)] | length' <<<"$output")" = 1 ]
 }
 
 @test "parity: a refused dependency sends the session back, and it ends on the same decisions" {
@@ -243,7 +245,7 @@ every_option_is_asked() {
     [[ "$(jq -r '.errors[0].message' <<<"$output")" == *proxy* ]]
     [ "$(jq -r '.plan' <<<"$output")" = null ]
     # the session proposes it, and what it writes is then valid
-    answers_of "$PARITY/fake/stack.answers" | sed '1,2s/.*/none/' >stdin.txt
+    answers_of "$PARITY/fake/stack.answers" | sed '2,3s/.*/none/' >stdin.txt
     run --separate-stderr bash "$GEN" --config-only --output session.json <stdin.txt
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"chat requires proxy: add proxy prox?"* ]]

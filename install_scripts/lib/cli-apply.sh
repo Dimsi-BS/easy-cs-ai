@@ -85,8 +85,8 @@ readonly APPLY_NAMED_JQ='. as $cfg | '"$APPLY_COMMON_JQ"' named'
 # shellcheck disable=SC2016
 readonly APPLY_SLICE_JQ='. as $cfg | '"$APPLY_COMMON_JQ"'
   {schema_version: $cfg.schema_version,
-   components: [comps[] | select(.vm == $vm) | del(.vm)],
-   models: [places[] | select(.p.err == null and .p.vm == $vm) | (.m | del(.vm)) + {engine: .p.engine}]}'
+   components: [comps[] | select(.vm == $vm) | del(.vm)]}
+  + ([places[] | select(.p.err == null and .p.vm == $vm) | (.m | del(.vm)) + {engine: .p.engine}] | if length == 0 then {} else {models: .} end)'
 
 # The validation program. Input: the configuration. Arguments: $desc (describe
 # of every listed component, keyed "type/name"), $installed (installed

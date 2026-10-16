@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted, implemented (`install_scripts/lib/cli-ai.sh`, tested in `tests/unit/cli_ai.bats`). What concerns several VMs (`--vm`, `plan.vms`, `next_steps`, `scripts`, the `engine_unreachable` and `engine_address_unknown` warnings, the `vm` of the schema) is **proposed, not implemented**, see [spec: two VMs](spec-two-vm.md). So are, for a file of one VM as well: the `missing_requirement` of a model whose proxy or provisioning component is not in the file ([spec: config](spec-config.md#what-a-model-needs); until then such a file passes `config validate` and `generate --config` and `apply` stops at the model step, exit 4), and the `models_not_checked` warning of the validation (until then built by the session's summary).
+**Status:** accepted, implemented (`install_scripts/lib/cli-ai.sh`, tested in `tests/unit/cli_ai.bats`). What concerns several VMs (`--vm`, `plan.vms`, `next_steps`, `scripts`, the `engine_unreachable` and `engine_address_unknown` warnings, the `vm` of the schema) is **implemented**, see [spec: two VMs](spec-two-vm.md). So are, for a file of one VM as well: the `missing_requirement` of a model whose proxy or provisioning component is not in the file ([spec: config](spec-config.md#what-a-model-needs); `apply` keeps its exit 4 at the model step), and the `models_not_checked` warning of the validation.
 
 ## Purpose
 

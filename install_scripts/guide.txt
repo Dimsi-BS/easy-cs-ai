@@ -15,6 +15,10 @@ Procedure
                                              ranks, default models
                easy-cs-ai host --json       this machine (CPU, RAM, disk, GPU)
     For another machine (a VM to provision), ask the user for its specs.
+    Ask whether everything goes on ONE VM or the web interface on a SECOND
+    VM, apart from the engine. Several VMs: a "vm" on every component, and
+    on every model its "vm" and "engine"; do steps 3 to 5 for each VM (the
+    engine VM needs a proxy: the web VM reaches the engine through it).
  3. Choose the models. There are TWO ORDERS: ask the user which one applies.
     a) HARDWARE FIRST, a VM is imposed: which models fit it?
          easy-cs-ai provisioning llmfit suggest --json --target-ram GB
@@ -55,6 +59,11 @@ Procedure
       - a VM post-install script:
           easy-cs-ai generate --config FILE --output SCRIPT [--package-version V ...]
         the user reviews it and runs it on the VM;
+        with several VMs it writes one script per VM ("scripts") and gives
+        "next_steps" (config validate too): what the user does by hand once
+        the VMs are up. Never run `proxy NAME show-key` yourself (a secret);
+        the link uses `proxy NAME list-upstreams`, `proxy NAME status`,
+        `chat-interface NAME add-endpoint` and `install proxy NAME --server-name HOST`.
       - or the change on this machine, only with the user's explicit
         agreement: sudo easy-cs-ai apply FILE --json
  8. Read the result document of the command and `easy-cs-ai status --json`,

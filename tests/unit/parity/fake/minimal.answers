@@ -1,3 +1,4 @@
+  # one VM, the default
 # An engine and one model, nothing else. llmfit is shipped but not installed here.
 none  # provisioning
 none  # proxy

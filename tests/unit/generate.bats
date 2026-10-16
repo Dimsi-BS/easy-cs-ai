@@ -39,7 +39,10 @@ session() {
     run --separate-stderr bash -c 'bash "$0" "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
 }
 ANSWERS=""
-ask() { ANSWERS="$(printf '%s\n' "$@")"; export ANSWERS; session; }
+# ask <answers…>: the first answer, the VM question, is left to its default (one VM).
+ask() { ANSWERS="$(printf '%s\n' "" "$@")"; export ANSWERS; session; }
+# ask_raw <answers…>: no answer is added, the first one is the answer to the VM question.
+ask_raw() { ANSWERS="$(printf '%s\n' "$@")"; export ANSWERS; session; }
 
 # --- usage -------------------------------------------------------------------------------
 

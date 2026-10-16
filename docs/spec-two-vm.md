@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed, being implemented. Done: the `vm` field, the slices, the place of a model, `apply --vm`, `config validate --vm` and what a model needs (see [spec: config](spec-config.md)), and the proposal of a proxy for a one-VM session ([journey, step 4](spec-journey.md#4-models)). Not done: the VM question and the passes per VM, one script per VM, the next steps, the warnings and `list-upstreams`, `certificate_names`, `add-endpoint` with a key and a certificate. The open questions at the end do not block starting.
+**Status:** proposed, being implemented. Done: the `vm` field, the slices, the place of a model, `apply --vm`, `config validate --vm` and what a model needs (see [spec: config](spec-config.md)), and the proposal of a proxy for a one-VM session ([journey, step 4](spec-journey.md#4-models)). Also done: the VM question, the pass per VM, one script per VM with the `VM:` header, the `scripts` and `next_steps` of the JSON documents, the warnings of the validation (`models_not_checked`, `engine_unreachable`, `engine_address_unknown`) and the declared resources of [spec: model fit](spec-model-fit.md) (`tests/unit/generate_vm.bats`). Not done: the scripts of the components, `proxy nginx list-upstreams` and `certificate_names`, `chat-interface add-endpoint` with a key and a certificate (the next steps 2 to 4 are given only by a package whose scripts declare them, so a package without them gives step 1 alone), and the integration test on two VMs. The open questions at the end do not block starting.
 
 ## Purpose
 
@@ -105,9 +105,9 @@ The journey text of [`guide.txt`](../install_scripts/guide.txt) tells an agent t
 When the file names **at least two VMs**, the validation computes the list of what remains for the administrator (see [Where they are computed](#where-they-are-computed)). After the scripts are written, the generator prints it on stderr (not asked to confirm), and with `--json` it is the array `next_steps`. Step 1 is always there, in two wordings: "Run each script as root on its VM." alone, and "Run each script as root on its VM, the engine VM first." when steps 2 to 4 follow (the order only matters for the link they describe, and a layout with no engine VM, several, or a `protected` engine has no engine VM to put first). Steps 2 to 4 appear when the file names **exactly two VMs**, one with an engine and no chat interface and the other with a chat interface and no engine (a third VM, even one with neither, makes it another layout), which is the case this spec is about, **and the engine VM has a proxy** (steps 2 and 3 are actions of the proxy: without one, they would be commands that fail; a file with a model on such a VM is refused, see [Validation](#validation), and one without a model has the [`engine_unreachable` warning](#validation) that says what to fix) **and its engine is not `protected`** (a `protected` engine enforces HTTPS and its key itself and `add` does not put it behind the proxy, so `list-upstreams` would be empty and the key of the proxy would be useless to the web VM; see the [open questions](#open-questions)) **and the engine VM holds at least one model in the file** (steps 2 to 4 read the URL of each model and link it: with none, there is nothing to read or link, and the models that come later are linked by hand with the `add-endpoint` of the contract); with any other layout only step 1 is given. For that case a person reads the text below ([who writes which lines](#rules-for-the-text)):
 
 ```text
-Two scripts written, to run on two different VMs:
-  ./easy-cs-ai-vm-engine.sh   VM engine  (<engine> behind HTTPS and an API key)
-  ./easy-cs-ai-vm-web.sh      VM web     (<chat interface>)
+Two scripts written, one per VM:
+  ./easy-cs-ai-vm-engine.sh   VM engine  (<the components of that VM>)
+  ./easy-cs-ai-vm-web.sh   VM web  (<the components of that VM>)
 
 What is left to do once the VMs are up:
   1. Run each script as root on its VM, the engine VM first.   (without steps 2 to 4:
@@ -135,7 +135,7 @@ What is left to do once the VMs are up:
          --server-name <name or address>
      (an option left out returns to its default) which renews a self-signed
      certificate (copy it again), then read step 2 again.
-Until step 4 is done, the model list of LibreChat stays empty.
+Until step 4 is done, the model list of the chat interface stays empty.
 ```
 
 With a single step (without steps 2 to 4), the person's text is the title and `  1. Run each script as root on its VM.`, with no closing line, and `next_steps` is `[ "Run each script as root on its VM." ]`.

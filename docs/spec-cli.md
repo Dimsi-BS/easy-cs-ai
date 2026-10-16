@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. What concerns a configuration that names several VMs (`apply --vm`, one script per VM from `generate`) is **proposed, not implemented**, see [spec: two VMs](spec-two-vm.md); a file with no `vm` behaves as described.
+**Status:** accepted. What concerns a configuration that names several VMs (`apply --vm`, one script per VM from `generate`) is **implemented**, see [spec: two VMs](spec-two-vm.md); a file with no `vm` behaves as described.
 
 ## Purpose
 
@@ -42,7 +42,7 @@ easy-cs-ai [global options] <command> [arguments…]
 | `add <model> [--engine <name>] [--chat-interface <name>]` | Add a model to an engine and wire it |
 | `remove <model> [--engine <name>]` | Unwire a model and remove it from its engine |
 | `remove --all [--engine <name>]` | Remove every model (of one engine, or of all) |
-| `apply <file\|-> [--vm <name>] [--prune]` | Make the machine match a configuration file (`--vm` selects one VM of a file that names several, proposed) |
+| `apply <file\|-> [--vm <name>] [--prune]` | Make the machine match a configuration file (`--vm` selects one VM of a file that names several) |
 | `generate [--config-only] [parameters…]` | Produce the parameterless VM post-install script (one per VM when the configuration names several), or only its configuration file |
 | `catalog`, `host`, `config schema`, `config validate`, `guide` | Read-only discovery and validation for a person as well as for a program or an AI agent, see [spec: capabilities](spec-capabilities.md) |
 | `exec <type> <name> <command> [arguments…]` | Run the component's own program (`ollama`, `nginx`…) as it is, see [Native tool commands](#native-tool-commands) |

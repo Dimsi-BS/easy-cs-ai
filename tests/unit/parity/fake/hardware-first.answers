@@ -1,3 +1,4 @@
+  # one VM, the default
 # llmfit in the stack and ready: the specs of the VM, a suggestion, the first one is picked.
   # provisioning: llmfit, the rank 1
 none  # proxy

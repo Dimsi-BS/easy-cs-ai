@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. The two ways to walk it exist (see [implementation status](#implementation-status)); the parity test is in `tests/unit/parity.bats`. The VM question and the passes per VM (steps 1, 2 and 4, and what concerns several VMs in 5 and 6) are **proposed, not implemented**, see [spec: two VMs](spec-two-vm.md). The [proposal of a proxy](#4-models) for models on an engine that is not `protected` is **implemented** in the one-VM session (`tests/unit/generate.bats`). Still proposed, and applying to one VM as well: the recommendation of a VM that ends with no model ([spec: model fit](spec-model-fit.md#a-stack-with-no-model)).
+**Status:** accepted. The two ways to walk it exist (see [implementation status](#implementation-status)); the parity test is in `tests/unit/parity.bats`. The VM question and the passes per VM (steps 1, 2 and 4, and what concerns several VMs in 5 and 6) are **implemented**, see [spec: two VMs](spec-two-vm.md). The [proposal of a proxy](#4-models) for models on an engine that is not `protected` is **implemented** in the one-VM session (`tests/unit/generate.bats`). Still proposed, and applying to one VM as well: the recommendation of a VM that ends with no model ([spec: model fit](spec-model-fit.md#a-stack-with-no-model)).
 
 ## Purpose
 

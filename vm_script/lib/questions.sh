@@ -9,6 +9,10 @@ declare -A SEL=()    # type -> selected component name
 declare -A OPTV=()   # component -> JSON object of the options given
 declare -A DESC=()   # component -> describe JSON
 SESSION_MODELS=()
+PASS_TYPES=("${TYPES[@]}")   # the types the session asks in this pass (all of them, or those of one VM)
+PASS_REQUIRED=""           # the type that defines the VM of this pass, which `none` cannot refuse
+VM_MODE=""                 # "", or the VM of the pass when the stack is split: engine or web
+PROXY_DECLINED=0           # the proxy of the engine VM was refused: back to its components
 
 # _read <prompt> [<default>]: answer in REPLY. End of input cancels the session.
 _read() {
@@ -41,7 +45,7 @@ _type_of_selected() {
 
 step_components() {
     local t names rank
-    for t in "${TYPES[@]}"; do
+    for t in "${PASS_TYPES[@]}"; do
         names="$(component_names "$t" | tr '\n' ' ')"
         [[ -n "${names// /}" ]] || continue
         rank="$(rank_lookup "$t")"
@@ -52,6 +56,10 @@ step_components() {
         while :; do
             _read "$t (${names% }, or none)" "${SEL[$t]:-${rank:-none}}"
             if [[ "$REPLY" == none ]]; then
+                if [[ "$t" == "$PASS_REQUIRED" ]]; then
+                    log_warn "this VM is defined by its $t, none is not offered here: choose one of $names"
+                    continue
+                fi
                 unset "SEL[$t]"
                 break
             elif [[ " $names " == *" $REPLY "* ]]; then
@@ -309,20 +317,28 @@ _print_vm_recommendation() {
 # `n` takes the models out of the list. A package that ships no proxy proposes nothing: the
 # validation says why in the summary.
 _propose_proxy() {
-    local engine="${SEL[engine]:-}" proxy names
-    ((${#SESSION_MODELS[@]})) || return 0
+    local engine="${SEL[engine]:-}" proxy names prompt
     [[ -n "$engine" && -z "${SEL[proxy]:-}" ]] || return 0
+    ((${#SESSION_MODELS[@]})) || [[ "$VM_MODE" == engine ]] || return 0
     _describe_of engine "$engine"
     [[ "$(jq -r '.endpoint.protected // false' <<<"${DESC[$engine]}")" != true ]] || return 0
     proxy="$(rank_lookup proxy)"
     [[ -n "$proxy" && -f "$(script_path proxy "$proxy")" ]] || proxy="$(component_names proxy | head -1)"
     [[ -n "$proxy" ]] || return 0
-    names="$(printf '%s, ' "${SESSION_MODELS[@]}")"
-    names="${names%, }"
-    _read "$names needs a proxy to be reached from outside the VM (the engine listens on the loopback only). Add $proxy? (y/n)" y
+    if ((${#SESSION_MODELS[@]})); then
+        names="$(printf '%s, ' "${SESSION_MODELS[@]}")"
+        names="${names%, }"
+        prompt="$names needs a proxy to be reached from outside the VM (the engine listens on the loopback only). Add $proxy? (y/n)"
+    else
+        prompt="The web VM reaches $engine through a proxy (it listens on the loopback only). Add $proxy? (y/n)"
+    fi
+    _read "$prompt" y
     if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
         SEL[proxy]="$proxy"
         step_options proxy
+    elif [[ "$VM_MODE" == engine ]]; then
+        log_warn "the web VM could not reach $engine without a proxy, choose the components again"
+        PROXY_DECLINED=1
     else
         log_warn "without a proxy the models cannot be reached from outside the VM: none is added"
         SESSION_MODELS=()
@@ -379,6 +395,7 @@ step_models() {
     done
     IFS=$' \t\n'
     _propose_proxy
+    ((! PROXY_DECLINED)) || return 0
     if [[ -n "$script" && "$MODELS_ORDER" == m ]]; then
         # The recommendation is printed once, in the summary that follows.
         _plan_models "$script"
@@ -430,9 +447,8 @@ print_summary() {
     desc="$(apply_describes "$config")"
     order="$(apply_order "$config" "$desc")"
     warnings="$(summary_warnings "$config" "$desc")"
-    # Derived from the configuration, so a --config file gets it too.
-    fit="$(jq -r 'if ((.models // []) | any(.force == true)) and ((.components // []) | all(.type != "provisioning"))
-        then "    models not checked for fit on the VM: llmfit is not part of the stack" else empty end' <<<"$config")"
+    # The validation gives it, so a --config file gets it too.
+    fit="$(config_cross "$config" "$desc" | jq -r '.warnings[] | select(.code == "models_not_checked") | "    \(.message)"')"
     [[ -z "$fit" ]] || warnings="${warnings:+$warnings$'\n'}$fit"
     for fit in "${SESSION_FIT_WARN[@]}"; do
         warnings="${warnings:+$warnings$'\n'}    may not fit the VM, $fit"
@@ -452,30 +468,114 @@ print_summary() {
     _print_vm_recommendation
 }
 
-# run_session: the five steps. Leaves the configuration in SESSION_CONFIG.
+# The session is the journey walked once, or once per VM when the stack is split in two
+# (docs/spec-two-vm.md#in-the-session): a pass is the five steps over the types of a VM.
+# shellcheck disable=SC2034  # read by generate.sh
 SESSION_CONFIG=""
-run_session() {
-    local step=1 answer
+PASS_CONFIG=""
+PASS_DONE='[]'    # the passes already confirmed: [{vm, config}], the one-VM configuration of each
+
+# _assemble <vm> <config>: the configuration of the whole stack, from the passes done and the
+# one in progress: every component gets the VM of its pass, every model the VM and the engine of
+# the pass that holds it.
+_assemble() {
+    jq -n --argjson prev "$PASS_DONE" --arg vm "$1" --argjson cur "$2" '
+        ($prev + [{vm: $vm, config: $cur}]) as $parts
+        | {schema_version: 1,
+           components: [$parts[] | .vm as $v | .config.components[] | . + {vm: $v}],
+           models: [$parts[] | .vm as $v | (.config.components | map(select(.type == "engine"))[0].name) as $e
+                    | (.config.models // [])[] | . + {vm: $v, engine: $e}]}
+        | if (.models | length) == 0 then del(.models) else . end'
+}
+
+# run_pass <vm>: the five steps over the types of a VM (all of them when <vm> is empty, for a stack
+# on one VM). Leaves the one-VM configuration of the pass in PASS_CONFIG. Cancelling cancels everything.
+run_pass() {
+    local vm="${1:-}" step=1 answer menu="components (c), options (o), models (m)" full
+    VM_MODE="$vm"
+    PASS_REQUIRED=""
+    PASS_TYPES=("${TYPES[@]}")
+    case "$vm" in
+    engine) PASS_TYPES=(provisioning proxy engine); PASS_REQUIRED=engine ;;
+    web)
+        PASS_TYPES=(proxy chat-interface)
+        PASS_REQUIRED=chat-interface
+        # the web VM has no models step: nothing of the engine VM (its specs, its models) is its own
+        menu="components (c), options (o)"
+        TARGET_RAM="" TARGET_VRAM="" TARGET_CORES=""
+        ;;
+    esac
+    if [[ -n "$vm" ]]; then
+        SEL=() OPTV=()
+        SESSION_MODELS=() SESSION_FIT_WARN=() SESSION_PLAN="" SUGGESTIONS=()
+        printf '\nVM %s\n' "$vm" >&2
+    fi
     while :; do
         case "$step" in
         1) step_components; step=2 ;;
         2) if step_dependencies; then step=3; else step=1; fi ;;
         3) step_options; step=4 ;;
-        4) step_models; step=5 ;;
+        4)
+            PROXY_DECLINED=0
+            step_models
+            if ((PROXY_DECLINED)); then step=1; else step=5; fi
+            ;;
         5)
-            SESSION_CONFIG="$(session_config)"
-            print_summary "$SESSION_CONFIG"
-            _read "Confirm (y), cancel (n) or redo a step: components (c), options (o), models (m)" y
+            PASS_CONFIG="$(session_config)"
+            print_summary "$PASS_CONFIG"
+            if [[ "$vm" == web ]]; then
+                # the warnings that need both VMs come after the ones of this VM, in the last summary
+                full="$(_assemble "$vm" "$PASS_CONFIG")"
+                print_cross_warnings "$full"
+            fi
+            _read "Confirm (y), cancel (n) or redo a step: $menu" y
             answer="$REPLY"
             case "$answer" in
             y | Y) return 0 ;;
             n | N) log_info "cancelled, nothing written"; exit 0 ;;
             c | C) step=1 ;;
             o | O) step=3 ;;
-            m | M) step=4 ;;
+            m | M)
+                if [[ "$vm" == web ]]; then log_warn "'$answer' is not a valid answer"; else step=4; fi
+                ;;
             *) log_warn "'$answer' is not a valid answer" ;;
             esac
             ;;
         esac
     done
+}
+
+# print_cross_warnings <config>: the warnings of a stack on several VMs that need several of them to
+# be computed (an engine nothing exposes, an address not known yet), each naming its VM.
+print_cross_warnings() {
+    local lines
+    lines="$(config_cross "$1" "$(apply_describes "$1")" | jq -r '.warnings[] | select(.code == "engine_unreachable" or .code == "engine_address_unknown") | "    [VM \(.vm)] \(.message)"')"
+    [[ -z "$lines" ]] || printf '  [WARN] between the VMs, to read before creating them:\n%s\n' "$lines" >&2
+}
+
+# run_session: one VM, or two when the administrator splits the stack. Leaves the configuration in
+# SESSION_CONFIG.
+run_session() {
+    local choice=1
+    # the question is asked when there is something to split: an engine and a chat interface
+    if [[ -n "$(component_names engine)" && -n "$(component_names chat-interface)" ]]; then
+        while :; do
+            _read "One VM for everything (1), or the web interface on a second VM, apart from the inference engine (2)?" 1
+            case "$REPLY" in
+            1 | 2) choice="$REPLY"; break ;;
+            esac
+            log_warn "'$REPLY' is not 1 or 2"
+        done
+    fi
+    if [[ "$choice" == 1 ]]; then
+        run_pass ""
+        SESSION_CONFIG="$PASS_CONFIG"
+        return 0
+    fi
+    PASS_DONE='[]'
+    run_pass engine
+    PASS_DONE="$(jq -c --argjson c "$PASS_CONFIG" '. + [{vm: "engine", config: $c}]' <<<"$PASS_DONE")"
+    run_pass web
+    # shellcheck disable=SC2034  # read by generate.sh
+    SESSION_CONFIG="$(_assemble web "$PASS_CONFIG")"
 }

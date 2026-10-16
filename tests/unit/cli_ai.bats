@@ -186,11 +186,13 @@ JSON
 @test "config validate: the warn entries of describe whose condition holds, the default value included" {
     full_config
     cli config validate "$CFG" --json
-    run jq -c '.warnings | map([.path, .component.name, .option, .value, .message])' <<<"$output"
+    run jq -c '.warnings | map(select(.option != null) | [.path, .component.name, .option, .value, .message])' <<<"$output"
     [ "$output" = '[["$.components[0]","chat","open","true","it is open"],["$.components[1]","eng","open","true","it is open"],["$.components[2]","prox","open","true","it is open"]]' ]
     jq '.components[0].options = {"open": false}' "$CFG" >"$CFG.2"
     cli config validate "$CFG.2" --json
-    [ "$(jq -r '.warnings | map(.component.name) | join(",")' <<<"$output")" = "eng,prox" ]
+    [ "$(jq -r '.warnings | map(select(.option != null) | .component.name) | join(",")' <<<"$output")" = "eng,prox" ]
+    # a model written with force and no provisioning component gives the warning of the validation
+    [ "$(jq -c '.warnings | map(select(.code != null) | [.code, .path])' <<<"$output")" = '[["models_not_checked","$.models"]]' ]
 }
 
 @test "config validate: a warning does not change the exit code" {

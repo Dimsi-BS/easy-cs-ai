@@ -1,3 +1,4 @@
+  # one VM, the default
 # No llmfit, a server name, the registration closed: nothing warns, the model is added unchecked.
 none  # provisioning
   # proxy: nginx
