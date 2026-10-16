@@ -72,7 +72,7 @@ Asked when an engine is selected. The user either has a VM imposed (**hardware f
 
 ### 5. Validate, show, confirm
 
-- **Capability**: [`config validate`](spec-capabilities.md#config-validate), the code of `apply` before any side effect. It returns every problem at once, the plan, and the warnings of the options whose effective value matches their `warn` entry.
+- **Capability**: [`config validate`](spec-capabilities.md#config-validate), the code of `apply` before any side effect. It returns every problem at once, the plan, and the warnings of the options whose effective value matches their `warn` entry. For several VMs it also returns the [next steps](spec-two-vm.md#next-steps) that the user does by hand, so both ways show them from the same document.
 - **Session**: loops on invalid input, then prints the summary: components in install order, options (secrets masked), models, platforms, the recommended VM when computed, and **every warning** (an open registration, models not checked…). The user confirms (`y`), cancels (`n`) or goes back to a step. End of input cancels, with exit 0 and nothing written.
 - **Program**: fixes the `errors` by their `path` and `code` until `ok`, then shows the user the `plan` and **every `warning`**, and gets a yes before going on.
 - In both, the warnings are read **before** anything is created or changed.

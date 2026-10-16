@@ -81,13 +81,13 @@ One VM for everything (1), or the web interface on a second VM, apart from the i
 
 The same file, written in one go: a program (or an agent working for a person) writes the configuration with the `vm` of each component, validates it with `config validate` (which cuts it into slices and checks each), then runs `generate --config <file>`, which gives the same scripts the session does. There is no other path and no other flag: the answer to the VM question **is** the `vm` fields, so that [rule 2 of the journey](spec-journey.md#rules) holds without exception, and `config schema` lists the field.
 
-`generate --config <file> --json` extends its document for several VMs (see [spec: capabilities](spec-capabilities.md#commands)): `script` is `null` and `scripts` lists one entry per VM (`vm`, `path`, `bytes`, `written`, `package_version`, `package_format`), and `next_steps` carries the [next steps](#next-steps) as an array of strings. With one VM the document is unchanged.
+`generate --config <file> --json` extends its document for several VMs (see [spec: capabilities](spec-capabilities.md#commands)): `script` is `null` and `scripts` lists one entry per VM (`vm`, `path`, `bytes`, `written`, `package_version`, `package_format`), and `next_steps` carries the [next steps](#next-steps) as an array of strings. `config validate --json` carries the same `next_steps`, since they depend on the file only. With one VM the documents are unchanged.
 
 The journey text of [`guide.txt`](../install_scripts/guide.txt) tells an agent to ask the user the VM question and to give the `vm` fields; a test checks that it names the same commands as the next steps.
 
 ## Next steps
 
-After the scripts are written, when the file has several VMs, the generator prints on stderr (not asked to confirm) what remains, and puts the same lines in `next_steps` with `--json`. Step 1 is always there; steps 2 to 4 appear when a chat interface lies on a VM with no engine while an engine lies on another VM, which is the case this spec is about:
+When the file has several VMs, the validation computes the list of what remains for the administrator (see [Where they are computed](#where-they-are-computed)). After the scripts are written, the generator prints it on stderr (not asked to confirm), and with `--json` it is the array `next_steps`. Step 1 is always there; steps 2 to 4 appear when exactly one VM has an engine and no chat interface and exactly one other VM has a chat interface and no engine, which is the case this spec is about; with any other layout only step 1 is given. For that case the list reads:
 
 ```text
 Two scripts written, to run on two different VMs:
@@ -116,9 +116,18 @@ Until step 4 is done, the model list of LibreChat stays empty.
 Rules for the text:
 
 - **Fixed text, filled with what the configuration says.** The component names, the VM names and the models are those of the file (one `add-endpoint` line per model, with its `--model`). The address, the port, the endpoint name, the URL and the files stay placeholders: they do not exist yet.
-- **The text is the generator's, the commands are the contract's.** It never invents an option: a bats test checks that every option named in the text is in the `describe` of the script it names (`action_options` of the LibreChat script, see [Contract additions](#contract-additions)). The text is printed only by a package whose LibreChat script has them, so the generator never gives a command that fails.
+- **The text is the validation's, the commands are the contract's.** It never invents an option: a bats test checks that every option named in the text is in the `describe` of the script it names (`action_options` of the LibreChat script, see [Contract additions](#contract-additions)). The list is given only by a package whose LibreChat script has them, so the CLI never gives a command that fails.
 - With `--config-only`, no script is produced and the step is one line naming the file written.
-- With one VM, nothing is printed: the output is today's.
+- With one VM, nothing is printed and there is no `next_steps`: the output is today's.
+
+### Where they are computed
+
+The list is computed by the validation of [spec: capabilities](spec-capabilities.md#config-validate), in the same place as the warnings, from the file alone. The condition, the text and the models filled in are a rule of the capability, not of the generator ([rule 4](spec-journey.md#rules)), so improving them improves both ways at once. It follows that:
+
+- `generate` computes nothing: it prints the list after writing the scripts, and puts it in its `--json`.
+- `config validate --json` returns it too, so a program can show it before generating; it needs nothing from the machine.
+- The text a person reads and the array `next_steps` are the same lines in the same order.
+- `guide.txt` carries the procedure for a reader that is a model. It is written by hand, not generated, and a test keeps it in step with the list (see [Definition of done](#definition-of-done)).
 
 ## Contract additions
 
@@ -152,8 +161,8 @@ chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-
 
 - `install_scripts/lib/cli-apply.sh`: the `vm` field (shape, all-or-none, uniqueness per VM), the slices, `--vm`; the validation stays one `jq` program, run per slice, with the paths of the file as written.
 - `vm_script/lib/questions.sh`: the question at step 1, and the session run per VM, with the selection, options and models state per pass (a pass restricts the types it asks and starts from an empty selection).
-- `vm_script/generate.sh`: one script per slice, the VM in the names and the header, the all-or-nothing write, the next steps. The script template is unchanged: one slice, the same template.
-- `install_scripts/lib/cli-ai.sh`: `config schema`, `config validate` and `generate --json` for the `vm` field and the documents above.
+- `vm_script/generate.sh`: one script per slice, the VM in the names and the header, the all-or-nothing write, and the printing of the next steps, which it receives from the validation. The script template is unchanged: one slice, the same template.
+- `install_scripts/lib/cli-ai.sh`: `config schema`, `config validate` and `generate --json` for the `vm` field and the documents above, and the computation of the next steps (the condition, the text, the models filled in).
 - `install_scripts/chat-interface/librechat.sh` and `templates/librechat/`: the two options, the key and certificate files, the compose change for the bundle.
 - `install_scripts/guide.txt`: the VM question and the next steps.
 - The sizing stays in `provisioning llmfit plan`: the session calls it without `--chat-interface` and holds no figure of its own ([rule 4](spec-journey.md#rules)).
@@ -163,7 +172,7 @@ chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-
 - `bats` tests of the configuration: see [spec: config](spec-config.md#definition-of-done) (the `vm` field, its errors, the slices, `apply --vm`).
 - `bats` tests of the generator, answers on stdin: the default answer gives the same script as before (compared with a script generated by the previous behaviour); answer `2` gives one configuration with the `vm` of each component, models only on the engine, a `nginx` on each VM, and one script per VM; cancel after the first pass writes nothing; `--dry-run` writes nothing; `--output` and `--config-only` names; one script unwritable keeps none; the header line; the question absent when no engine or no chat interface is shipped; the `engine_unreachable` warning in the summary.
 - `bats` tests of `generate --config` on a file with `vm`: the scripts, each embedding its slice without `vm` (extracted and compared), `--json` with `scripts` and `next_steps`, and the same files for the same decisions as the session.
-- A test that the next steps are printed only for several VMs, carry the models of the file, and name only options present in the `describe` of the LibreChat script; and that `guide.txt` names the same commands.
+- Tests of the next steps: computed by the validation from the file alone; only for several VMs; step 1 alone for a layout other than one engine VM and one chat-interface VM; the models of the file filled in; the same lines in the text of `generate`, in `generate --json` and in `config validate --json`; only options present in the `describe` of the LibreChat script; and `guide.txt` names the same commands.
 - Parity: a scripted two-VM session and the equivalent hand-written file give the same configuration, the same plan (`config validate --target fresh --json`) and the same scripts ([parity test](spec-journey.md#parity)).
 - `bats` tests of `add-endpoint` in `EASY_CS_AI_ROOT` mode: without the new options the rendered files are identical to today's; with `--api-key-file` (file, stdin, too-open file refused with exit 2, never in `librechat.yaml`, state, logs or `--dry-run`); with `--ca-file` (copied, bundle rebuilt, an invalid PEM refused); idempotence; `remove-endpoint` removes the key and the certificate.
 - Integration test on two VMs: both scripts run, the link made as in the next steps, a message answered through the web VM, the scripts run a second time change nothing. The existing single-VM test stays as it is.
@@ -177,6 +186,8 @@ chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-
 - **The models listed by the endpoint.** With `--model`, LibreChat shows that model only (`fetch: false`). Without, it fetches the list of the engine, through the key and the TLS, which adds a network dependency at start. To settle with the first real test.
 - **Several engine VMs, or several interfaces.** The format allows them. The same engine component on two VMs makes `models[].engine` ambiguous (`ambiguous_engine`), and the next steps assume one of each. Each link is an `add-endpoint`, so no new mechanism is needed, but a model would need a way to say which VM.
 - **The address of the engine VM and its certificate.** A self-signed certificate is valid for the server name given to the engine VM's nginx, so the web VM must use that very name. When the address is not known at generation, the administrator re-runs `install proxy nginx --server-name <name>` on the engine VM, which renews the certificate; this could be said in the next steps.
+- **Structured next steps.** `next_steps` is an array of strings, enough for an agent that reads them and for the text. If a program has to act on a step (find the `add-endpoint` command of a model), the entries would become objects (`id`, `vm`, `text`); documents of one VM are not concerned.
+- **More than two VMs.** With any layout other than one engine VM and one chat-interface VM, only step 1 is given and the links between the VMs are not described. A rule for a pair per link would extend it.
 - **Going back to the first VM** from the second pass, without cancelling.
 - **The next steps in the header** of each script, so that a script found on a VM says what is left to do. Only the VM line is in this version.
 - **The version of the format.** `vm` is added without a bump (see [spec: config](spec-config.md#compatibility-of-the-vm-field)); a bump to 2 when `vm` is present would give a clearer message to an older CLI, and is to be reconsidered if configurations circulate across CLI versions.

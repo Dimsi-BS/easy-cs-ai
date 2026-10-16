@@ -40,7 +40,7 @@ Takes the [configuration](spec-config.md) from a file instead of a session: **no
 - A session can be done once by hand with `--config-only`, the file reviewed or edited, then turned into a script with `--config`.
 - The summary is printed on stderr and **not** asked for confirmation.
 - Incompatible with `--config-only` (it would only copy the file): exit 2.
-- A file that names several VMs gives one script per VM (see [spec: two VMs](spec-two-vm.md)); each script embeds the slice of its VM, validated as a one-VM file. The summary is printed per VM, and the instructions that follow are the generator's, not the file's.
+- A file that names several VMs gives one script per VM (see [spec: two VMs](spec-two-vm.md)); each script embeds the slice of its VM, validated as a one-VM file. The summary is printed per VM, and the instructions that follow are the next steps computed by the validation ([spec: two VMs](spec-two-vm.md#next-steps)), which the generator only prints; it computes nothing of them.
 - `--json` (only with `--config`, a session is interactive: exit 2) prints one JSON document on stdout instead of the human output: the validation document of `config validate --target fresh` extended with a `script` entry, see [spec: capabilities](spec-capabilities.md#commands) and [rendering](spec-rendering.md#for-a-program---json). An invalid file prints the document with its errors, `script: null` and exits 2.
 
 ## Implementation notes
