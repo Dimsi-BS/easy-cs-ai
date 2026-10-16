@@ -392,8 +392,8 @@ cmd_config() {
 
 cmd_guide() {
     (($# == 0)) || fail "$EXIT_USAGE" "guide takes no argument (got '$1')"
-    [[ -r "$HOME_DIR/guide.md" ]] || fail "$EXIT_PRECONDITION" "guide.md is missing from the package (looked in $HOME_DIR)"
-    cat "$HOME_DIR/guide.md"
+    [[ -r "$HOME_DIR/guide.txt" ]] || fail "$EXIT_PRECONDITION" "guide.txt is missing from the package (looked in $HOME_DIR)"
+    cat "$HOME_DIR/guide.txt"
 }
 
 # --- result documents of the changing commands ----------------------------------------

@@ -14,14 +14,14 @@ There are two ways to walk it, and neither is "the AI interface":
 | --- | --- | --- |
 | Who | A person at a terminal | A program, or an AI agent working for a person |
 | How | Questions and answers (`generate`) | Arguments, a configuration file, `--json` (`catalog`, `host`, `config validate`, `generate --config`, `apply`…) |
-| Text of the instructions | The questions themselves | `easy-cs-ai guide`, which prints [`install_scripts/guide.md`](../install_scripts/guide.md) |
+| Text of the instructions | The questions themselves | `easy-cs-ai guide`, which prints [`install_scripts/guide.txt`](../install_scripts/guide.txt) |
 | Produces | A [configuration](spec-config.md), then the script | The same configuration, then the same script |
 
 Both call the same [capabilities](spec-capabilities.md), validate with the same code, and end on the same artefacts. They differ only by [rendering](spec-rendering.md). There is no second product behind `--json`.
 
 ## Rules
 
-1. **One definition.** What the journey asks, in what order, and what it must show is written in this spec, and the reader-facing text of the steps in `guide.md`, which is the only text `guide` prints. The generator spec, the `guide` text and the session's questions are views of it.
+1. **One definition.** What the journey asks, in what order, and what it must show is written in this spec, and the reader-facing text of the steps in `guide.txt`, which is the only text `guide` prints. The generator spec, the `guide` text and the session's questions are views of it.
 2. **A question is a field.** Every question of the session fills one field of the configuration (or one argument), and every field the journey exposes has a question. A step with no field to carry its answer cannot exist; a new question means a new field, which then shows up in `config schema` and in `--json` without further work.
 3. **The user decides.** Nothing is chosen silently: a component is in the result only if the user picked it or accepted a dependency that was proposed. Defaults and ranks are suggestions. A program acting for a person asks that person the same questions the session asks, it does not answer them.
 4. **A step holds no logic.** It asks, calls a capability, and shows the document the capability returns. A filter, a margin, a validation rule or a warning is the capability's, so that improving it improves both ways at once.
@@ -104,7 +104,7 @@ A change request falls into one of three places, and only that one needs touchin
 | The change is | Where it goes | What follows without more work |
 | --- | --- | --- |
 | A new data, rule, check or warning | The capability ([spec: capabilities](spec-capabilities.md), [model fit](spec-model-fit.md)) | Both renderings, since both show its document |
-| A new question, a new step, a new order | This spec, with the field that carries it | `config schema` and `--json` list the field. The session question and the step of `guide.md` are written by hand |
+| A new question, a new step, a new order | This spec, with the field that carries it | `config schema` and `--json` list the field. The session question and the step of `guide.txt` are written by hand |
 | A presentation of an answer (wording, layout, a table) | The human rendering ([spec: rendering](spec-rendering.md)) | Nothing: the JSON is a different interface and is not touched |
 
 A change that adds a question but no field, or a rule inside a step, breaks rules 2 and 4 and is a sign it belongs elsewhere.
@@ -117,7 +117,7 @@ The two ways must give the same result for the same decisions. The test that gua
 
 - **Session**: `vm_script/generate.sh` and `vm_script/lib/questions.sh`, reached through `easy-cs-ai generate`.
 - **Programmatic**: `install_scripts/lib/cli-ai.sh` (`catalog`, `host`, `config`, `guide`, the result documents) and `install_scripts/lib/cli-apply.sh` (the validation shared with the session).
-- **Guide**: its text is the single file `install_scripts/guide.md`, shipped in the package (next to `ranks.conf`) and printed as it is by `guide`. It is written by hand for the final reader, so a change to a step updates this spec, the session and `guide.md` together. `tests/unit/cli_ai.bats` checks that it names the commands and the two orders of the models step, not that it follows this spec.
+- **Guide**: its text is the single file `install_scripts/guide.txt`, shipped in the package (next to `ranks.conf`) and printed as it is by `guide`. It is written by hand for the final reader, so a change to a step updates this spec, the session and `guide.txt` together. `tests/unit/cli_ai.bats` checks that it names the commands and the two orders of the models step, not that it follows this spec.
 - **Not done**: the parity test above.
 
 ## Open questions

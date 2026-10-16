@@ -53,7 +53,7 @@ An answer that has no place in the configuration (the specs of the target VM at 
 
 ## `guide`
 
-`easy-cs-ai guide` is the written form of the [journey](spec-journey.md), the file `install_scripts/guide.md` printed as it is, for a reader that is a model: the same steps, with the commands to call and the rules of [what a program never does on its own](spec-journey.md#what-a-program-never-does-on-its-own). It is plain text, short (a screen or two), versioned with the CLI, and the only reader-oriented output with no `--json` form.
+`easy-cs-ai guide` is the written form of the [journey](spec-journey.md), the file `install_scripts/guide.txt` printed as it is, for a reader that is a model: the same steps, with the commands to call and the rules of [what a program never does on its own](spec-journey.md#what-a-program-never-does-on-its-own). It is plain text, short (a screen or two), versioned with the CLI, and the only reader-oriented output with no `--json` form.
 
 An agent that has nothing but the binary finds it from `easy-cs-ai --help`, whose usage starts with a line telling an AI agent to run `guide` first, and whose command list groups `guide` with `catalog`, `host` and `config` under a heading of their own. That heading names who the commands are for in practice; it does not make them a separate interface, and a person may run any of them.
 
