@@ -43,7 +43,7 @@ easy-cs-ai [global options] <command> [arguments…]
 | `remove <model> [--engine <name>]` | Unwire a model and remove it from its engine |
 | `remove --all [--engine <name>]` | Remove every model (of one engine, or of all) |
 | `apply <file\|-> [--prune]` | Make the machine match a configuration file |
-| `generate [--config-only] [parameters…]` | Produce the parameterless VM post-install script, or only its configuration file |
+| `generate [--config-only] [parameters…]` | Produce the parameterless VM post-install script (one per VM when the configuration names several), or only its configuration file |
 | `catalog`, `host`, `config schema`, `config validate`, `guide` | Read-only discovery and validation for a person as well as for a program or an AI agent, see [spec: capabilities](spec-capabilities.md) |
 | `exec <type> <name> <command> [arguments…]` | Run the component's own program (`ollama`, `nginx`…) as it is, see [Native tool commands](#native-tool-commands) |
 | `<type> <name> <action> [arguments…]` | Component command: an action of the contract, forwarded to the script |
@@ -328,7 +328,7 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 
 ## `generate`
 
-`generate [--config-only] [parameters…]` hands over to the generator with the remaining arguments, forwarding its streams and exit code. The options and the questions come from `describe`; the rest is in [spec: VM script generator](spec-vm-generator.md). The generator is interactive unless given `--config <file>`, the one exception to the rule that the CLI never prompts: `generate` hands over to it without adding any prompt of its own. The generator produces the layer 3 script only: there is none for layer 1, the CLI chains components with `apply`.
+`generate [--config-only] [parameters…]` hands over to the generator with the remaining arguments, forwarding its streams and exit code. The options and the questions come from `describe`; the rest is in [spec: VM script generator](spec-vm-generator.md). The generator is interactive unless given `--config <file>`, the one exception to the rule that the CLI never prompts: `generate` hands over to it without adding any prompt of its own. The generator produces the layer 3 scripts only (one per VM when the configuration names several, see [spec: two VMs](spec-two-vm.md)): there is none for layer 1, the CLI chains components with `apply`.
 
 ## Contract additions
 

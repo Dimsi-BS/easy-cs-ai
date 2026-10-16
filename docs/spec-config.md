@@ -11,7 +11,7 @@ One declarative **configuration file** describes a deployment: which components,
 - `easy-cs-ai apply <file>` (layer 2) interprets it and makes the machine match it;
 - the [generator](spec-vm-generator.md) writes it at the end of an interactive session (`--config-only`) and reads it back with `--config` to generate a script without prompting (regeneration, tests).
 
-For the VM post-install layer, the generated script embeds the configuration and hands it to `apply`, so the configuration travels **inside the generated script**: no external input file (see [spec: VM script generator](spec-vm-generator.md#generated-script)). The package itself is downloaded from a pinned source, not embedded, see [decision: VM script generator](decision-vm-generator.md).
+For the VM post-install layer, the generated script embeds the configuration (the slice of its VM when the file names several, see [Several VMs](#several-vms)) and hands it to `apply`, so the configuration travels **inside the generated script**: no external input file (see [spec: VM script generator](spec-vm-generator.md#generated-script)). The package itself is downloaded from a pinned source, not embedded, see [decision: VM script generator](decision-vm-generator.md).
 
 `apply` builds on the [script contract](spec-script-contract.md) and the [CLI spec](spec-cli.md); it adds no capability the CLI does not have, it lets one file drive `install` and `add`.
 
@@ -107,7 +107,7 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 
 ### Steps
 
-1. **Read and validate** (no side effect). `--dry-run` prints the plan after this step and exits 0.
+1. **Read and validate** (no side effect). With `--vm`, the file is cut into its slices first and only the selected one goes on, as a one-VM file. `--dry-run` prints the plan after this step and exits 0.
 2. **Order** the components from `requires` (from `describe`, not hardcoded), the same computation as the default stack of [`install`](spec-cli.md#install).
 3. **Components**: for each, in that order, the CLI runs the equivalent of `install <type> <name>` with the options of the entry (and `--default` when set). Secrets are passed through their channel, never on the command line.
 4. **Models**: for each, the equivalent of [`add`](spec-cli.md#add) with the resolved `engine` and `chat_interface` (`--no-chat-interface` when `null`, `--force` when set), including the fit check, the wiring and its rollback.
@@ -122,7 +122,7 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 
 ### Journal
 
-`apply` writes `apply start components=<n> models=<n> prune=<bool>` and `apply end exit=… duration=…` through `log_event`, around the lines of each step (see [Action journal](spec-script-contract.md#action-journal)). The file's content is not logged, only counts.
+`apply` writes `apply start components=<n> models=<n> prune=<bool>` (plus `vm=<name>` with `--vm`) and `apply end exit=… duration=…` through `log_event`, around the lines of each step (see [Action journal](spec-script-contract.md#action-journal)). The file's content is not logged, only counts.
 
 ## Relation to the other commands
 

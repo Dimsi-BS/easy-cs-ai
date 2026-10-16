@@ -152,7 +152,7 @@ See [docs/cli-commands](docs/cli-commands.md) for the full command reference and
 
 ### Post-install script for VMs
 
-A generator, run interactively by an administrator, produces the VM post-install script. The generated script is small and self-contained: it downloads the package from a pinned source (version and checksum fixed in the script, a mirror URL for restricted networks), embeds the configuration and hands it to `easy-cs-ai apply`. The package is downloaded rather than embedded because VM user-data is size-limited, see [docs/decision-vm-generator](docs/decision-vm-generator.md).
+A generator, run interactively by an administrator, produces the VM post-install script (one per VM when the engine and the web interface go on two VMs, see [docs/spec-two-vm](docs/spec-two-vm.md)). The generated script is small and self-contained: it downloads the package from a pinned source (version and checksum fixed in the script, a mirror URL for restricted networks), embeds the configuration and hands it to `easy-cs-ai apply`. The package is downloaded rather than embedded because VM user-data is size-limited, see [docs/decision-vm-generator](docs/decision-vm-generator.md).
 
 ### Apache CloudStack integration
 

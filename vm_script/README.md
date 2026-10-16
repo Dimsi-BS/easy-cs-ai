@@ -6,7 +6,7 @@ This directory contains the VM script layer (layer 3): the interactive generator
 
 It is invoked from the layer 2 CLI through the `generate` command (`generate`, or `generate --config-only` for the configuration alone, see [docs/cli-commands](../docs/cli-commands.md)).
 
-The generator is **interactive**: run by an administrator, it guides the choices (components, dependencies, options, models) and writes a configuration, then a small self-contained script that downloads the package from a pinned source and runs `easy-cs-ai apply` on that configuration. Scripts and CLI never prompt, the generator is the only exception. How it behaves is in [spec: VM script generator](../docs/spec-vm-generator.md).
+The generator is **interactive**: run by an administrator, it guides the choices (components, dependencies, options, models) and writes a configuration, then a small self-contained script (one per VM when the stack is split, see [spec: two VMs](../docs/spec-two-vm.md)) that downloads the package from a pinned source and runs `easy-cs-ai apply` on that configuration. Scripts and CLI never prompt, the generator is the only exception. How it behaves is in [spec: VM script generator](../docs/spec-vm-generator.md).
 
 Contents: `generate.sh` (the generator), `lib/questions.sh` (the question engine) and `templates/vm-script.sh.tpl` (the shape of the generated script).
 

@@ -58,7 +58,7 @@ The proxy is proved by 401 without the key and 200 with it, requested on the loo
 
 ## Consequences
 
-- With `self-signed`, the chat interface and the clients must trust the certificate; the script records its path in the state (`listen.certificate`) so a client can be set up, and a browser warns until it does.
+- With `self-signed`, the chat interface and the clients must trust the certificate; the script records its path in the state (`listen.certificate`) so a client can be set up, and a browser warns until it does. A chat interface on another VM does it with the `--ca-file` of `add-endpoint` ([spec: two VMs](spec-two-vm.md#contract-additions)), and the host name it uses must be the server name of the certificate.
 - The state `params` hold `tls` (and `tls-email`), never a key; `secrets` lists the paths of the API key and, except for Let's Encrypt, of the TLS key.
 - Moving from a strategy to another is one `install` with the new options; the files of the previous one are replaced (or, for the challenge server, removed).
 

@@ -45,7 +45,7 @@ Takes the [configuration](spec-config.md) from a file instead of a session: **no
 
 ## Implementation notes
 
-- The session offers **one component per type**: the configuration allows several, but there is no question for a second one; edit the file written by `--config-only` for that (see [journey](spec-journey.md#2-components-and-dependencies)). At the summary, `y` confirms, `n` cancels, and `c`, `o` or `m` redo the components (with their dependencies), the options or the models.
+- The session offers **one component per type** (per VM when the stack is split, see [spec: two VMs](spec-two-vm.md#in-the-session)): the configuration allows several, but there is no question for a second one; edit the file written by `--config-only` for that (see [journey](spec-journey.md#2-components-and-dependencies)). At the summary, `y` confirms, `n` cancels, and `c`, `o` or `m` redo the components (with their dependencies), the options or the models.
 - The generator plans for another machine: what is installed on the machine running it is ignored (`EASY_CS_AI_ASSUME_EMPTY`), so a configuration is validated as for a fresh VM, and a requirement that the file does not satisfy is an incomplete file (exit 2).
 - The validation, the ordering of components and the summary are the code of `apply` (`lib/cli-apply.sh`), so the generator and `apply` cannot disagree.
 - `--dry-run` also applies to `--config-only`: the configuration goes to stderr.
@@ -102,7 +102,7 @@ One file, small, self-contained apart from the package it downloads:
 
 1. **header** (see below);
 2. **download** the package from the pinned URL, verify the sha256 (mismatch → exit 5, nothing installed), install it (`apt-get install` of the local file, `dnf`, or unpack the tarball);
-3. the **configuration**, embedded as a quoted heredoc (`<<'EOF'`, so nothing is expanded; the delimiter is chosen so that it does not occur in the content), written to a temporary file readable by root only;
+3. the **configuration** (the slice of its VM when the file names several, see [spec: two VMs](spec-two-vm.md)), embedded as a quoted heredoc (`<<'EOF'`, so nothing is expanded; the delimiter is chosen so that it does not occur in the content), written to a temporary file readable by root only;
 4. `easy-cs-ai apply` on that file, which is removed afterwards.
 
 There is no list of `install` / `add` commands to generate: the orchestration, order, wiring and rollback are the CLI's (see [apply](spec-config.md#apply)). The package version is pinned, so the configuration always meets the CLI version it was generated for.
@@ -132,6 +132,7 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 - `bats` tests of the models step with a fake llmfit: specs asked and forwarded as `--target-*`, suggestions picked by number and by name, a negative `check` kept as a warning in the summary, specs offered again as defaults when the step is redone, llmfit absent (the offer, declined by default and asked once, the message with the install command, free text, exit 0), accepted (installed, then the specs and the suggestions), failing to install (a warning, free text), and a package without llmfit (nothing offered).
 - `bats` tests of the stack without llmfit: models written with `"force": true` and the summary warning; no models, no warning; `--config` with a model and `force` and no llmfit gets the warning, and without `force` it does not.
 - Integration test: generate a script, run it on a fresh VM, `status` healthy, run it a second time, nothing changes.
+- Several VMs: the tests of [spec: two VMs](spec-two-vm.md#definition-of-done).
 - `shellcheck` clean on the generator; `--help` text consistent with this spec.
 
 ## Open questions

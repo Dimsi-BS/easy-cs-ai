@@ -98,7 +98,7 @@ What is left to do once the VMs are up:
   1. Run each script as root on its VM, the engine VM first.
   2. On the engine VM, read the API key and the URL of each model:
        sudo easy-cs-ai proxy nginx show-key
-       jq -r '.upstreams[] | "\(.name) \(.url)"' /var/lib/easy-cs-ai/components/nginx.json
+       easy-cs-ai proxy nginx list-upstreams
   3. Let the web VM reach the engine VM on the HTTPS port of its proxy
      (443 unless you set --port): firewall, security group.
   4. On the web VM, link each model:
@@ -116,7 +116,7 @@ Until step 4 is done, the model list of LibreChat stays empty.
 Rules for the text:
 
 - **Fixed text, filled with what the configuration says.** The component names, the VM names and the models are those of the file (one `add-endpoint` line per model, with its `--model`). The address, the port, the endpoint name, the URL and the files stay placeholders: they do not exist yet.
-- **The text is the validation's, the commands are the contract's.** It never invents an option: a bats test checks that every option named in the text is in the `describe` of the script it names (`action_options` of the LibreChat script, see [Contract additions](#contract-additions)). The list is given only by a package whose LibreChat script has them, so the CLI never gives a command that fails.
+- **The text is the validation's, the commands are the contract's.** It never invents an action or an option: a bats test checks that every action and option named in the text is in the `describe` of the script it names (`actions` of nginx, `action_options` of the LibreChat script, see [Contract additions](#contract-additions)). The list is given only by a package whose scripts have them, so the CLI never gives a command that fails.
 - With `--config-only`, no script is produced and the step is one line naming the file written.
 - With one VM, nothing is printed and there is no `next_steps`: the output is today's.
 
@@ -131,7 +131,28 @@ The list is computed by the validation of [spec: capabilities](spec-capabilities
 
 ## Contract additions
 
-Only the LibreChat `add-endpoint` action changes. Its calls without the new options behave exactly as today: `apiKey: "unused"`, the system trust store.
+Two actions change, and the existing calls behave exactly as today.
+
+### `proxy nginx list-upstreams`
+
+```text
+proxy nginx list-upstreams
+```
+
+Prints the models the proxy fronts, each with the URL an external client uses, as a JSON array on stdout:
+
+```json
+[ { "name": "ollama-llama3.2-3b", "url": "https://llm.example.org/ollama-llama3.2-3b/v1" } ]
+```
+
+- The `url` is what `add-upstream` printed: the OpenAI base URL built from the server name and the port of the install (no port when it is 443). The state keeps the internal URL of the engine, which no other machine can use, so this action is how the administrator gets the URL to give to `add-endpoint`.
+- Read-only: no root, no lock, not journaled, like `list-models`. `[]` when the proxy fronts nothing, exit 4 when it is not installed. It reads the state, so it answers whether the proxy is healthy or not.
+- It never prints the API key: `show-key` stays the only action that prints a secret.
+- It is an action of the type `proxy` ([contract](spec-script-contract.md#type-specific-actions)), declared in the `actions` of the `describe`, so another proxy component offers it too.
+
+### `chat-interface librechat add-endpoint`
+
+Calls without the new options behave exactly as today: `apiKey: "unused"`, the system trust store.
 
 ```text
 chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-file <path|->] [--ca-file <path>]
@@ -163,6 +184,7 @@ chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-
 - `vm_script/lib/questions.sh`: the question at step 1, and the session run per VM, with the selection, options and models state per pass (a pass restricts the types it asks and starts from an empty selection).
 - `vm_script/generate.sh`: one script per slice, the VM in the names and the header, the all-or-nothing write, and the printing of the next steps, which it receives from the validation. The script template is unchanged: one slice, the same template.
 - `install_scripts/lib/cli-ai.sh`: `config schema`, `config validate` and `generate --json` for the `vm` field and the documents above, and the computation of the next steps (the condition, the text, the models filled in).
+- `install_scripts/proxy/nginx.sh`: the `list-upstreams` action (JSON on stdout, read-only, listed in `actions` of `describe`), built on the `public_url` the script already has.
 - `install_scripts/chat-interface/librechat.sh` and `templates/librechat/`: the two options, the key and certificate files, the compose change for the bundle.
 - `install_scripts/guide.txt`: the VM question and the next steps.
 - The sizing stays in `provisioning llmfit plan`: the session calls it without `--chat-interface` and holds no figure of its own ([rule 4](spec-journey.md#rules)).
@@ -174,6 +196,7 @@ chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-
 - `bats` tests of `generate --config` on a file with `vm`: the scripts, each embedding its slice without `vm` (extracted and compared), `--json` with `scripts` and `next_steps`, and the same files for the same decisions as the session.
 - Tests of the next steps: computed by the validation from the file alone; only for several VMs; step 1 alone for a layout other than one engine VM and one chat-interface VM; the models of the file filled in; the same lines in the text of `generate`, in `generate --json` and in `config validate --json`; only options present in the `describe` of the LibreChat script; and `guide.txt` names the same commands.
 - Parity: a scripted two-VM session and the equivalent hand-written file give the same configuration, the same plan (`config validate --target fresh --json`) and the same scripts ([parity test](spec-journey.md#parity)).
+- `bats` tests of `list-upstreams` in `EASY_CS_AI_ROOT` mode: the public URL of each upstream (port 443 and another port, with the server name), `[]` when there is none, exit 4 when the proxy is not installed, no root needed, nothing journaled, the API key never printed, and the action listed in `actions` of `describe`.
 - `bats` tests of `add-endpoint` in `EASY_CS_AI_ROOT` mode: without the new options the rendered files are identical to today's; with `--api-key-file` (file, stdin, too-open file refused with exit 2, never in `librechat.yaml`, state, logs or `--dry-run`); with `--ca-file` (copied, bundle rebuilt, an invalid PEM refused); idempotence; `remove-endpoint` removes the key and the certificate.
 - Integration test on two VMs: both scripts run, the link made as in the next steps, a message answered through the web VM, the scripts run a second time change nothing. The existing single-VM test stays as it is.
 - `shellcheck` clean; `--help` of the generator and `guide` consistent with this spec.
@@ -181,7 +204,6 @@ chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-
 ## Open questions
 
 - **Sizing of the web VM.** No figure in this version. The data exists (the 4 GB of the chat interface in the [estimated margin](spec-model-fit.md#estimated-margin), 12 GB of free disk for its images, see [LibreChat](decision-librechat-install.md#2-the-stack-its-pinning-and-its-unit)); `plan` would have to answer for a stack with no model, which it refuses today.
-- **Reading the URLs of the engine VM.** The next steps read them with `jq` in the state file, which is not a command of the CLI. A way to print them (an action of the proxy, or `status`) would be cleaner.
 - **A command to finish the link.** `add-endpoint` by hand is the smallest thing. A higher-level command that reads the key and the certificate from the engine VM would be easier to use, and needs access from one VM to the other that the project does not assume.
 - **The models listed by the endpoint.** With `--model`, LibreChat shows that model only (`fetch: false`). Without, it fetches the list of the engine, through the key and the TLS, which adds a network dependency at start. To settle with the first real test.
 - **Several engine VMs, or several interfaces.** The format allows them. The same engine component on two VMs makes `models[].engine` ambiguous (`ambiguous_engine`), and the next steps assume one of each. Each link is an `add-endpoint`, so no new mechanism is needed, but a model would need a way to say which VM.

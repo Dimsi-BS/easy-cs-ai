@@ -195,6 +195,7 @@ A program that needs a secret known in advance (rare) asks the user and uses `en
 - A schema check: a configuration accepted by `config validate` is accepted by `config schema`'s schema, and vice versa for every error code except those the schema cannot express.
 - Every shipped `describe` validates against the typed-option rules.
 - Integration test on a VM: the [journey](spec-journey.md) run end to end by a script that plays a program (catalog, host, validate, apply with `--json`, status).
+- `bats` tests of the `vm` field in `config schema` and `config validate` (the errors and codes of [spec: config](spec-config.md#several-vms), `--vm`, `plan.vms`, the `engine_unreachable` warning, `next_steps`) and of the `scripts` and `next_steps` of `generate --json`, as listed in [spec: two VMs](spec-two-vm.md#definition-of-done).
 - `shellcheck` clean; the `--help` of each command and `guide` consistent with this spec.
 
 ## Open questions
