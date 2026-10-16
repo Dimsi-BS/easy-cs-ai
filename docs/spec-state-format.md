@@ -111,7 +111,7 @@ The default component of a type is **explicit**: it is the one whose file has `"
 | `script_version` | string | Version of the install script that wrote the state |
 | `installed_at`, `updated_at` | string | ISO 8601 UTC; `updated_at` changes on any rewrite that changes content |
 | `params` | object | Resolved **non-secret** parameters, so a re-install or a generated script reproduces the setup |
-| `endpoint` | object, optional | How other components reach this one. `protected` is `true` when it already enforces HTTPS and API key itself (so `add` does not wrap it with the proxy) |
+| `endpoint` | object, optional | How other components reach this one. `protected` is `true` when it already enforces HTTPS and API key itself (so `add` does not wrap it with the proxy); it repeats what the `describe` of the engine declares as its [`endpoint.protected`](spec-script-contract.md#describe) |
 | `service` | object | `unit` is the systemd unit that runs the component (systemd is mandatory, see the [script contract](spec-script-contract.md#platform)). `compose_file`, optional, is the path of the Compose file the unit runs, for Docker-based components (LibreChat, AnythingLLM). Absent for an engine with one instance per model (see below) |
 | `requires` | array of names | Components that must stay installed; `uninstall` of any of them is refused without `--force` |
 | `files` | array of paths | Everything the script created outside data directories; removed by `uninstall` |

@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). The `vm` field, [Several VMs](#several-vms) and the [place of a model](#where-a-model-goes) are **proposed, not implemented**, see [spec: two VMs](spec-two-vm.md); a file with no `vm` behaves as described everywhere else.
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). The `vm` field, [Several VMs](#several-vms) and the [place of a model](#where-a-model-goes) are **proposed, not implemented**, see [spec: two VMs](spec-two-vm.md); a file with no `vm` behaves as described everywhere else. So is [What a model needs](#what-a-model-needs), which also concerns a one-VM file: one that `apply` would stop at the model step is refused by the validation instead.
 
 ## Purpose
 
@@ -107,7 +107,21 @@ A file whose components have no `vm` is a one-VM file: the model resolves as in 
 
 ### Validation
 
-`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, name or option, wrong value type, `schema_version` higher than supported, a secret given as a plain string, an unresolvable `engine` / `chat_interface` of a model. Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed. For a file that names several VMs, each slice is validated as a one-VM file, and `missing_vm`, `chat_interface_other_vm`, `unknown_vm`, `engine_other_vm` and `duplicate_model` join the codes (`unknown_vm` also for a model that carries a `vm` in a file that names none) (see [Several VMs](#several-vms) and [Where a model goes](#where-a-model-goes)).
+`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, name or option, wrong value type, `schema_version` higher than supported, a secret given as a plain string, an unresolvable `engine` / `chat_interface` of a model. Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed. For a file that names several VMs, each slice is validated as a one-VM file, and `missing_vm`, `chat_interface_other_vm`, `unknown_vm`, `engine_other_vm` and `duplicate_model` join the codes (`unknown_vm` also for a model that carries a `vm` in a file that names none) (see [Several VMs](#several-vms) and [Where a model goes](#where-a-model-goes)). A model whose proxy or llmfit is not in the file is `missing_requirement` too, see [What a model needs](#what-a-model-needs).
+
+#### What a model needs
+
+The validation also checks, for each model, what [`add`](spec-cli.md#add) will need to install it, so that a file that cannot finish is refused **before** anything is installed, not at the model step after the components:
+
+| The model needs | Unless | Error when absent |
+| --- | --- | --- |
+| A component of type `proxy`, to expose it | The engine is **protected** (it enforces HTTPS and an API key itself, see [`protected`](spec-script-contract.md#describe)) | `missing_requirement` at the path of the model, naming the proxy |
+| `provisioning llmfit`, to check that it fits | The model has `force: true` | `missing_requirement` at the path of the model, naming llmfit |
+
+- The component must be in the file (in the **slice** of the model's VM when the file names several VMs: a proxy on another VM does not expose this engine) or, with `--target this`, already installed. It is the rule of a `requires`, so the code is the same and `apply` keeps its exit 4 for it.
+- It is the same decision as `add` makes, read from the file and from the `describe` of the engine: the validation never runs an action. An engine whose `describe` does not say it is protected is not.
+- A model with no chat interface is not concerned by the chat interface: only the proxy and llmfit are needed.
+- A VM with an engine and **no model** needs no proxy to validate (the engine may receive its models later), see the [`engine_unreachable` warning](spec-two-vm.md#validation).
 
 ## `apply`
 
@@ -167,6 +181,7 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 - `bats` tests in `EASY_CS_AI_ROOT` mode with fake components: each validation error with its JSON path, order from `requires`, missing requirement, re-run is a no-op, changed options reconfigure, defaults, model resolution (single engine, `default`, ambiguous), `force`, stdin input, `--dry-run`, failure at each step and resume, `--prune` (and its absence), the secret forms.
 - Integration test on a fresh VM: `apply` of a configuration, `status` healthy, second `apply` changes nothing, `apply --prune` with a reduced file.
 - `bats` tests of the `vm` field: `wrong_type` and `invalid_value` on its shape, `missing_vm`, the same component on two VMs accepted and twice on one VM refused, `several_defaults` per VM, a requirement satisfied by another VM refused, the four rows of [Where a model goes](#where-a-model-goes) (`vm` and `engine` given, `vm` only, `engine` only, neither) for the place they give and for `ambiguous_engine`, `engine_other_vm` and `unresolved_engine`, `unknown_vm` (also on a model of a one-VM file), the same model on two places accepted and on one place `duplicate_model`, the slice of a model (without `vm`, `engine` filled in when it was absent), a model's default chat interface (its VM's, else none) and `chat_interface_other_vm`, the slices (each without `vm`, models with their engine, order of first appearance, paths of the file as written), `apply` refused without `--vm`, `--vm` with an unknown name or on a file with no `vm`, `apply --vm` applying one slice, and a file with no `vm` unchanged.
+- `bats` tests of [what a model needs](#what-a-model-needs): a model with no proxy in the file is `missing_requirement` at its path (target `fresh`), and accepted when the proxy is installed (`--target this`); a `protected` engine needs none; no llmfit without `force` is `missing_requirement`, and accepted with `force`; with several VMs, a proxy or llmfit on another VM does not count, and an engine VM with no model and no proxy is valid; the exit code of `apply` is 4 when it is the only kind of error.
 - `shellcheck` clean.
 
 ## Open questions
