@@ -68,6 +68,7 @@ Asked when an engine is selected (with two VMs, in the pass of the engine's VM: 
 - **Hardware first**: the specs of the VM (RAM, GPU memory, cores) give `suggest`; a model the user names goes through `check`.
 - **Models first**: the names give `plan`, which says what VM to ask for, the estimated margin (the sum of what the components of the VM [declare](spec-model-fit.md#declared-resources)) shown apart from the model figure, and which models or components could not be sized. A VM with no model, such as the web VM of two VMs, is sized from its components alone.
 - llmfit is optional. Without it the user gives the names, and the models are written with `force` and a warning that they are not checked for fit on the VM.
+- With several VMs, each model is written with its **place**, the `vm` of the pass and the `engine` chosen, see [spec: config](spec-config.md#where-a-model-goes). A program that cannot say where a model goes leaves it out only when the file has one answer, otherwise `config validate` says why (`ambiguous_engine`, `engine_other_vm`…).
 - The specs, verdicts and recommendation are an early opinion and are **not** stored in the configuration; the fit is checked again on the target.
 
 ### 5. Validate, show, confirm
