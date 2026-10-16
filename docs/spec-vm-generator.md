@@ -136,5 +136,6 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 ## Open questions
 
 - **Secrets**: how the generated script gets its secrets (API key, admin passwords). The configuration describes a secret by its source, never by value ([Secrets](spec-config.md#secrets)); what is open is whether a literal is allowed in the file at all, and the mode of the generated file (`0600` if it ever holds one). Until decided, a secret option is asked as "generated at run time" and never written. Linked to the CloudStack user-data caveat in the [contract](spec-script-contract.md#secrets), see also [spec: config](spec-config.md#open-questions).
+- **Two VMs**: producing one script per VM (engine apart from the web interface), and the instructions printed at the end, are specified in [spec: two VMs](spec-two-vm.md). The one-VM behaviour described here does not change.
 - **Package hosting**: where the packages live and how the checksum is published (see [decision: VM script generator](decision-vm-generator.md#open-questions)).
 - **User-data limit**: the exact limit of the target CloudStack instance, and the typical size of the generated script, to measure once the generator exists.

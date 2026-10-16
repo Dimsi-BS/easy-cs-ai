@@ -109,6 +109,8 @@ A change request falls into one of three places, and only that one needs touchin
 
 A change that adds a question but no field, or a rule inside a step, breaks rules 2 and 4 and is a sign it belongs elsewhere.
 
+One deliberate exception to rule 2: the question "one VM, or the web interface on a second VM?" of [spec: two VMs](spec-two-vm.md) fills no field. It decides how many configurations come out (one per VM, each an ordinary one), and a program does the same by writing two files.
+
 ### Parity
 
 The two ways must give the same result for the same decisions. The test that guarantees it: a scenario played in the session (answers scripted on stdin) and the same decisions written as a configuration file, then `generate --config`, must give the **same configuration**, the **same plan** (`config validate --target fresh --json`) and the **same script**. A change made on one side only fails it.

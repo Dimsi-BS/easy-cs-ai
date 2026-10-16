@@ -26,3 +26,4 @@ This directory contains design decisions and write-ups about the project, comple
 - [Spec: capabilities of the CLI](spec-capabilities.md) — `catalog`, `host`, `config schema` / `validate`, result documents, typed options, secrets; one document per capability
 - [Spec: renderings](spec-rendering.md) — the same document shown as text and questions for a person, as `--json` and arguments for a program; `guide`; parity checks
 - [Spec: model fit and VM sizing](spec-model-fit.md) — `suggest`, `check`, `plan` of `provisioning llmfit`, the estimated margin, llmfit as an option
+- [Spec: two VMs, the engine and the web interface apart](spec-two-vm.md) — two generated scripts, the link finished by hand once both VMs are up, `add-endpoint` with an API key and a certificate; one VM unchanged (proposed)
