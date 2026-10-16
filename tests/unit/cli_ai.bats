@@ -2,7 +2,7 @@
 
 bats_require_minimum_version 1.5.0
 
-# The machine interface of the CLI, see docs/spec-ai-interface.md: catalog, host,
+# The machine interface of the CLI, see docs/spec-capabilities.md: catalog, host,
 # config schema / validate, guide, the result documents of the changing commands.
 #
 # Fake components shipped: provisioning fit; proxy prox; engine eng (ranked second)

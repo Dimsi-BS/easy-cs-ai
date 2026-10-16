@@ -11,7 +11,7 @@ readonly APPLY_SCHEMA_VERSION=1
 # component names by type), $reqs (also report the requirements nothing
 # satisfies) and $hostids (the ids of this platform, [] to skip the platform
 # check). Output: one {path, code, message} object per problem, see
-# docs/spec-ai-interface.md for the codes.
+# docs/spec-capabilities.md for the codes.
 # shellcheck disable=SC2016
 readonly APPLY_VALIDATE_JQ='. as $cfg |
 def types: ["engine", "chat-interface", "proxy", "provisioning"];

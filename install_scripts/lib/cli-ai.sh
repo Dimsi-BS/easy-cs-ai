@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The machine interface of the CLI (catalog, host, config, guide, result
-# documents), see docs/spec-ai-interface.md. Sourced by package/bin/easy-cs-ai,
+# documents), see docs/spec-capabilities.md. Sourced by package/bin/easy-cs-ai,
 # and by vm_script/generate.sh for config_report. Needs common.sh, cli-base.sh
 # and cli-apply.sh. With --json (_OPT_JSON) stdout is exactly one JSON
 # document; without it a command with a human rendering prints that, one that
@@ -263,7 +263,7 @@ readonly CONFIG_PLAN_JQ='. as $cfg
      models: $models, prune: $prune}'
 
 # config_report <config> <target> [<prune>]: print the document of `config validate`
-# (see docs/spec-ai-interface.md): errors, warnings and the plan. <config> is
+# (see docs/spec-capabilities.md): errors, warnings and the plan. <config> is
 # valid JSON. The target is this (this machine) or fresh (a new VM, what is
 # installed here is ignored).
 config_report() {

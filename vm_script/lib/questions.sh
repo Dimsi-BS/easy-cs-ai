@@ -134,7 +134,7 @@ step_options() {
 
 # --- Step 4: models -------------------------------------------------------------------
 
-# llmfit is optional here (docs/spec-vm-generator.md#llmfit-is-optional): it only helps to
+# llmfit is optional here (docs/spec-model-fit.md#llmfit-is-optional): it only helps to
 # choose the models, and the generator never installs it.
 SUGGESTIONS=()         # the models llmfit suggested, numbered in the list
 SESSION_FIT_WARN=()    # "<model>: <reason>", shown in the summary
@@ -264,7 +264,7 @@ _plan_models() {
 }
 
 # _print_vm_recommendation: the characteristics to ask for when creating the VM, on stderr
-# (docs/spec-vm-generator.md#recommended-vm): the text of the plan action, kept in SESSION_PLAN
+# (docs/spec-model-fit.md#recommended-vm): the text of the plan action, kept in SESSION_PLAN
 # and shown as it is. The action shows the margin as estimated, with what it is made of.
 _print_vm_recommendation() {
     [[ -n "$SESSION_PLAN" ]] || return 0

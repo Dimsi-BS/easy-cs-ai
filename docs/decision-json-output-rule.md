@@ -2,11 +2,11 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted and implemented. The code already behaved this way; the [machine interface spec](spec-ai-interface.md), [CLI commands](cli-commands.md) and the text of `easy-cs-ai guide` were rewritten to state it.
+**Status:** accepted and implemented. The code already behaved this way; the [rendering spec](spec-rendering.md), [CLI commands](cli-commands.md) and the text of `easy-cs-ai guide` were rewritten to state it.
 
 ## Context
 
-The [machine interface](spec-ai-interface.md) states a strict rule: **`--json` is for programs, no `--json` is for humans**. Some commands, in particular those that forward the JSON of a component script (`status`, `list-models`…), already print JSON by default. The question is whether to accept that, or to keep the rule absolute and give each of those commands a human rendering.
+The [rendering spec](spec-rendering.md) states a strict rule: **`--json` is for programs, no `--json` is for humans**. Some commands, in particular those that forward the JSON of a component script (`status`, `list-models`…), already print JSON by default. The question is whether to accept that, or to keep the rule absolute and give each of those commands a human rendering.
 
 ## Reflection
 
@@ -19,7 +19,7 @@ What matters for an AI agent is **predictability**, not symmetry. A command that
 3. **stdout carries the data, stderr carries the messages** (progress, warnings, "this step is slow"). With `--json`, stdout is one valid JSON document and nothing else.
 4. **Exit codes and the shape of errors are stable.** In JSON mode a failure is an object (`{ "error": … }`) with a non-zero exit code.
 
-Points 3 and 4 are already the case (see [conventions of `--json`](spec-ai-interface.md#conventions-of---json)). The change is points 1 and 2: accept a JSON default for data-only commands, and make `--json` uniformly accepted.
+Points 3 and 4 are already the case (see [conventions of `--json`](spec-rendering.md#for-a-program---json)). The change is points 1 and 2: accept a JSON default for data-only commands, and make `--json` uniformly accepted.
 
 ## Alternatives considered
 

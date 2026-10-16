@@ -44,7 +44,7 @@ easy-cs-ai [global options] <command> [arguments…]
 | `remove --all [--engine <name>]` | Remove every model (of one engine, or of all) |
 | `apply <file\|-> [--prune]` | Make the machine match a configuration file |
 | `generate [--config-only] [parameters…]` | Produce the parameterless VM post-install script, or only its configuration file |
-| `catalog`, `host`, `config schema`, `config validate`, `guide` | Read-only discovery and validation for programs and AI agents, see [spec: machine interface](spec-ai-interface.md) |
+| `catalog`, `host`, `config schema`, `config validate`, `guide` | Read-only discovery and validation for a person as well as for a program or an AI agent, see [spec: capabilities](spec-capabilities.md) |
 | `exec <type> <name> <command> [arguments…]` | Run the component's own program (`ollama`, `nginx`…) as it is, see [Native tool commands](#native-tool-commands) |
 | `<type> <name> <action> [arguments…]` | Component command: an action of the contract, forwarded to the script |
 
@@ -96,7 +96,7 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 
 `install`, `uninstall`, `add`, `remove`, `apply` (except with `--dry-run`) and the changing component actions require root. The CLI checks it first and fails with exit 4 and a message suggesting `sudo`; it never re-executes itself through `sudo`. `status`, `--help`, `describe` and the read-only actions run unprivileged (the state is world-readable, see [state format](spec-state-format.md#layout)).
 
-`exec` is not checked for root: the tool decides. It is also outside the state, the lock and the journal: a model pulled or removed with `exec engine ollama pull` / `rm` is unknown to `status` and `apply`, as with the expert actions of [Dispatch](#dispatch) that do not do the wiring of `add`. It is for expert use, and an agent never runs it on its own initiative (see [spec: machine interface](spec-ai-interface.md#procedure-for-an-agent)).
+`exec` is not checked for root: the tool decides. It is also outside the state, the lock and the journal: a model pulled or removed with `exec engine ollama pull` / `rm` is unknown to `status` and `apply`, as with the expert actions of [Dispatch](#dispatch) that do not do the wiring of `add`. It is for expert use, and an agent never runs it on its own initiative (see [spec: machine interface](spec-journey.md#what-a-program-never-does-on-its-own)).
 
 ## Implementation status
 

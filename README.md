@@ -57,7 +57,7 @@ curl -k -H "Authorization: Bearer $KEY" "https://$(hostname)/ollama-llama3.2-3b/
 
 For a fleet of VMs, `easy-cs-ai generate` asks a few questions and writes a post-install script that installs the package and the chosen stack on a new VM (`--config-only` writes the [configuration file](docs/spec-config.md) alone). All commands are in [docs/cli-commands](docs/cli-commands.md).
 
-An AI agent with a shell can drive all of this for you: `easy-cs-ai guide` tells it how, `easy-cs-ai catalog --json`, `host --json` and `config validate <file> --json` give it what it needs, and `--json` always means one JSON document on stdout for programs, the human output otherwise (see [docs/spec-ai-interface](docs/spec-ai-interface.md)).
+An AI agent with a shell can drive all of this for you: `easy-cs-ai guide` tells it how, `easy-cs-ai catalog --json`, `host --json` and `config validate <file> --json` give it what it needs, and `--json` always means one JSON document on stdout for programs, the human output otherwise (see [the journey](docs/spec-journey.md) and [renderings](docs/spec-rendering.md)).
 
 ## Requirements
 

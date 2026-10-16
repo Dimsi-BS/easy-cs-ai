@@ -225,7 +225,7 @@ llmfit() { run --separate-stderr bash "$SCRIPT" "$@"; }
     [ "$status" -eq 2 ]
 }
 
-# --- sizing for another machine (docs/spec-ai-interface.md) ------------------------------------------
+# --- sizing for another machine (docs/spec-model-fit.md) ------------------------------------------
 
 @test "suggest sizes for another machine: the --target-* options become llmfit's global options, before the subcommand" {
     llmfit install

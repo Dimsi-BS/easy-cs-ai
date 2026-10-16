@@ -412,7 +412,7 @@ require_installed() {
     llmfit_bin >/dev/null || die "$EXIT_PRECONDITION" "the llmfit binary is missing, run: easy-cs-ai install provisioning llmfit"
 }
 
-# suggest: the models that fit, for the generator and the agents (docs/spec-vm-generator.md#choosing-models).
+# suggest: the models that fit, for the generator and the agents (docs/spec-model-fit.md#choosing-models-in-a-session).
 # Only the Ollama tags (llmfit's `ollama_name`) are listed, the only names an engine can pull today,
 # and none that llmfit judges Too Tight; the best score comes first.
 cmd_suggest() {
@@ -475,7 +475,7 @@ cmd_check() {
 }
 
 # size <model>: what a model needs, whatever this machine is, for the VM recommendation of the
-# generator (docs/spec-vm-generator.md#recommended-vm). llmfit sizes for the machine it is told
+# generator (docs/spec-model-fit.md#recommended-vm). llmfit sizes for the machine it is told
 # about: for a very large one it reports its best quantisation, for a tiny one it falls back to the
 # default quantisation of the model (observed with v1.1.17), so each answer is read for both, with
 # and without GPU memory. The context is the one llmfit assumes.
@@ -532,7 +532,7 @@ cmd_size() {
     size_model "$bin" "$model" || exit "$EXIT_ERROR"
 }
 
-# plan <model>…: the VM the models need (docs/spec-vm-generator.md#recommended-vm). The figures are
+# plan <model>…: the VM the models need (docs/spec-model-fit.md#recommended-vm). The figures are
 # llmfit's, through `size`; the margin on top of them is estimated, and defined here and nowhere
 # else, so that the generator and an agent show the same numbers. A model llmfit cannot size is
 # listed in `unsized`, never guessed.

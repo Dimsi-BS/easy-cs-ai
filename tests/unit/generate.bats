@@ -333,7 +333,7 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
     [ ! -e vm2.sh ]
 }
 
-# --- --json (docs/spec-ai-interface.md) ---------------------------------------------------
+# --- --json (docs/spec-capabilities.md) ---------------------------------------------------
 
 @test "--json needs --config: a session is interactive" {
     gen --json
