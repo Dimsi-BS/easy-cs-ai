@@ -109,7 +109,7 @@ There is no list of `install` / `add` commands to generate: the orchestration, o
 
 - **Size**: the script holds the configuration and a few lines of logic, never the package. It is meant to fit in the user-data limit of the target cloud.
 - `set -euo pipefail`, stops at the first failing step and returns that step's exit code (the contract codes), prints the same `[LEVEL]` logs on stderr. Re-runnable: the download is skipped when the pinned version is already installed, and `apply` converges, so running it twice is safe.
-- **Header**: a comment recording the generator version, the date (ISO 8601 UTC), the package version, the components with their versions and the non-secret options, so a script found on a VM can be traced back. With several VMs, one more line gives the VM and its rank (`VM: engine (1 of 2)`).
+- **Header**: a comment recording the generator version, the date (ISO 8601 UTC), the package version, the components with their versions and the non-secret options, so a script found on a VM can be traced back. When the file names VMs (even one), one more line gives the VM and its rank (`VM: engine (1 of 2)`, `VM: a (1 of 1)`).
 - It is a **snapshot**: it pins one package version, regenerate to upgrade.
 
 ## Exit codes
