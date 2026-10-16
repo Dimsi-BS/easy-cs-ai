@@ -116,7 +116,7 @@ The default component of a type is **explicit**: it is the one whose file has `"
 | `requires` | array of names | Components that must stay installed; `uninstall` of any of them is refused without `--force` |
 | `files` | array of paths | Everything the script created outside data directories; removed by `uninstall` |
 | `data_dirs` | array of paths | User data, kept by `uninstall` unless `--purge` |
-| `secrets` | array of paths | **Paths** of secret files, never values |
+| `secrets` | array of paths | **Paths** of secret files, never values. What `uninstall` does with them is the component's rule, see the [contract](spec-script-contract.md#uninstall) |
 | `models` | array, engines only | See below |
 
 ### Type-specific fields
