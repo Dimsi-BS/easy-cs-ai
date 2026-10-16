@@ -31,7 +31,7 @@ Both call the same [capabilities](spec-capabilities.md), validate with the same 
 
 | # | The user decides | Capability called | Written to the configuration |
 | --- | --- | --- | --- |
-| 1 | Which machine the stack is for | `catalog`, `host` | — |
+| 1 | Which machine the stack is for, and whether it is one VM or several | `catalog`, `host` | `components[].vm` (only for several VMs) |
 | 2 | Which component per type, and which dependencies to accept | `catalog`, `config validate` | `components[].type`, `components[].name` |
 | 3 | The options of each component | `config schema` | `components[].options` |
 | 4 | The order, the models, on which engine and chat interface | `provisioning llmfit suggest`, `check`, `plan` | `models[]` |
@@ -46,14 +46,15 @@ Steps 2 to 4 may be revisited from the summary of step 5 (`c`, `o`, `m` in the s
 What can be installed, and what the target is.
 
 - **Capability**: [`catalog`](spec-capabilities.md#catalog) (what is shipped, with ranks and default models) and [`host`](spec-capabilities.md#host) (what this machine is).
-- **Session**: reads the catalog itself and shows the components shipped, with the rank 1 pre-selected. It plans for another machine by default (what is installed here is ignored, `--target fresh`).
-- **Program**: reads `catalog --json`, and `host --json` when the stack is for this machine. For another machine it asks the user: `host` says nothing about it.
+- **Session**: reads the catalog itself and shows the components shipped, with the rank 1 pre-selected. It plans for another machine by default (what is installed here is ignored, `--target fresh`). It then asks whether everything goes on one VM or the web interface on a second one, see [spec: two VMs](spec-two-vm.md#the-question); the answer is the `vm` of each component.
+- **Program**: reads `catalog --json`, and `host --json` when the stack is for this machine. For another machine it asks the user: `host` says nothing about it. It also asks the user whether the stack is on one VM or several, and gives the `vm` of each component when it is several.
 
 ### 2. Components and dependencies
 
 - **Session**: for each type, lists the components shipped, rank 1 pre-selected, and lets the user pick one, or `none`. From `requires` it proposes the missing components (a type means "any of this type") and refuses a selection that cannot be satisfied. A dependency the user refuses sends the session back to the choice.
 - **Program**: writes `components` from the catalog, then runs `config validate` and shows the user what it requires; the errors `missing_requirement`, `unresolved_engine`… are the dependency proposals.
-- A type with no shipped component is not asked. One component per type is offered; several instances of one component are not expressible (see [spec: config](spec-config.md#open-questions)).
+- A type with no shipped component is not asked. One component per type is offered; several instances of one component are not expressible on one machine (see [spec: config](spec-config.md#open-questions)).
+- **Two VMs**: when the user chose to split ([step 1](#1-discover)), the session asks the components and the options once per VM, over the types of each, and every component gets the `vm` of its VM; the models belong to the engine's VM. A program gives the same `vm` fields. See [spec: two VMs](spec-two-vm.md#topology).
 
 ### 3. Options
 
@@ -80,7 +81,7 @@ Asked when an engine is selected. The user either has a VM imposed (**hardware f
 
 Two outcomes, the user picks:
 
-- **A script** for a new VM: `generate` (session, or `--config <file>` without one), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. A configuration can also be kept with `generate --config-only`.
+- **A script** for a new VM: `generate` (session, or `--config <file>` without one), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. A configuration can also be kept with `generate --config-only`. With several VMs there is one script per VM, and after them the [next steps](spec-two-vm.md#next-steps) that the user still has to do by hand.
 - **A change on this machine**: `sudo easy-cs-ai apply <file>`. It changes the machine, so a program does it only with the explicit agreement of the user.
 
 ### 7. Report
@@ -108,9 +109,6 @@ A change request falls into one of three places, and only that one needs touchin
 | A presentation of an answer (wording, layout, a table) | The human rendering ([spec: rendering](spec-rendering.md)) | Nothing: the JSON is a different interface and is not touched |
 
 A change that adds a question but no field, or a rule inside a step, breaks rules 2 and 4 and is a sign it belongs elsewhere.
-
-One deliberate exception to rule 2: the question "one VM, or the web interface on a second VM?" of [spec: two VMs](spec-two-vm.md) fills no field. It decides how many configurations come out (one per VM, each an ordinary one), and a program does the same by writing two files.
-
 ### Parity
 
 The two ways must give the same result for the same decisions. The test that guarantees it: a scenario played in the session (answers scripted on stdin) and the same decisions written as a configuration file, then `generate --config`, must give the **same configuration**, the **same plan** (`config validate --target fresh --json`) and the **same script**. A change made on one side only fails it.
@@ -128,4 +126,4 @@ The decisions of a scenario are written **by hand**, as a program would write th
 
 - **`guide` versus a packaged skill or prompt.** The CLI is the only channel an agent without the repository has, hence `guide`; an agent platform may also want the same text as a skill. The text lives in one place (the CLI) either way.
 - **Where the specs of another machine live.** The journey asks the user for them at the models step and does not store them (see [model fit](spec-model-fit.md#two-orders-one-implementation)). If the same fleet is prepared several times, a place in the configuration may be worth it.
-- **Several instances of one component** (two engines, two chat interfaces) have no question in the session and no field in the configuration.
+- **Several instances of one component** (two engines, two chat interfaces) on one machine have no question in the session and no field in the configuration. On different VMs they are expressible with `vm` ([spec: two VMs](spec-two-vm.md)), though the session offers one engine VM and one web VM only.

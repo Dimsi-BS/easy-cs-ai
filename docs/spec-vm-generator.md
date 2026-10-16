@@ -27,7 +27,7 @@ It is reached through `easy-cs-ai generate` (see [CLI](spec-cli.md#generate)), w
 ## Interaction
 
 - What the generator asks, and how a question is shown, belong to the [journey](spec-journey.md) and to the [rendering](spec-rendering.md#for-a-person-the-interactive-session); this section only fixes what is specific to the generator.
-- Prompts and the summary go to stderr, answers are read from stdin. The result is written to the file given by `--output <path>` (default `./easy-cs-ai-vm.sh`, or `./easy-cs-ai.json` with `--config-only`), never to stdout.
+- Prompts and the summary go to stderr, answers are read from stdin. The result is written to the file given by `--output <path>` (default `./easy-cs-ai-vm.sh`, or `./easy-cs-ai.json` with `--config-only`), never to stdout. For a configuration that names several VMs there is one script per VM, named from `--output` with the VM inserted before the extension (see [spec: two VMs](spec-two-vm.md#what-is-written)).
 - `--help`, `--version`, `--verbose` are accepted; `--dry-run` runs the whole session and prints the result to stderr without writing it.
 - The generator needs no root and changes nothing on the machine, with one exception the administrator asks for: it can install llmfit on the spot, see [llmfit is optional](spec-model-fit.md#llmfit-is-optional). It never does so unasked.
 
@@ -40,6 +40,7 @@ Takes the [configuration](spec-config.md) from a file instead of a session: **no
 - A session can be done once by hand with `--config-only`, the file reviewed or edited, then turned into a script with `--config`.
 - The summary is printed on stderr and **not** asked for confirmation.
 - Incompatible with `--config-only` (it would only copy the file): exit 2.
+- A file that names several VMs gives one script per VM (see [spec: two VMs](spec-two-vm.md)); each script embeds the slice of its VM, validated as a one-VM file. The summary is printed per VM, and the instructions that follow are the generator's, not the file's.
 - `--json` (only with `--config`, a session is interactive: exit 2) prints one JSON document on stdout instead of the human output: the validation document of `config validate --target fresh` extended with a `script` entry, see [spec: capabilities](spec-capabilities.md#commands) and [rendering](spec-rendering.md#for-a-program---json). An invalid file prints the document with its errors, `script: null` and exits 2.
 
 ## Implementation notes
@@ -108,7 +109,7 @@ There is no list of `install` / `add` commands to generate: the orchestration, o
 
 - **Size**: the script holds the configuration and a few lines of logic, never the package. It is meant to fit in the user-data limit of the target cloud.
 - `set -euo pipefail`, stops at the first failing step and returns that step's exit code (the contract codes), prints the same `[LEVEL]` logs on stderr. Re-runnable: the download is skipped when the pinned version is already installed, and `apply` converges, so running it twice is safe.
-- **Header**: a comment recording the generator version, the date (ISO 8601 UTC), the package version, the components with their versions and the non-secret options, so a script found on a VM can be traced back.
+- **Header**: a comment recording the generator version, the date (ISO 8601 UTC), the package version, the components with their versions and the non-secret options, so a script found on a VM can be traced back. With several VMs, one more line gives the VM and its rank (`VM: engine (1 of 2)`).
 - It is a **snapshot**: it pins one package version, regenerate to upgrade.
 
 ## Exit codes
@@ -136,6 +137,6 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 ## Open questions
 
 - **Secrets**: how the generated script gets its secrets (API key, admin passwords). The configuration describes a secret by its source, never by value ([Secrets](spec-config.md#secrets)); what is open is whether a literal is allowed in the file at all, and the mode of the generated file (`0600` if it ever holds one). Until decided, a secret option is asked as "generated at run time" and never written. Linked to the CloudStack user-data caveat in the [contract](spec-script-contract.md#secrets), see also [spec: config](spec-config.md#open-questions).
-- **Two VMs**: producing one script per VM (engine apart from the web interface), and the instructions printed at the end, are specified in [spec: two VMs](spec-two-vm.md). The one-VM behaviour described here does not change.
+- **Several VMs**: one script per VM of a configuration that names its VMs (the `vm` field of [spec: config](spec-config.md#several-vms)), the question that fills it, and the instructions printed at the end, are specified in [spec: two VMs](spec-two-vm.md). The one-VM behaviour described here does not change.
 - **Package hosting**: where the packages live and how the checksum is published (see [decision: VM script generator](decision-vm-generator.md#open-questions)).
 - **User-data limit**: the exact limit of the target CloudStack instance, and the typical size of the generated script, to measure once the generator exists.

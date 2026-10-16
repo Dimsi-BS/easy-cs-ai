@@ -21,10 +21,10 @@ It builds on the [CLI spec](spec-cli.md), the [script contract](spec-script-cont
 | `catalog [--json]` | What can be installed: components, options, ranks, default models, platforms | no |
 | `host [--json]` | What this machine is: platform, CPU, memory, disk, GPU | no |
 | `config schema` | The configuration format, as a JSON Schema generated from the catalog | no |
-| `config validate <file\|-> [--target this\|fresh] [--json]` | Validate a configuration and show its plan, without side effect | no |
+| `config validate <file\|-> [--target this\|fresh] [--vm <name>] [--json]` | Validate a configuration and show its plan, without side effect. A file that describes several VMs is validated one VM at a time, see [spec: two VMs](spec-two-vm.md) | no |
 | `guide` | The procedure of the [journey](spec-journey.md) as text, for a reader that is a model, see [rendering](spec-rendering.md#guide) | no |
 | `apply <file\|-> --dry-run --json` | The same document as `config validate --target this` | no |
-| `generate --config <file> [--dry-run] --json` | Validation (target `fresh`), then the script: the document of `config validate` with a `script` entry (`path`, `bytes`, `written`, `package_version`, `package_format`), `null` when the file is not valid. `--json` needs `--config` (a session is interactive, exit 2) | no |
+| `generate --config <file> [--dry-run] --json` | Validation (target `fresh`), then the script: the document of `config validate` with a `script` entry (`path`, `bytes`, `written`, `package_version`, `package_format`), `null` when the file is not valid. For a file that names several VMs, `script` is `null` and `scripts` lists one such entry per VM (with its `vm`), and `next_steps` gives the [instructions](spec-two-vm.md#next-steps) as an array of strings; with one VM the document is unchanged. `--json` needs `--config` (a session is interactive, exit 2) | no |
 
 `catalog`, `host`, `config` and `guide` join the reserved words of [spec: CLI](spec-cli.md#command-line).
 
@@ -82,7 +82,8 @@ Prints the JSON Schema (draft 2020-12) of the configuration, **generated at run 
 
 - the structure of [spec: config](spec-config.md#format) (`schema_version`, `components`, `models`, the fields and their rules);
 - for each shipped component, its options: names, types and `values`/`default` as the schema's `enum`/`default`, the secret options as the `file` / `env` / `generate` object, and the option `description`s as the schema's `description`;
-- the rules that cannot be expressed as a schema (one entry per component, at most one `default` per type, `requires`, the resolution of `engine` and `chat_interface`) as `description` text on the relevant node, and enforced by `config validate`.
+- the optional `vm` of a component ([spec: config](spec-config.md#several-vms)), as a string of the shape given there;
+- the rules that cannot be expressed as a schema (one entry per component and per VM, `vm` on all components or none, at most one `default` per type and per VM, `requires`, the resolution of `engine` and `chat_interface`) as `description` text on the relevant node, and enforced by `config validate`.
 
 The schema is a **help to write a file**, `config validate` is the judge: the schema may be less strict, never stricter.
 
@@ -97,6 +98,7 @@ The validation and the plan that `apply` runs before any side effect, as a comma
 - `--target this` (default) validates against this machine: a component already installed satisfies a requirement, exactly as `apply` does. `--target fresh` validates as for a new VM, ignoring what is installed (the generator's `EASY_CS_AI_ASSUME_EMPTY` mode, see [spec: VM script generator](spec-vm-generator.md#implementation-notes)): **this is the one for a fleet**.
 - `apply <file> --dry-run --json` prints the same document as `--target this`, so a program can use either.
 - Exit code: 0 when `ok`, 2 when there is an error.
+- **A file that names several VMs** ([spec: config](spec-config.md#several-vms)) is validated one slice at a time, each as for a fresh VM. `--vm <name>` validates that slice alone, and is required with `--target this` (which means "this machine", so one VM; exit 2 otherwise). `plan` then becomes `{ "vms": [ { "vm": "engine", "components": […], "models": […], "prune": false } ] }`, each entry shaped like the `plan` of a one-VM file, in the order the VMs appear. Errors and warnings keep the paths of the file as written, and carry the `vm` they are about. With one VM, the document is unchanged.
 
 Without `--json`, the problems and the plan in human form (the lines `apply --dry-run` prints today). With `--json`:
 
@@ -130,9 +132,9 @@ Without `--json`, the problems and the plan in human form (the lines `apply --dr
 ```
 
 - `errors` lists **every** problem at once, each with its JSON `path` (the same paths as today), a stable `code` and the `message` (the text the human form prints). `plan` is `null` when there is an error: nothing is planned from a file that is not valid.
-- `warnings` are the `warn` entries of `describe` whose condition holds for the **effective** value (a default included), as in the summary of a session, so that they can be shown to the user before anything is applied. They do not change the exit code.
+- `warnings` are the `warn` entries of `describe` whose condition holds for the **effective** value (a default included), as in the summary of a session, so that they can be shown to the user before anything is applied. They do not change the exit code. A warning may also come from the validation itself, and then carries a `code` (`engine_unreachable`, see [spec: two VMs](spec-two-vm.md#validation)) in place of `option` and `value`; for a file that names several VMs it carries the `vm` too.
 - `plan.components` is in install order, with the options as written in the file, a secret shown as its source; when the target is `this`, each entry also says whether it is already installed (`"installed": true | false`, absent for `fresh`); whether an installed one is left alone or reconfigured is the script's own [idempotence](spec-script-contract.md#idempotence), which the CLI does not compare. The order is the install order of `apply`: a component comes after the ones it requires, otherwise in the order of the file. `plan.models` has the names already resolved (`engine`, `chat_interface`).
-- **Codes** (closed list, a new one is not a bump of `schema_version`): `not_json`, `wrong_type`, `unknown_key`, `unknown_type`, `unknown_component`, `unknown_option`, `secret_literal`, `secret_source`, `unsupported_schema_version`, `duplicate_component`, `several_defaults`, `unresolved_engine`, `unresolved_chat_interface`, `ambiguous_engine`, `ambiguous_chat_interface`, `missing_requirement`, `unsupported_platform`, `invalid_value` (an option outside `values`, not an integer…), `circular_requirement`. The implementation attaches a code to each message of the validation program; the human text does not change.
+- **Codes** (closed list, a new one is not a bump of `schema_version`): `not_json`, `wrong_type`, `unknown_key`, `unknown_type`, `unknown_component`, `unknown_option`, `secret_literal`, `secret_source`, `unsupported_schema_version`, `duplicate_component`, `several_defaults`, `unresolved_engine`, `unresolved_chat_interface`, `ambiguous_engine`, `ambiguous_chat_interface`, `missing_requirement`, `unsupported_platform`, `invalid_value` (an option outside `values`, not an integer…), `circular_requirement`, and for a file that names several VMs `missing_vm` and `chat_interface_other_vm`. The implementation attaches a code to each message of the validation program; the human text does not change.
 - `unsupported_platform` compares the `platforms` of the component with `ID` and `ID_LIKE` of `/etc/os-release`, only for `--target this`, and not in test mode (`EASY_CS_AI_ROOT`), as the scripts' own platform check. `EASY_CS_AI_HOST_IDS` (space separated) replaces the detection, for the tests.
 - With `apply`, a requirement that nothing satisfies keeps its exit code 4 (see [spec: config](spec-config.md#semantics-converge)): `apply --dry-run --json` prints the same document and exits 4 when `missing_requirement` is the only kind of error, 2 otherwise. `config validate` and `generate --config` exit 2 for it.
 - Not covered, as today: a `file` secret whose path is checked at run time only.

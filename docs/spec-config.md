@@ -42,9 +42,10 @@ JSON, like every other structured file of the project: `jq` is already a depende
 | `name` | yes | Component name, as shipped (`<type>/<name>.sh`) |
 | `default` | no | Make it the default of its type, forwarded as `--default` (see [state format](spec-state-format.md#defaults)) |
 | `options` | no | Options of the script, keyed by option name **without** `--` (the `describe.options[].name`). Values are strings, numbers or booleans |
+| `vm` | no | The VM this component belongs to, when the file describes several, see [Several VMs](#several-vms). Absent on every component of a one-VM file |
 
 - An option left out takes the script's built-in default, as on the command line.
-- At most one entry per component. Several of one type are allowed (e.g. two engines); `default` is set on at most one per type.
+- At most one entry per component (per VM, see [Several VMs](#several-vms)). Several of one type are allowed (e.g. two engines); `default` is set on at most one per type (and per VM).
 - Order in the file carries no meaning: the install order comes from `requires`.
 
 ### Secrets
@@ -65,20 +66,36 @@ Whether a literal secret may appear in the file is an [open question](#open-ques
 | --- | --- | --- |
 | `name` | yes | Model name, as the engine knows it |
 | `engine` | no | Engine name, listed in `components` or already installed. Default: the only engine in `components`, else the one with `default: true`, else a validation error |
-| `chat_interface` | no | Chat interface name (listed in `components` or already installed), or `null` for none. Default: like `engine`, and none if the file lists no chat interface |
+| `chat_interface` | no | Chat interface name (listed in `components` or already installed), or `null` for none. Default: like `engine`, and none if the file lists no chat interface. With several VMs, the chat interface of the engine's VM, else none ([Several VMs](#several-vms)) |
 | `force` | no | `true` skips the llmfit fit check, as `add --force` does |
+
+### Several VMs
+
+A component may carry `vm`, the name of the VM it belongs to, so that one file describes a deployment spread over several machines (see [spec: two VMs](spec-two-vm.md)). A file with no `vm` is a one-VM file and behaves exactly as described everywhere else in this spec.
+
+- **Shape**: a string of lowercase letters, digits and dashes, starting with a letter (`engine`, `web`). Another type is `wrong_type`, another form `invalid_value`.
+- **All or none**: when one component has `vm`, every component must, otherwise the first one without it is the error `missing_vm`.
+- **One entry per component and per VM**: `nginx` may be listed once on each VM with its own options (server name, certificate), the same component twice on one VM is `duplicate_component`, and `default` is set on at most one component of a type **on a VM** (`several_defaults`).
+- **Slices**: the file is cut by `vm`, in the order each VM first appears. A slice is an ordinary one-VM configuration (the components of that VM, without `vm`, and the models of its engines), and is validated **exactly as a one-VM file**: order from `requires`, a requirement satisfied by a component of the same VM only (what another VM has is not on this machine), options, secrets. Errors and warnings keep the paths of the file as written, and name the `vm` they are about.
+- **Models** have no `vm`: a model belongs to the VM of its engine. An `engine` name that is on several VMs is `ambiguous_engine`. A model is linked only to a chat interface **of its own VM** (the default of `chat_interface` is the one of that VM, and none when it has none); an explicit `chat_interface` that exists only on another VM is the error `chat_interface_other_vm`: a link between two machines is made by hand, see [spec: two VMs](spec-two-vm.md#next-steps).
+- **What a VM receives**: the generator embeds the slice in the script of its VM (see [spec: VM script generator](spec-vm-generator.md#generated-script)), with no `vm`, so `apply` on the VM reads a plain one-VM file and knows nothing of the others.
+- **`apply` on a file with `vm`** is refused (exit 2, listing the VM names) unless `--vm <name>` selects a slice, which is then applied as a one-VM file. `--vm` on a file with no `vm`, or with an unknown name, is exit 2. Pruning, `--dry-run` and the plan concern that slice only.
+
+#### Compatibility of the `vm` field
+
+`schema_version` stays 1: `vm` is an optional field and a one-VM file is unchanged. The validation is **strict**, an unknown key is refused (unlike the state and `describe`, whose readers ignore what they do not know), so a CLI older than this field refuses a file that uses it with `unknown_key` at `$.components[<n>].vm`, exit 2, and not with `unsupported_schema_version`. That refusal is the right one, since ignoring `vm` would install the components of every VM on one machine; only its wording is less clear than a version error. The VMs themselves are not concerned: a generated script pins its package version and embeds a slice without `vm`, which any version reads, including an older `--package-version`. A bump to 2 when `vm` is present would give the clearer message; it is left for later, see [open questions](#open-questions).
 
 ### Validation
 
-`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, name or option, wrong value type, `schema_version` higher than supported, a secret given as a plain string, an unresolvable `engine` / `chat_interface` of a model. Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed.
+`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, name or option, wrong value type, `schema_version` higher than supported, a secret given as a plain string, an unresolvable `engine` / `chat_interface` of a model. Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed. For a file that names several VMs, each slice is validated as a one-VM file, and `missing_vm` and `chat_interface_other_vm` join the codes (see [Several VMs](#several-vms)).
 
 ## `apply`
 
 ```text
-easy-cs-ai apply <file|-> [--prune] [--dry-run]
+easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 ```
 
-`-` reads the configuration from stdin. Requires root (exit 4), except with `--dry-run`. The CLI never prompts, as for the other commands.
+`--vm <name>` selects one VM of a file that names several, see [Several VMs](#several-vms). `-` reads the configuration from stdin. Requires root (exit 4), except with `--dry-run`. The CLI never prompts, as for the other commands.
 
 ### Semantics: converge
 
@@ -129,10 +146,12 @@ easy-cs-ai apply <file|-> [--prune] [--dry-run]
 
 - `bats` tests in `EASY_CS_AI_ROOT` mode with fake components: each validation error with its JSON path, order from `requires`, missing requirement, re-run is a no-op, changed options reconfigure, defaults, model resolution (single engine, `default`, ambiguous), `force`, stdin input, `--dry-run`, failure at each step and resume, `--prune` (and its absence), the secret forms.
 - Integration test on a fresh VM: `apply` of a configuration, `status` healthy, second `apply` changes nothing, `apply --prune` with a reduced file.
+- `bats` tests of the `vm` field: `wrong_type` and `invalid_value` on its shape, `missing_vm`, the same component on two VMs accepted and twice on one VM refused, `several_defaults` per VM, a requirement satisfied by another VM refused, `ambiguous_engine` across VMs, a model's default chat interface (its VM's, else none) and `chat_interface_other_vm`, the slices (each without `vm`, models with their engine, order of first appearance, paths of the file as written), `apply` refused without `--vm`, `--vm` with an unknown name or on a file with no `vm`, `apply --vm` applying one slice, and a file with no `vm` unchanged.
 - `shellcheck` clean.
 
 ## Open questions
 
 - **Literal secrets in the file.** Answer: forbidden, see [spec: machine interface](spec-capabilities.md#secrets). The file is embedded in the generated VM script, so a literal would sit in the script and, on CloudStack, in the user-data, which is not confidential (see [contract](spec-script-contract.md#secrets)). Options: forbid literals (only `file`, `env`, `generate`), or allow them with a `WARN`. Same question as in [spec: VM script generator](spec-vm-generator.md#open-questions), to be settled together.
-- **Several instances of one component** (e.g. two engines with different ports) are not expressible while the state has one entry per component.
+- **Several instances of one component** (e.g. two engines with different ports) are not expressible on one machine while the state has one entry per component. On different VMs they are, with `vm` ([Several VMs](#several-vms)).
+- **Format version for `vm`.** The field is added without a bump of `schema_version` ([compatibility](#compatibility-of-the-vm-field)). A bump to 2 only when a file uses `vm` would give a CLI that does not know it a clear version error; to reconsider if configurations circulate across CLI versions.
 - **Schema evolution**: how a new `schema_version` is migrated, once a second version exists.

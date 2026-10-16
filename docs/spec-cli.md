@@ -321,10 +321,10 @@ The CLI uses the **script contract codes** with the same meaning, and passes the
 ## `apply`
 
 ```text
-easy-cs-ai apply <file|-> [--prune] [--dry-run]
+easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 ```
 
-Reads a [configuration file](spec-config.md) and runs the equivalent of `install` for each listed component (in `requires` order), then `add` for each listed model, with the same rollback as `add`. It converges, installs nothing the file does not name, and removes nothing unless `--prune` is given. Exit codes are those of the steps it runs, see [spec: config](spec-config.md#apply) for the semantics, failure and resume.
+`--vm <name>` applies one VM of a file that describes several (it is refused without it, see [spec: config](spec-config.md#several-vms)); a file for one machine does not use it. Reads a [configuration file](spec-config.md) and runs the equivalent of `install` for each listed component (in `requires` order), then `add` for each listed model, with the same rollback as `add`. It converges, installs nothing the file does not name, and removes nothing unless `--prune` is given. Exit codes are those of the steps it runs, see [spec: config](spec-config.md#apply) for the semantics, failure and resume.
 
 ## `generate`
 
