@@ -55,6 +55,53 @@ easy-cs-ai [global options] <command> [arguments…]
 - **The old form is gone.** `easy-cs-ai <type> <name> <action>` and `easy-cs-ai <type>` (without `component`) are no longer commands: the first word is an unknown command (exit 2), whose hint says `component` when it is a type (`unknown command 'engine'`, `try: easy-cs-ai component engine …`).
 - Like the scripts, the CLI **never prompts**. Unknown commands, unknown types, unknown component names and missing arguments are usage errors (exit 2) with a message listing the valid values.
 
+### The tree of commands
+
+The command line has two kinds of words (the general commands, then `component` and what follows it), and a flat list hides it. The help text therefore shows **every command in one ASCII tree**, so that the whole interface is seen at once, and the same text is what the bare root command prints.
+
+- **Where.** `easy-cs-ai --help`, `easy-cs-ai help` (stdout, exit 0) and `easy-cs-ai` with nothing else (stderr, exit 2 as today, since a command is missing). Same text in the three cases; it replaces the flat `Commands:` list. `--json` does not change it (a human rendering with no JSON form, like the lists of `component`); `catalog --json` stays the program's way to discover what exists.
+- **Plain ASCII.** Branches are `|--`, `` `-- `` and `|`, never box-drawing characters: the help must read the same in a terminal with `LANG=C`, in a Windows console, in a log or an email. It is never colored by the tree itself (the colors of [Output](#output) concern the logs and `status`).
+- **Shape.** The root is the first line (the global options, `<command>`). Each command is a node with a one-line description on the right, in one column. A command with several forms has them as leaves, with their options; the last child of a node starts with `` ` ``. The tree follows the nesting of the command line: `component <type> <name> <action>` is three levels under `component`, `config schema` and `config validate` are two under `config`. A line that would pass 100 columns carries no description: the options are the part that cannot be guessed.
+- **The components come from the shipped scripts, not from the help.** Under `component`, the types are the contract types in install order (`provisioning`, `proxy`, `engine`, `chat-interface`) and each lists the components found in `<libdir>/<type>/<name>.sh`, so a new component appears in the tree with no change to the CLI, as in [Dispatch](#dispatch). Only names are read: the tree runs no script and needs no root, and the actions are not listed (they come from `describe`, see `component <type> <name> --help`).
+- **After the tree**, the sentence for an AI agent (`easy-cs-ai guide` first) and the line on `--json`, as today.
+
+```text
+easy-cs-ai [--verbose] [--dry-run] [--json] <command> [arguments]
+|
+|-- status                                         installed components, live status
+|-- install                                        install components
+|   |-- <type> <name> [--default] [options]        one component
+|   `-- [<type>] --defaults                        the default choices
+|-- uninstall                                      uninstall components
+|   |-- <type> <name> [--purge] [--force]          one component
+|   `-- [<type>] --all [--purge] [--force]         everything installed
+|-- add                                            add a model to an engine and wire it
+|   `-- <model> [--engine <n>] [--chat-interface <n>] [--no-chat-interface] [--defaults] [--force]
+|-- remove                                         unwire a model and remove it
+|   |-- <model> [--engine <n>]                     one model
+|   `-- --all [--engine <n>]                       every model
+|-- apply <file|-> [--vm <n>] [--prune]            make the machine match a file
+|-- generate [--config-only] [--config <file>]     VM post-install script generator
+|-- component                                      the types and their components
+|   |-- provisioning
+|   |   `-- llmfit <action> [arguments]
+|   |-- proxy
+|   |   `-- nginx <action> [arguments]
+|   |-- engine
+|   |   `-- ollama <action> [arguments]
+|   `-- chat-interface
+|       `-- librechat <action> [arguments]
+|-- exec <type> <name> <command> [arguments]       the component's own program
+|-- guide                                          how to use this CLI (AI agent, program)
+|-- catalog                                        what can be installed
+|-- host                                           this machine: CPU, memory, disk, GPU
+|-- config                                         the configuration format and checks
+|   |-- schema                                     the format, as a JSON Schema
+|   `-- validate <file|-> [--target] [--vm <n>]    check a file, show its plan
+|-- help
+`-- version
+```
+
 ### Dispatch
 
 The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<name>.sh`), never against a hardcoded list, so a new component needs no CLI change.
@@ -105,6 +152,8 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 `exec` is not checked for root: the tool decides. It is also outside the state, the lock and the journal: a model pulled or removed with `exec engine ollama pull` / `rm` is unknown to `status` and `apply`, as with the expert actions of [Dispatch](#dispatch) that do not do the wiring of `add`. It is for expert use, and an agent never runs it on its own initiative (see [spec: machine interface](spec-journey.md#what-a-program-never-does-on-its-own)).
 
 ## Implementation status
+
+**Specified, not implemented yet:** [the tree of commands](#the-tree-of-commands) in the help text and for the bare root command (the help is still the flat list of commands).
 
 Implemented: dispatch, `status`, `install` (dependencies, `--defaults`, default stack), `uninstall` (single, `--all`, wiring clean-up), component commands. `component` is implemented ([decision](decision-component-command.md)): a type as the first word is an unknown command, and the lists of `component` refuse `--json`. `exec` is implemented, and the actions are checked against the `describe` of the component (the CLI keeps no list of them; only `CHANGING_ACTIONS`, for root, remains). `add` and `remove` are implemented (in `lib/cli-models.sh`) and tested with fake components; they cannot succeed on a real machine before the proxy, llmfit and a chat interface exist (a missing one is the documented exit 4). The signal handling (SIGINT/SIGTERM, rollback, 130/143) is written but not covered by tests yet. `apply` is implemented (in `lib/cli-apply.sh`, see [spec: config](spec-config.md)) and tested with fake components. `generate` hands over to `vm_script/generate.sh` (`$HOME_DIR/vm_script`, else `../vm_script`), exporting `EASY_CS_AI_HOME` and `EASY_CS_AI_CLI_VERSION`, and forwarding `--dry-run` and `--verbose`.
 
@@ -349,6 +398,7 @@ This spec relies on four points that are specified in the [script contract](spec
 - `component` tested: an action forwarded (stdout, stderr and exit code untouched), `component` and `component <type>` listing, `component <type> <name>` and `--help` showing the help, an unknown type, component or action (exit 2, with the valid values), `--json` refused on the two listings (exit 2, pointing to `catalog` and `status`) and forwarded on an action, a changing action without root (exit 4), and a type as the first word (exit 2, hint pointing to `component`).
 - `exec` tested with fake components: the command and its arguments reach the program untouched (options such as `-t` included), the environment of `native.env`, `--verbose` and `--dry-run` showing the resolved command (and `--dry-run` running nothing), each refusal (no command, no component name, no `native`, not installed, program not found, `--json`), and the old forms (`<type> <name> <tool command>` and `--`) refused with a message that points to `exec`. An action added to the `describe` of a fake script is accepted with no change of the CLI, and one that is not listed is refused with the list of the actions.
 - `apply`: see the definition of done of [spec: config](spec-config.md#definition-of-done).
+- The tree of commands tested: the same text from `--help`, `help` (stdout, exit 0) and the bare root command (stderr, exit 2); plain ASCII only (no byte above 0x7F); every general command of the [command table](#command-line) present in it; the components listed under their type taken from the scripts shipped (a fake component added to the tree of fake scripts appears, with no change of the CLI), without running any script; `--json` leaving the text unchanged.
 - `shellcheck` clean; `--help` text consistent with this spec.
 - Integration test on a fresh VM: `install engine ollama`, `add llama3.2:3b`, `status` healthy, `uninstall`. Round trip for repeated tests: `install --defaults`, `add`, `remove --all`, `uninstall --all`, then the system is back as found (except shared packages).
 

@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-Overview of the commands exposed by the `easy-cs-ai` CLI (see [packaging](decision-packaging.md)).
+Overview of the commands exposed by the `easy-cs-ai` CLI (see [packaging](decision-packaging.md)). `easy-cs-ai --help`, and `easy-cs-ai` with nothing else, show all of them at once as an ASCII tree, see [the tree of commands](spec-cli.md#the-tree-of-commands).
 - `status`: lists what is currently installed and running
 - `install <component-type> <component-name>`:
   - component-type:
