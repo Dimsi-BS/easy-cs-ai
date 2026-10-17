@@ -188,7 +188,7 @@ The scripts already validate these values at run time; `type` makes it available
 
 Whoever writes the configuration, a person or a program, for one machine or a fleet: **a literal secret is never allowed in it**. Only the three sources of [spec: config](spec-config.md#secrets) exist (`file`, `env`, `generate`); a plain value is the validation error `secret_literal`, as it is today, and this becomes the rule rather than the open question. It settles in the same way the [question of the generator](spec-vm-generator.md#open-questions), and the user-data caveat of the [contract](spec-script-contract.md#secrets): what the agent writes into a script is readable by anyone who reads the user-data.
 
-A program that needs a secret known in advance (rare) asks the user and uses `env` or `file`, never a value in the file nor on a command line. Generated secrets are retrieved with the dedicated actions (`proxy nginx show-key`), which a program does not run unless the user asks, since it prints a secret.
+A program that needs a secret known in advance (rare) asks the user and uses `env` or `file`, never a value in the file nor on a command line. Generated secrets are retrieved with the dedicated actions (`component proxy nginx show-key`), which a program does not run unless the user asks, since it prints a secret.
 
 ## Definition of done
 

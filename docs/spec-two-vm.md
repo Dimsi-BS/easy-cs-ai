@@ -25,7 +25,7 @@ The question "one VM or two?" is part of the [journey](spec-journey.md) like any
    | The `models_not_checked` warning | [spec: model fit](spec-model-fit.md#llmfit-is-optional) | Built by the validation instead of the session's summary: a file with a model written with `force` and no provisioning component gains a `warnings` entry (with its `code`) in `config validate --json` and `generate --json`. The text of the warning and the summary of a session do not change |
 2. **One configuration, one optional field.** A component may name its VM (`components[].vm`, see [spec: config](spec-config.md#several-vms)), and so may a model, which gives it a [place](spec-config.md#where-a-model-goes) with its engine. The generator cuts the file into one **slice** per VM; each script embeds only its slice, with no `vm` field. A VM, and `apply` running on it, never see that another VM exists. `schema_version` stays 1.
 3. **The link is finished by the administrator, once the VMs are up.** The address of the engine VM and its API key do not exist when the scripts are generated, so nothing about them goes into a script. The generator tells the administrator what is left to do (see [Next steps](#next-steps)).
-4. **No secret travels through a generated script.** The API key is generated on the engine VM, as today (see [Secrets](spec-script-contract.md#secrets)), and read from there on demand with `proxy nginx show-key`.
+4. **No secret travels through a generated script.** The API key is generated on the engine VM, as today (see [Secrets](spec-script-contract.md#secrets)), and read from there on demand with `component proxy nginx show-key`.
 
 ## Topology
 
@@ -114,13 +114,13 @@ What is left to do once the VMs are up:
      "Run each script as root on its VM.")
   2. On the engine VM, read the API key, the URL of each model and the names
      and addresses its certificate covers:
-       sudo easy-cs-ai proxy nginx show-key
-       easy-cs-ai proxy nginx list-upstreams
-       easy-cs-ai proxy nginx status          (certificate_names)
+       sudo easy-cs-ai component proxy nginx show-key
+       easy-cs-ai component proxy nginx list-upstreams
+       easy-cs-ai component proxy nginx status          (certificate_names)
   3. Let the web VM reach the engine VM on the HTTPS port of its proxy
      (443 unless you set --port): firewall, security group.
   4. On the web VM, link each model:
-       sudo easy-cs-ai chat-interface librechat add-endpoint <name> <url> \
+       sudo easy-cs-ai component chat-interface librechat add-endpoint <name> <url> \
          --model <model> --api-key-file <file>
      <name> is free, <url> is the one read in step 2, <file> holds the key
      (mode 0600, or - for stdin).
@@ -159,7 +159,7 @@ Two actions change, and a detail of `install` and `status` of the nginx proxy is
 ### `proxy nginx list-upstreams`
 
 ```text
-proxy nginx list-upstreams
+component proxy nginx list-upstreams
 ```
 
 Prints the models the proxy fronts, each with the URL an external client uses, as a JSON array on stdout:
@@ -178,7 +178,7 @@ Prints the models the proxy fronts, each with the URL an external client uses, a
 Calls without the new options behave exactly as today: `apiKey: "unused"`, the system trust store.
 
 ```text
-chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-file <path|->] [--ca-file <path>]
+component chat-interface librechat add-endpoint <name> <url> [--model <model>] [--api-key-file <path|->] [--ca-file <path>]
 ```
 
 | Option | Meaning |

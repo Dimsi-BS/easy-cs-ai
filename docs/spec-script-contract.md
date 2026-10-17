@@ -68,7 +68,7 @@ Output of the actions that return something other than the standard `status` / `
 
 An engine either serves all its models from **one process** (Ollama), or runs **one instance per model** (vLLM, which serves a single model per process). The `engine` actions are the same in both cases, see [Engines with one instance per model](#engines-with-one-instance-per-model).
 
-These are the "component commands" mirrored by `easy-cs-ai <type> <name> <action> …` (e.g. `easy-cs-ai engine ollama list-models`). `easy-cs-ai add` orchestrates them: `provisioning check` → `engine add-model` → `proxy add-upstream` if needed → `chat-interface add-endpoint`.
+These are the "component commands" mirrored by `easy-cs-ai component <type> <name> <action> …` (e.g. `easy-cs-ai component engine ollama list-models`). `easy-cs-ai add` orchestrates them: `provisioning check` → `engine add-model` → `proxy add-upstream` if needed → `chat-interface add-endpoint`.
 
 ## Parameters
 

@@ -96,7 +96,7 @@ Two outcomes, the user picks:
 Taken from the same principle as rule 3, for whoever acts on a user's behalf (a person typing the command is their own authority):
 
 - run `uninstall`, `remove`, `apply --prune` or `--purge`, unless the user asked for it;
-- run `proxy nginx show-key`, which prints a secret, or `exec`, which runs any command of a component's program outside the state, the lock and the journal (`ollama rm`, `docker compose down -v`), unless the user asked for that command;
+- run `component proxy nginx show-key`, which prints a secret, or `exec`, which runs any command of a component's program outside the state, the lock and the journal (`ollama rm`, `docker compose down -v`), unless the user asked for that command;
 - run `apply` on this machine, or install llmfit, without the user's agreement;
 - write a secret as a value, in a file or on a command line.
 

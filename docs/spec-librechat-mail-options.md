@@ -87,7 +87,7 @@ When `smtp-host` is set and `smtp-check` is `true`, `install` checks the relay i
 
 A check that passes proves the relay accepts the connection and the login, **not that the mail reaches the mailbox** (the receiving side may still refuse the sender). So there is also an action to prove it end to end:
 
-`easy-cs-ai chat-interface librechat test-mail <address>`: sends one test mail from `smtp-from` through the recorded relay (`curl`, the stored password, same security) and prints what the relay answered. Read-only for the installation (no recreation, nothing recorded); not journaled with the address. Added to the `actions` of `describe`. It does not need LibreChat running.
+`easy-cs-ai component chat-interface librechat test-mail <address>`: sends one test mail from `smtp-from` through the recorded relay (`curl`, the stored password, same security) and prints what the relay answered. Read-only for the installation (no recreation, nothing recorded); not journaled with the address. Added to the `actions` of `describe`. It does not need LibreChat running.
 
 ## State, status and logs
 
