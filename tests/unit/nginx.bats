@@ -795,6 +795,13 @@ san() { openssl x509 -in "$SYS/etc/easy-cs-ai/nginx/server.crt" -noout -ext subj
     [[ "$output" == *"IP Address:10.9.9.9"* ]]
 }
 
+@test "a name of digits only, such as a container hostname, is a DNS name and not an address" {
+    nginx install --server-name 123456789012
+    [ "$status" -eq 0 ]
+    run san
+    [[ "$output" == *"DNS:123456789012"* && "$output" != *"IP Address:123456789012"* ]]
+}
+
 @test "a host name longer than 64 characters, as on a cloud VM, still gives a certificate" {
     long="runnervm727z3.ooqn5awx1ukexgrpjw4ulbo3ag.cx.internal.cloudapp.net.example.test"
     nginx install --server-name "$long"
