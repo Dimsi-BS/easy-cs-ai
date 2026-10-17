@@ -71,4 +71,5 @@ Procedure
     "failed_step"; a second apply resumes where it stopped, do not retry blindly.
  9. Never run uninstall, remove, apply --prune, --purge, `exec` or
     `proxy nginx show-key` on your own initiative: exec runs any command of a
-    component's program, outside the state, the lock and the journal.
+    component's program, aimed at the installed instance, outside the state,
+    the lock and the journal.

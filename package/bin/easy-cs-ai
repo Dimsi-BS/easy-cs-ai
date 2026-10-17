@@ -53,7 +53,7 @@ Commands:
   uninstall <type> <name> [--purge] [--force]
   uninstall [<type>] --all [--purge] [--force]
   <type> <name> <action> [arguments]       component action of the contract (engine ollama list-models)
-  exec <type> <name> <command> [arguments] run the component's own program (exec engine ollama ps)
+  exec <type> <name> <command> [arguments] run the component's own program on the installed instance (exec engine ollama ps)
   <type>                                   list the components of a type
   add <model> [--engine <n>] [--chat-interface <n>] [--no-chat-interface] [--defaults] [--force]
   remove <model> [--engine <n>]            remove --all [--engine <n>]
@@ -442,8 +442,9 @@ cmd_uninstall() {
 
 # --- component commands -----------------------------------------------------------
 
-# cmd_exec <type> <name> <command> [arguments…]: run the component's own program as it
-# is, with the environment of describe.native.env. What runs is shown on stderr
+# cmd_exec <type> <name> <command> [arguments…]: run the component's own program on the
+# instance installed by easy-cs-ai, its arguments as they are, in the environment of
+# describe.native.env. What runs is shown on stderr
 # (--verbose) or planned (--dry-run), see docs/spec-cli.md#native-tool-commands.
 cmd_exec() {
     local type="${1:-}" name="${2:-}" script desc state params env cmd line envs=() shown
