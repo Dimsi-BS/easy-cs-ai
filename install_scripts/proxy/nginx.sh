@@ -436,9 +436,10 @@ make_certificate() {
         san="DNS:$SERVER_NAME"
     fi
     san="$san,DNS:localhost,IP:127.0.0.1$(certificate_addresses)"
+    # the common name is limited to 64 characters, a long host name (a cloud FQDN) only goes in the SAN
     log_info "generating a self-signed certificate for $SERVER_NAME"
     (umask 077 && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
-        -subj "/CN=$SERVER_NAME" -addext "subjectAltName=$san" \
+        -subj "/CN=${SERVER_NAME:0:64}" -addext "subjectAltName=$san" \
         -keyout "$key" -out "$cert" 2>/dev/null) || die "$EXIT_ERROR" "could not generate the certificate"
     chmod 0644 "$cert"
     chmod 0600 "$key"

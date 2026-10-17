@@ -795,6 +795,14 @@ san() { openssl x509 -in "$SYS/etc/easy-cs-ai/nginx/server.crt" -noout -ext subj
     [[ "$output" == *"IP Address:10.9.9.9"* ]]
 }
 
+@test "a host name longer than 64 characters, as on a cloud VM, still gives a certificate" {
+    long="runnervm727z3.ooqn5awx1ukexgrpjw4ulbo3ag.cx.internal.cloudapp.net.example.test"
+    nginx install --server-name "$long"
+    [ "$status" -eq 0 ]
+    run san
+    [[ "$output" == *"DNS:$long"* ]]
+}
+
 @test "a re-run keeps the certificate for a new address, and a new name makes a new one" {
     export EASY_CS_AI_NGINX_ADDRESSES="10.1.2.3"
     nginx install
