@@ -683,7 +683,7 @@ do_uninstall() {
 # unexpose_site: nginx stops serving the interface (best effort: LibreChat is gone).
 unexpose_site() {
     state_read "$PROXY" >/dev/null 2>&1 || return 0
-    proxy_script remove-site "$NAME" >/dev/null || log_warn "could not remove the site $NAME from $PROXY: run 'easy-cs-ai proxy $PROXY remove-site $NAME'"
+    proxy_script remove-site "$NAME" >/dev/null || log_warn "could not remove the site $NAME from $PROXY: run 'easy-cs-ai component proxy $PROXY remove-site $NAME'"
 }
 
 cmd_uninstall() {

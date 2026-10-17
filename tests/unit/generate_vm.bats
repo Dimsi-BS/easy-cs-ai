@@ -273,7 +273,7 @@ WEB_PASS=("" "" "" "" y)
     [[ "$stderr" == *"What is left to do once the VMs are up:"* ]]
     [[ "$stderr" == *"1. Run each script as root on its VM, the engine VM first."* ]]
     [[ "$stderr" == *"2. On the engine VM, read the API key, the URL of each model and the names"* ]]
-    [[ "$stderr" == *"sudo easy-cs-ai proxy prox show-key"* && "$stderr" == *"easy-cs-ai proxy prox list-upstreams"* ]]
+    [[ "$stderr" == *"sudo easy-cs-ai component proxy prox show-key"* && "$stderr" == *"easy-cs-ai component proxy prox list-upstreams"* ]]
     [[ "$stderr" == *"3. Let the web VM reach the engine VM on the HTTPS port of its proxy"* ]]
     [[ "$stderr" == *"4. On the web VM, link each model:"* ]]
     # one add-endpoint per model, with its name
@@ -408,7 +408,7 @@ JSON
     [ "$status" -eq 0 ]
     [ "$(jq '.next_steps | length' <<<"$output")" -eq 4 ]
     text="$(jq -r '.next_steps | join("\n")' <<<"$output")"
-    [[ "$text" == *"easy-cs-ai proxy nginx list-upstreams"* && "$text" == *"chat-interface librechat add-endpoint"* ]]
+    [[ "$text" == *"easy-cs-ai component proxy nginx list-upstreams"* && "$text" == *"component chat-interface librechat add-endpoint"* ]]
     [[ "$text" == *"--model llama3.2:3b --api-key-file <file>"* && "$text" == *"--ca-file <file>"* ]]
     nginx="$(bash "$REAL/proxy/nginx.sh" describe)"
     librechat="$(bash "$REAL/chat-interface/librechat.sh" describe)"
@@ -430,7 +430,7 @@ JSON
     step4="$(jq -r '.next_steps[3]' <<<"$output")"
     # not the two characters \ and n
     [[ "$step4" != *'\n'* ]]
-    grep -qxF '  sudo easy-cs-ai chat-interface chat add-endpoint <name> <url> \' <<<"$step4"
+    grep -qxF '  sudo easy-cs-ai component chat-interface chat add-endpoint <name> <url> \' <<<"$step4"
     grep -qx '    --model m1 --api-key-file <file>' <<<"$step4"
     grep -qx '    --server-name <name or address>' <<<"$step4"
 }

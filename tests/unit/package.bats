@@ -57,7 +57,7 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
     CLI="$BATS_TEST_TMPDIR/usr-local-bin/easy-cs-ai"
     run --separate-stderr bash "$CLI" --version
     [ "$output" = "$VERSION" ]
-    run --separate-stderr bash "$CLI" engine
+    run --separate-stderr bash "$CLI" component engine
     [ "$status" -eq 0 ]
     [[ "$output" == *"ollama"* ]]
     run --separate-stderr bash "$CLI" status

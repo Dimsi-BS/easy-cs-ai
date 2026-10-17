@@ -21,13 +21,13 @@ Procedure
     engine VM needs a proxy: the web VM reaches the engine through it).
  3. Choose the models. There are TWO ORDERS: ask the user which one applies.
     a) HARDWARE FIRST, a VM is imposed: which models fit it?
-         easy-cs-ai provisioning llmfit suggest --json --target-ram GB
+         easy-cs-ai component provisioning llmfit suggest --json --target-ram GB
            [--target-vram GB] [--target-cpu-cores N]
        lists the models that fit, best first. For a model the user names:
-         easy-cs-ai provisioning llmfit check MODEL --target-ram GB ...
+         easy-cs-ai component provisioning llmfit check MODEL --target-ram GB ...
        answers {"fits", "reason"}.
     b) MODELS FIRST, the user has models in mind: which VM do they need?
-         easy-cs-ai provisioning llmfit plan MODEL@ENGINE... --json
+         easy-cs-ai component provisioning llmfit plan MODEL@ENGINE... --json
            --component TYPE/NAME... [--target-cpu-cores N]
        with one --component per component of THAT VM (engine/ollama,
        proxy/nginx, chat-interface/librechat...) and the engine of each model
@@ -61,15 +61,16 @@ Procedure
         the user reviews it and runs it on the VM;
         with several VMs it writes one script per VM ("scripts") and gives
         "next_steps" (config validate too): what the user does by hand once
-        the VMs are up. Never run `proxy NAME show-key` yourself (a secret);
-        the link uses `proxy NAME list-upstreams`, `proxy NAME status`,
-        `chat-interface NAME add-endpoint` and `install proxy NAME --server-name HOST`.
+        the VMs are up. Never run `component proxy NAME show-key` yourself
+        (a secret); the link uses `component proxy NAME list-upstreams`,
+        `component proxy NAME status`, `component chat-interface NAME
+        add-endpoint` and `install proxy NAME --server-name HOST`.
       - or the change on this machine, only with the user's explicit
         agreement: sudo easy-cs-ai apply FILE --json
  8. Read the result document of the command and `easy-cs-ai status --json`,
     and report in plain words. A failure is reported with its "message" and
     "failed_step"; a second apply resumes where it stopped, do not retry blindly.
  9. Never run uninstall, remove, apply --prune, --purge, `exec` or
-    `proxy nginx show-key` on your own initiative: exec runs any command of a
-    component's program, aimed at the installed instance, outside the state,
-    the lock and the journal.
+    `component proxy nginx show-key` on your own initiative: exec runs any
+    command of a component's program, aimed at the installed instance,
+    outside the state, the lock and the journal.

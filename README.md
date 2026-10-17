@@ -47,7 +47,7 @@ easy-cs-ai status
 - API: the models are served under `https://<hostname>/ollama-llama3.2-3b/v1` with the key of the proxy, which is created at install:
 
 ```bash
-KEY="$(sudo easy-cs-ai proxy nginx show-key)"
+KEY="$(sudo easy-cs-ai component proxy nginx show-key)"
 curl -k -H "Authorization: Bearer $KEY" "https://$(hostname)/ollama-llama3.2-3b/v1/models"
 ```
 

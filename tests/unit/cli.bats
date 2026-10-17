@@ -83,13 +83,52 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     [ "$status" -eq 2 ]
 }
 
-@test "a type alone lists its shipped components" {
-    cli engine
+@test "component with a type lists its shipped components" {
+    cli component engine
     [ "$status" -eq 0 ]
     [[ "$output" == *$'eng\tnot installed'* ]]
     cli install engine eng
-    cli engine
+    cli component engine
     [[ "$output" == *$'eng\tinstalled'* ]]
+}
+
+@test "component alone lists every type with its components" {
+    cli install engine eng
+    cli component
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'engine\n  eng\tinstalled\n  eng2\tnot installed'* ]]
+    [[ "$output" == *$'proxy\n  prox\tnot installed'* && "$output" == *$'chat-interface\n  chat\tnot installed'* ]]
+}
+
+@test "the lists of component have no JSON form: exit 2 pointing to catalog and status" {
+    local args
+    for args in "--json" "engine --json"; do
+        cli component $args
+        [ "$status" -eq 2 ]
+        [[ "$stderr" == *"not available with --json"* && "$stderr" == *"catalog --json"* && "$stderr" == *"status --json"* ]]
+        [ -z "$output" ]
+    done
+    cli --json component
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"catalog --json"* ]]
+}
+
+@test "a type as the first word is an unknown command pointing to component" {
+    cli engine
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"unknown command 'engine'"* && "$stderr" == *"component engine"* ]]
+    cli engine eng list-models
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"component engine"* ]]
+}
+
+@test "component with an unknown type is a usage error listing the types" {
+    cli component nope
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"unknown component type 'nope'"* && "$stderr" == *"types:"* ]]
+    cli component nope eng list-models
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"unknown component type 'nope'"* ]]
 }
 
 # --- install --------------------------------------------------------------------------
@@ -327,14 +366,14 @@ with_fit_stack() {
 
 @test "a contract action is forwarded with its arguments" {
     cli install engine eng
-    cli engine eng list-models --json
+    cli component engine eng list-models --json
     [ "$status" -eq 0 ]
     grep -q 'eng list-models --json' "$CALLS"
 }
 
 @test "size is a contract action: forwarded to the script, not to the component's own program" {
     cli install engine eng
-    cli engine eng size m1
+    cli component engine eng size m1
     [ "$status" -eq 0 ]
     grep -q 'eng size m1' "$CALLS"
     # the native program of the fake is `echo`: it would have printed the arguments
@@ -404,25 +443,25 @@ with_fit_stack() {
 
 @test "a word that is no action is a usage error pointing to exec, with or without --" {
     cli install engine eng
-    cli engine eng hello world
+    cli component engine eng hello world
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"unknown action 'hello'"* && "$stderr" == *"actions: install uninstall"* && "$stderr" == *"exec engine eng hello"* ]]
-    cli engine eng -- status
+    cli component engine eng -- status
     [ "$status" -eq 2 ]
-    cli engine eng -t
+    cli component engine eng -t
     [ "$status" -eq 2 ]
 }
 
 @test "an action added to describe is accepted without a change of the CLI" {
     cli install engine eng
     sed -i 's/"size",/"size", "brand-new",/' "$EASY_CS_AI_HOME/engine/eng.sh"
-    cli engine eng brand-new x
+    cli component engine eng brand-new x
     [ "$status" -eq 0 ]
     grep -q 'eng brand-new x' "$CALLS"
 }
 
 @test "an unknown component name is a usage error listing the choices" {
-    cli engine nope list-models
+    cli component engine nope list-models
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"available: eng eng2"* ]]
 }

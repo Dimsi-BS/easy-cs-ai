@@ -308,10 +308,10 @@ def steps: layout as $l | if (vms | length) < 2 then [] else
        then true else false end) as $full
     | [(if $full then "Run each script as root on its VM, the \($l.e) VM first." else "Run each script as root on its VM." end)]
       + (if $full then
-          ["On the \($l.e) VM, read the API key, the URL of each model and the names\nand addresses its certificate covers:\n  sudo easy-cs-ai proxy \($p.name) show-key\n  easy-cs-ai proxy \($p.name) list-upstreams\n  easy-cs-ai proxy \($p.name) status          (certificate_names)",
+          ["On the \($l.e) VM, read the API key, the URL of each model and the names\nand addresses its certificate covers:\n  sudo easy-cs-ai component proxy \($p.name) show-key\n  easy-cs-ai component proxy \($p.name) list-upstreams\n  easy-cs-ai component proxy \($p.name) status          (certificate_names)",
            "Let the \($l.w) VM reach the \($l.e) VM on the HTTPS port of its proxy\n(443 unless you set --port): firewall, security group.",
            "On the \($l.w) VM, link each model:\n"
-           + ([models_on($l.e)[] | "  sudo easy-cs-ai chat-interface \($c.name) add-endpoint <name> <url> \\\n    --model \(.name) --api-key-file <file>"] | join("\n"))
+           + ([models_on($l.e)[] | "  sudo easy-cs-ai component chat-interface \($c.name) add-endpoint <name> <url> \\\n    --model \(.name) --api-key-file <file>"] | join("\n"))
            + "\n<name> is free, <url> is the one read in step 2, <file> holds the key\n(mode 0600, or - for stdin).\nWith the default self-signed certificate, copy the certificate of the\nengine VM (/etc/easy-cs-ai/nginx/server.crt) to the web VM and add\n--ca-file <file>. The host in <url> must be one the certificate covers\n(certificate_names, step 2): the server name printed by list-upstreams,\nor, when no server name was given, an address of the engine VM, which\nyou put in place of the host. If the web VM can reach neither, or the\naddress changed since the proxy was installed, re-run on the engine VM\n  sudo easy-cs-ai install proxy \($p.name) <the options it was installed with> \\\n    --server-name <name or address>\n(an option left out returns to its default) which renews a self-signed\ncertificate (copy it again), then read step 2 again."]
         else [] end)
   end;

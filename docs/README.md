@@ -16,7 +16,7 @@ This directory contains design decisions and write-ups about the project, comple
 - [Spec: LibreChat options for e-mail verification and domain sign-up](spec-librechat-mail-options.md) — SMTP relay, `public-url`, `registration-domains`, the relay check and `test-mail` (proposed, not implemented)
 - [Decision: VM script generator](decision-vm-generator.md) — one interactive generator for the VM script, none for layer 1; package downloaded from a pinned source, not embedded
 - [Decision: explicit native tool commands](decision-explicit-native-commands.md) — `easy-cs-ai exec <type> <name> <command>` runs a component's own program; a word that is no action of the contract is an error, not a fallback
-- [Decision: a `component` command](decision-component-command.md) — `easy-cs-ai component <type> <name> <action>` for the commands of a component; the types are no longer commands of the root (accepted, not implemented yet)
+- [Decision: a `component` command](decision-component-command.md) — `easy-cs-ai component <type> <name> <action>` for the commands of a component; the types are no longer commands of the root
 - [Spec: script contract](spec-script-contract.md) — actions, parameters, secrets, output, exit codes and idempotence rules shared by all install scripts
 - [Spec: state format](spec-state-format.md) — layout and JSON schema of `/var/lib/easy-cs-ai/`, feeding `status` and the defaults of `add`
 - [Spec: CLI](spec-cli.md) — dispatch, `status`, `install`, `uninstall`, `add` orchestration with rollback, CLI exit codes

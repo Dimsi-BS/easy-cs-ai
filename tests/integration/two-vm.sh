@@ -160,7 +160,7 @@ W run "$CONFIG" --vm web
 expect "the web script exits 0" 0 "$?"
 check "the engine VM: llmfit, nginx and Ollama are healthy" healthy E 3
 check "the web VM: nginx and LibreChat are healthy" healthy W 2
-expect "the model is on the engine VM" "$MODEL" "$(out E 'sudo easy-cs-ai engine ollama list-models' | jq -r '.[0].name')"
+expect "the model is on the engine VM" "$MODEL" "$(out E 'sudo easy-cs-ai component engine ollama list-models' | jq -r '.[0].name')"
 expect "nothing of the web VM is on the engine VM (no Docker container)" 0 "$(out E 'sudo docker ps -q 2>/dev/null | wc -l')"
 expect "nothing of the engine VM is on the web VM (no Ollama)" 0 "$(out W 'command -v ollama | wc -l')"
 expect "three containers run on the web VM" 3 "$(out W 'sudo docker ps -q | wc -l')"
@@ -176,9 +176,9 @@ expect "LibreChat does not list the model of the engine VM yet" no "$listed"
 # --- 2. the link, as the next steps say -------------------------------------------------------------
 
 step "2. read the key, the URL and the names the certificate covers, on the engine VM"
-KEY="$(out E 'sudo easy-cs-ai proxy nginx show-key')"
-UPSTREAMS="$(out E 'easy-cs-ai proxy nginx list-upstreams')"
-NAMES="$(out E 'sudo easy-cs-ai proxy nginx status | jq -c .certificate_names')"
+KEY="$(out E 'sudo easy-cs-ai component proxy nginx show-key')"
+UPSTREAMS="$(out E 'easy-cs-ai component proxy nginx list-upstreams')"
+NAMES="$(out E 'sudo easy-cs-ai component proxy nginx status | jq -c .certificate_names')"
 URL="$(jq -r '.[0].url' <<<"$UPSTREAMS")"
 HOST="$(sed -E 's#^https://([^/:]+).*#\1#' <<<"$URL")"
 expect "list-upstreams gives one model, with the URL a client of another machine uses" 1 "$(jq 'length' <<<"$UPSTREAMS")"
@@ -211,7 +211,7 @@ expect "with the key: 200" 200 "$(out W "curl -s --cacert /tmp/engine.crt -o /de
 expect "without the certificate the self-signed one is refused (verification is never off)" 60 "$(out W "curl -s -o /dev/null $LINK_URL/models; echo \$?")"
 
 step "4. link the model on the web VM"
-W ssh "sudo easy-cs-ai chat-interface librechat add-endpoint $ENDPOINT '$LINK_URL' --model '$MODEL' --api-key-file /tmp/engine.key --ca-file /tmp/engine.crt >/dev/null 2>&1"
+W ssh "sudo easy-cs-ai component chat-interface librechat add-endpoint $ENDPOINT '$LINK_URL' --model '$MODEL' --api-key-file /tmp/engine.key --ca-file /tmp/engine.crt >/dev/null 2>&1"
 expect "add-endpoint exits 0" 0 "$?"
 W ssh 'rm -f /tmp/engine.key' >/dev/null 2>&1
 check "LibreChat is ready again" wait_ready

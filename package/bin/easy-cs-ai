@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # easy-cs-ai: dispatcher over the layer 1 install scripts, see docs/spec-cli.md.
 # Implemented: help, version, status, install, uninstall, add, remove (in
-# lib/cli-models.sh), apply (lib/cli-apply.sh), component commands (contract
-# actions), exec (native tool commands), generate (hands over to vm_script/).
+# lib/cli-models.sh), apply (lib/cli-apply.sh), component (contract actions of a
+# component, and the lists), exec (native tool commands), generate (hands over to
+# vm_script/).
 set -euo pipefail
 
 readonly CLI_VERSION=0.1.0-rc2
@@ -52,9 +53,9 @@ Commands:
   install [<type>] --defaults              install the default choices
   uninstall <type> <name> [--purge] [--force]
   uninstall [<type>] --all [--purge] [--force]
-  <type> <name> <action> [arguments]       component action of the contract (engine ollama list-models)
+  component <type> <name> <action> [arguments]   component action of the contract (component engine ollama list-models)
+  component [<type>]                       list the components of a type, or of every type
   exec <type> <name> <command> [arguments] run the component's own program on the installed instance (exec engine ollama ps)
-  <type>                                   list the components of a type
   add <model> [--engine <n>] [--chat-interface <n>] [--no-chat-interface] [--defaults] [--force]
   remove <model> [--engine <n>]            remove --all [--engine <n>]
   apply <file|-> [--vm <name>] [--prune]   make the machine match a configuration file (--vm: one VM of a file that names several)
@@ -67,7 +68,7 @@ For an AI agent or a program (start with guide):
   host                                     this machine: platform, CPU, memory, disk, GPU
   config schema                            the configuration format, as a JSON Schema
   config validate <file|-> [--target this|fresh] [--vm <name>]   check a configuration, show its plan
-  provisioning llmfit suggest|plan         the models that fit a VM, or the VM that models and components need
+  component provisioning llmfit suggest|plan   the models that fit a VM, or the VM that models and components need
 
 --json prints one JSON document on stdout instead of the human output (for programs).
 
@@ -481,14 +482,34 @@ cmd_exec() {
     exec "${words[@]}" "$@"
 }
 
+# component_rows <type>: one "<name><TAB>installed|not installed" row per component of the type.
+component_rows() {
+    local n
+    for n in $(component_names "$1"); do
+        printf '%s\t%s\n' "$n" "$(is_installed "$n" && printf installed || printf 'not installed')"
+    done
+}
+
+# cmd_component [<type> [<name> <action> [arguments…]]]: the commands of the components, see
+# docs/spec-cli.md#dispatch. With no name it is a listing, a human rendering that has no JSON form.
 cmd_component() {
-    local type="$1" name="${2:-}" action="${3:-}"
-    if [[ -z "$name" ]]; then
-        local n
-        for n in $(component_names "$type"); do
-            printf '%s	%s
-' "$n" "$(is_installed "$n" && printf installed || printf 'not installed')"
+    local type="${1:-}" name="${2:-}" action="${3:-}" a t
+    if [[ -z "$name" || "$name" == --json ]]; then
+        local json="$_OPT_JSON"
+        for a in "$@"; do
+            [[ "$a" != --json ]] || json=1
         done
+        ((!json)) || fail "$EXIT_USAGE" "component lists are not available with --json" \
+            "for a program: easy-cs-ai catalog --json (what exists), easy-cs-ai status --json (what is installed)"
+        if [[ -z "$type" || "$type" == --* ]]; then
+            for t in "${TYPES[@]}"; do
+                printf '%s\n' "$t"
+                component_rows "$t" | sed 's/^/  /'
+            done
+        else
+            is_type "$type" || fail "$EXIT_USAGE" "unknown component type '$type'" "types: ${TYPES[*]}"
+            component_rows "$type"
+        fi
         return 0
     fi
     local script actions
@@ -506,7 +527,7 @@ cmd_component() {
         fi
     fi
     if [[ "$CHANGING_ACTIONS" == *" $action "* ]] && ((!DRY)); then
-        need_root "$type" "$name" "$action"
+        need_root component "$type" "$name" "$action"
     fi
     run_script "$type" "$name" "$@"
 }
@@ -606,12 +627,12 @@ main() {
     host) cmd_host "$@" ;;
     config) cmd_config "$@" ;;
     guide) cmd_guide "$@" ;;
+    component) cmd_component "$@" ;;
     *)
         if is_type "$command"; then
-            cmd_component "$command" "$@"
-        else
-            fail "$EXIT_USAGE" "unknown command '$command'" "run: easy-cs-ai help"
+            fail "$EXIT_USAGE" "unknown command '$command'" "the commands of a component go through component: easy-cs-ai component $command …"
         fi
+        fail "$EXIT_USAGE" "unknown command '$command'" "run: easy-cs-ai help"
         ;;
     esac
 }

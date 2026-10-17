@@ -129,19 +129,19 @@ step "1. the generated script installs the stack on an empty machine"
 "$VM" run "$CONFIG"
 expect "the script exits 0" 0 "$?"
 check "the four components are healthy" all_healthy
-expect "the model is listed" "$MODEL" "$(out 'sudo easy-cs-ai engine ollama list-models' | jq -r '.[0].name')"
+expect "the model is listed" "$MODEL" "$(out 'sudo easy-cs-ai component engine ollama list-models' | jq -r '.[0].name')"
 expect "three containers run" 3 "$(out 'sudo docker ps -q | wc -l')"
 
 step "   the API is protected, the site is not"
 CERT=/etc/easy-cs-ai/nginx/server.crt
 UP="ollama-$(printf '%s' "$MODEL" | tr -c 'a-z0-9.\n' '-')"
 expect "API without the key" 401 "$(out "curl -s --cacert $CERT -o /dev/null -w '%{http_code}' https://localhost/$UP/v1/models")"
-expect "API with the key" 200 "$(out "curl -s --cacert $CERT -o /dev/null -w '%{http_code}' -H \"Authorization: Bearer \$(sudo easy-cs-ai proxy nginx show-key)\" https://localhost/$UP/v1/models")"
+expect "API with the key" 200 "$(out "curl -s --cacert $CERT -o /dev/null -w '%{http_code}' -H \"Authorization: Bearer \$(sudo easy-cs-ai component proxy nginx show-key)\" https://localhost/$UP/v1/models")"
 expect "site without a key" 200 "$(out "curl -s --cacert $CERT -o /dev/null -w '%{http_code}' https://localhost:8443/health")"
 expect "registration is open (the default)" 200 "$(register_code Lifecycle lifecycle)"
 expect "the new account logs in" 200 "$(login_code)"
 expect "LibreChat lists the endpoint" true "$(out "TOK=\$(curl -s -X POST http://127.0.0.1:3080/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"lifecycle@example.test\",\"password\":\"$PW\"}' | jq -r .token); curl -s http://127.0.0.1:3080/api/endpoints -H \"Authorization: Bearer \$TOK\" | jq 'has(\"$UP\")'")"
-expect "a chat reaches the model through the API" true "$(out "curl -s --cacert $CERT -H \"Authorization: Bearer \$(sudo easy-cs-ai proxy nginx show-key)\" -H 'Content-Type: application/json' https://localhost/$UP/v1/chat/completions -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello.\"}],\"max_tokens\":16,\"stream\":false}' | jq '(.choices[0].message.content | length) > 0'")"
+expect "a chat reaches the model through the API" true "$(out "curl -s --cacert $CERT -H \"Authorization: Bearer \$(sudo easy-cs-ai component proxy nginx show-key)\" -H 'Content-Type: application/json' https://localhost/$UP/v1/chat/completions -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello.\"}],\"max_tokens\":16,\"stream\":false}' | jq '(.choices[0].message.content | length) > 0'")"
 
 # --- 2. again -----------------------------------------------------------------------------------
 
@@ -222,13 +222,13 @@ UPD="ollama-$(printf '%s' "$DEFAULT_MODEL" | tr -c 'a-z0-9.\n' '-')"
 expect "install --defaults exits 0" 0 "$?"
 check "the four components are healthy" all_healthy
 check "the engines and chat interfaces without a script are skipped with a warning, not an error" grep -q 'WARN' "$WORK/defaults.log"
-expect "the default model is the only model" "$DEFAULT_MODEL" "$(out 'sudo easy-cs-ai engine ollama list-models' | jq -r '[.[].name] | join(",")')"
+expect "the default model is the only model" "$DEFAULT_MODEL" "$(out 'sudo easy-cs-ai component engine ollama list-models' | jq -r '[.[].name] | join(",")')"
 expect "it is linked to LibreChat" '["librechat"]' "$(out "sudo jq -c '.models[0].linked_to' /var/lib/easy-cs-ai/components/ollama.json")"
 expect "API without the key" 401 "$(out "curl -sk -o /dev/null -w '%{http_code}' https://\$(hostname)/$UPD/v1/models")"
-expect "API with the key" 200 "$(out "curl -sk -o /dev/null -w '%{http_code}' -H \"Authorization: Bearer \$(sudo easy-cs-ai proxy nginx show-key)\" https://\$(hostname)/$UPD/v1/models")"
+expect "API with the key" 200 "$(out "curl -sk -o /dev/null -w '%{http_code}' -H \"Authorization: Bearer \$(sudo easy-cs-ai component proxy nginx show-key)\" https://\$(hostname)/$UPD/v1/models")"
 "$VM" ssh 'sudo easy-cs-ai install --defaults >/dev/null 2>&1'
 expect "the same command again exits 0" 0 "$?"
-expect "and adds no model" 1 "$(out 'sudo easy-cs-ai engine ollama list-models' | jq 'length')"
+expect "and adds no model" 1 "$(out 'sudo easy-cs-ai component engine ollama list-models' | jq 'length')"
 check "still healthy" all_healthy
 "$VM" ssh 'sudo easy-cs-ai uninstall --all --purge >/dev/null 2>&1'
 expect "uninstall --all --purge exits 0" 0 "$?"

@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted, not implemented yet (see [spec: CLI](spec-cli.md#command-line))
+**Status:** accepted and implemented (see [spec: CLI](spec-cli.md#command-line))
 
 ## Context
 
