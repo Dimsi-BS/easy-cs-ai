@@ -785,6 +785,14 @@ san() { openssl x509 -in "$SYS/etc/easy-cs-ai/nginx/server.crt" -noout -ext subj
     [[ "$output" != *"10.1.2.3"* ]]
 }
 
+@test "a server name longer than 64 characters still gives a certificate, covered by the alternative name" {
+    name="runnervm35quw.mxlwexuz1h0uxk1cl0zzrg1c4a.dx.internal.cloudapp.net"
+    nginx install --server-name "$name"
+    [ "$status" -eq 0 ]
+    run san
+    [[ "$output" == *"DNS:$name"* ]]
+}
+
 @test "without the variable, test mode adds no address, and none for a name given as an address" {
     nginx install
     run san
