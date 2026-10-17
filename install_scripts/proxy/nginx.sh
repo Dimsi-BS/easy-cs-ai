@@ -419,7 +419,7 @@ certificate_addresses() {
 }
 
 make_certificate() {
-    local cert key san
+    local cert key san subject
     cert="$(root_path "$(tls_cert_file)")"
     key="$(root_path "$(tls_key_file)")"
     track_file "$(tls_cert_file)"
@@ -436,9 +436,13 @@ make_certificate() {
         san="DNS:$SERVER_NAME"
     fi
     san="$san,DNS:localhost,IP:127.0.0.1$(certificate_addresses)"
+    # a common name is limited to 64 characters (a fully qualified container hostname can be longer);
+    # the names are all in the subject alternative name, which is what clients check
+    subject="/CN=$SERVER_NAME"
+    ((${#SERVER_NAME} <= 64)) || subject="/O=easy-cs-ai"
     log_info "generating a self-signed certificate for $SERVER_NAME"
     (umask 077 && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
-        -subj "/CN=$SERVER_NAME" -addext "subjectAltName=$san" \
+        -subj "$subject" -addext "subjectAltName=$san" \
         -keyout "$key" -out "$cert" 2>/dev/null) || die "$EXIT_ERROR" "could not generate the certificate"
     chmod 0644 "$cert"
     chmod 0600 "$key"
