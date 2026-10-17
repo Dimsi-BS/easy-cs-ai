@@ -129,6 +129,9 @@ parse_args() {
     done
 }
 
+# is_ip_address: a dotted IPv4 address. A name of digits only (a container hostname) is a DNS name.
+is_ip_address() { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
+
 default_server_name() { hostname -f 2>/dev/null || hostname 2>/dev/null || printf 'localhost\n'; }
 
 # recorded_tls: the strategy recorded at the last install, empty when none.
@@ -153,7 +156,7 @@ validate_tls() {
     letsencrypt)
         [[ -n "$SERVER_NAME_GIVEN" ]] ||
             die "$EXIT_USAGE" "--tls letsencrypt needs an explicit --server-name: the public domain name of this machine"
-        if [[ "$SERVER_NAME" != *.* || "$SERVER_NAME" =~ ^[0-9.]+$ ]]; then
+        if [[ "$SERVER_NAME" != *.* ]] || is_ip_address "$SERVER_NAME"; then
             die "$EXIT_USAGE" "--tls letsencrypt needs a public domain name, not '$SERVER_NAME'"
         fi
         [[ "$(get_option "$NAME" tls-accept-terms)" =~ ^(true|yes|1)$ ]] ||
@@ -430,7 +433,7 @@ make_certificate() {
     fi
     mkdir -p "${cert%/*}" "${key%/*}"
     chmod 0700 "${key%/*}"
-    if [[ "$SERVER_NAME" =~ ^[0-9.]+$ ]]; then
+    if is_ip_address "$SERVER_NAME"; then
         san="IP:$SERVER_NAME"
     else
         san="DNS:$SERVER_NAME"
