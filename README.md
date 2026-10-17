@@ -137,12 +137,16 @@ Each component has an install script with some parameters to install and configu
 
 ### Package / CLI
 
-The `easy-cs-ai` CLI wraps everything in one package (tarball, `.deb` or `.rpm`). Each install-and-configure script is reachable from the CLI commands and each component's commands are mirrored by the CLI. It also includes the HTTPS and API Key wrapping.
+The `easy-cs-ai` CLI wraps everything in one package (tarball, `.deb` or `.rpm`). Each install-and-configure script is reachable from the CLI commands and each component's commands are mirrored by the CLI (`component`). It also includes the HTTPS and API Key wrapping.
 
 Extra commands :
 
 - `status`, listing what is currently installed and running
 - `install`, installing a new component
+- `uninstall`, removing a component (`uninstall --all` removes everything; `--purge` deletes the data too)
+- `remove`, the reverse of `add`: unwiring a model and removing it from its inference engine
+- `component`, the commands of one component, mirrored from its install script (`component engine ollama list-models`, `component proxy nginx show-key`); `component` alone lists the components of every type
+- `exec`, the component's own program (`ollama`, `nginx`, `docker compose`…) run against the instance easy-cs-ai installed, with the variables and the Compose file of the installation (`exec engine ollama ps`): an expert command, outside the state and the journal
 - `add`, adding a new model in an inference engine, wrapping it with the reverse proxy if needed and adding it to the chat interface website
 - `apply`, interpreting a [configuration file](docs/spec-config.md) (components, options, models) to make the machine match it
 - `generate`, the interactive generator of the layer 3 (VM post-install) script; `generate --config-only` writes the configuration file only
@@ -178,5 +182,9 @@ Planned work, in dependency order:
 | Package / CLI   | `add` / `remove` model commands  | Written, unit-tested with fake components |
 | Package / CLI   | `apply` command                  | Written, unit-tested with fake components |
 | Package / CLI   | `generate` command               | Written (hands over to the generator) |
+| Package / CLI   | `component` and `exec` commands  | Written, unit-tested with fake components (`component` replaces the types as commands of the root) |
+| VM post-install | Engine and web interface on two VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [two-VM scenario](tests/integration/README.md#the-scenario-of-two-vms-two-vmsh) is written |
 | VM post-install | Post-install script              | Written (emitted by the generator), unit-tested |
 | VM post-install | Script generator (`generate`)    | Written, unit-tested |
+| Package / CLI   | `component` and `exec` commands  | Written, unit-tested with fake components (`component` replaces the types as commands of the root) |
+| VM post-install | Engine and web interface on two VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [two-VM scenario](tests/integration/README.md#the-scenario-of-two-vms-two-vmsh) is written |

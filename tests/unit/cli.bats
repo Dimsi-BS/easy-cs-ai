@@ -113,6 +113,37 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     [[ "$stderr" == *"catalog --json"* ]]
 }
 
+@test "component with a component and no action shows its help, as --help does" {
+    cli install engine eng
+    : >"$CALLS"
+    cli component engine eng
+    [ "$status" -eq 0 ]
+    grep -qx 'eng --help ' "$CALLS"
+    : >"$CALLS"
+    cli component engine eng --help
+    [ "$status" -eq 0 ]
+    grep -qx 'eng --help ' "$CALLS"
+}
+
+@test "an action that changes the machine needs root and names the component command to retry; the others and --dry-run do not" {
+    [ "$EUID" -ne 0 ] || skip "root is allowed to run it"
+    cli install engine eng
+    : >"$CALLS"
+    run --separate-stderr env -u EASY_CS_AI_ROOT bash "$CLI" component engine eng add-model m1
+    [ "$status" -eq 4 ]
+    [[ "$stderr" == *"must run as root"* && "$stderr" == *"sudo easy-cs-ai component engine eng add-model"* ]]
+    [ ! -s "$CALLS" ] || ! grep -q 'eng add-model' "$CALLS"
+    run --separate-stderr env -u EASY_CS_AI_ROOT bash "$CLI" --dry-run component engine eng add-model m1
+    # the fake component ignores --dry-run and writes its state, which this user cannot: only the root check is under test
+    [ "$status" -ne 4 ]
+    [[ "$stderr" != *"must run as root"* ]]
+    grep -q 'eng add-model m1' "$CALLS"
+    : >"$CALLS"
+    run --separate-stderr env -u EASY_CS_AI_ROOT bash "$CLI" component engine eng check m1
+    [ "$status" -eq 0 ]
+    grep -q 'eng check m1' "$CALLS"
+}
+
 @test "a type as the first word is an unknown command pointing to component" {
     cli engine
     [ "$status" -eq 2 ]
