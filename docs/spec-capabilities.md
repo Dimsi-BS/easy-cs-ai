@@ -35,7 +35,7 @@ Without `--json`, a table (type, name, rank, description, platforms, requires). 
 ```json
 {
   "schema_version": 1,
-  "cli_version": "0.1.0-rc2",
+  "cli_version": "0.1.0-rc3",
   "types": ["provisioning", "proxy", "engine", "chat-interface"],
   "components": [
     {

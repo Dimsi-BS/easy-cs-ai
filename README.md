@@ -23,7 +23,7 @@ You need an Ubuntu 24.04 machine (a VM is ideal), root access, internet access, 
 **1. Install the CLI** from the [releases](https://github.com/Dimsi-BS/easy-cs-ai/releases) (a version marked *Pre-release* is a test version; check the exact version there):
 
 ```bash
-VERSION=0.1.0-rc2
+VERSION=0.1.0-rc3
 curl -fsSLO "https://github.com/Dimsi-BS/easy-cs-ai/releases/download/v$VERSION/easy-cs-ai_${VERSION}_all.deb"
 curl -fsSLO "https://github.com/Dimsi-BS/easy-cs-ai/releases/download/v$VERSION/easy-cs-ai_${VERSION}_all.deb.sha256"
 sha256sum -c "easy-cs-ai_${VERSION}_all.deb.sha256"

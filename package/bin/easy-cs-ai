@@ -6,7 +6,7 @@
 # vm_script/).
 set -euo pipefail
 
-readonly CLI_VERSION=0.1.0-rc2
+readonly CLI_VERSION=0.1.0-rc3
 readonly CHANGING_ACTIONS=" install uninstall add-model remove-model add-upstream remove-upstream add-site remove-site add-endpoint remove-endpoint "
 
 # --- Locating the tree ----------------------------------------------------------

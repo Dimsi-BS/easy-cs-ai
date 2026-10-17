@@ -71,7 +71,7 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     # an AI agent with only the binary is sent to the guide first, then the tree of the commands
     [[ "$output" == *"Usage: easy-cs-ai"*"AI agent or program: run \`easy-cs-ai guide\` first, it tells how to use this CLI."*"easy-cs-ai"*"status"*"guide "*"catalog "*"host "*"config"*"schema"*"validate"* ]]
     cli --version
-    [ "$output" = "0.1.0-rc2" ]
+    [ "$output" = "0.1.0-rc3" ]
 }
 
 # help_tree <charset>: the help text drawn with that charset, whatever the locale
