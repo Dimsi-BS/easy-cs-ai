@@ -64,7 +64,7 @@ The command line has two kinds of words (the general commands, then `component` 
 - **ASCII fallback, chosen by the locale.** The characters are used when the locale is UTF-8 (`LC_ALL`, else `LC_CTYPE`, else `LANG`, contains `UTF-8` or `utf8`, in any case), whether or not the output is a terminal. Otherwise (`LANG=C`, a bare console) the tree is drawn with `|`, `+-` and `` `- ``, with the same shape, so the help never shows broken characters. `EASY_CS_AI_CHARSET=unicode|ascii` overrides the detection, as `EASY_CS_AI_COLOR` does for colors.
 - **Shape.** The text opens with the usage line (the global options, `<command>`) and the sentence for an AI agent (`easy-cs-ai guide` first); the tree follows, its root being `easy-cs-ai`. Each command is a node with a one-line description on the right, in one column. A command with several forms has them as leaves, with their options; the last child of a node is the one that ends the branch (`└──`). The tree follows the nesting of the command line: `component <type> <name> <action>` is three levels under `component`, `config schema` and `config validate` are two under `config`. A line that would pass 100 columns carries no description: the options are the part that cannot be guessed.
 - **The components come from the shipped scripts, not from the help.** Under `component`, the types are the contract types in install order (`provisioning`, `proxy`, `engine`, `chat-interface`) and each lists the components found in `<libdir>/<type>/<name>.sh`, so a new component appears in the tree with no change to the CLI, as in [Dispatch](#dispatch). Only names are read: the tree runs no script and needs no root, and the actions are not listed (they come from `describe`, see `component <type> <name> --help`).
-- **After the tree**, the line on `--json`, as today. The commands for an AI agent (`guide`, `catalog`, `host`, `config`) are branches of the tree like the others; the way to use them is the `guide`.
+- **After the tree**, the line on `--json`, as today, then a line saying that `ecsai` is the short name of `easy-cs-ai` (the same program, see [packaging](decision-packaging.md)). The commands for an AI agent (`guide`, `catalog`, `host`, `config`) are branches of the tree like the others; the way to use them is the `guide`.
 
 ```text
 Usage: easy-cs-ai [--verbose] [--dry-run] [--json] <command> [arguments]
@@ -107,6 +107,8 @@ easy-cs-ai
 └── version
 
 --json prints one JSON document on stdout instead of the human output (for programs).
+
+`ecsai` is the short name of `easy-cs-ai`: both run the same program.
 ```
 
 ### Dispatch

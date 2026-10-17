@@ -140,6 +140,8 @@ EOF
     cat <<'EOF'
 
 --json prints one JSON document on stdout instead of the human output (for programs).
+
+`ecsai` is the short name of `easy-cs-ai`: both run the same program.
 EOF
 }
 
