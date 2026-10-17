@@ -41,38 +41,105 @@ source "$EASY_CS_AI_LIB/cli-ai.sh"
 DRY=0
 GFLAGS=()
 
+# tree_unicode: succeeds when the tree of the help is drawn with box-drawing
+# characters: a UTF-8 locale (LC_ALL, else LC_CTYPE, else LANG), whether or not
+# the output is a terminal; EASY_CS_AI_CHARSET=unicode|ascii overrides it.
+tree_unicode() {
+    case "${EASY_CS_AI_CHARSET:-auto}" in
+    unicode) return 0 ;;
+    ascii) return 1 ;;
+    esac
+    local locale="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+    locale="${locale,,}"
+    [[ "$locale" == *utf-8* || "$locale" == *utf8* ]]
+}
+
+# tree_row <depth> <prefix> <branch> <text> [<description>]: one line of the
+# tree, the description in one column; it is dropped when it would pass 100
+# columns. The width is computed from the depth (a prefix and a branch are 4
+# columns each), not from the bytes, so it does not depend on the locale.
+tree_row() {
+    local depth="$1" prefix="$2" branch="$3" text="$4" desc="${5:-}"
+    local width=$((4 * (depth + 1) + ${#text}))
+    if [[ -z "$desc" ]]; then
+        printf '%s%s%s\n' "$prefix" "$branch" "$text"
+    elif ((width < 50)); then
+        printf '%s%s%s%*s %s\n' "$prefix" "$branch" "$text" $((50 - width)) '' "$desc"
+    elif ((width + 2 + ${#desc} <= 100)); then
+        printf '%s%s%s  %s\n' "$prefix" "$branch" "$text" "$desc"
+    else
+        printf '%s%s%s\n' "$prefix" "$branch" "$text"
+    fi
+}
+
+# print_tree: every command of the CLI as one tree. The components under
+# `component` are the scripts shipped, by name: nothing is run.
+print_tree() {
+    local T L V B t n names last_type last_name
+    if tree_unicode; then
+        T='├── ' L='└── ' V='│   ' B='    '
+        printf 'easy-cs-ai\n│\n'
+    else
+        T='+-  ' L='`-  ' V='|   ' B='    '
+        printf 'easy-cs-ai\n|\n'
+    fi
+    tree_row 0 '' "$T" 'status' 'installed components, live status'
+    tree_row 0 '' "$T" 'install' 'install components'
+    tree_row 1 "$V" "$T" '<type> <name> [--default] [options]' 'one component'
+    tree_row 1 "$V" "$L" '[<type>] --defaults' 'the default choices'
+    tree_row 0 '' "$T" 'uninstall' 'uninstall components'
+    tree_row 1 "$V" "$T" '<type> <name> [--purge] [--force]' 'one component'
+    tree_row 1 "$V" "$L" '[<type>] --all [--purge] [--force]' 'everything installed'
+    tree_row 0 '' "$T" 'add' 'add a model to an engine and wire it'
+    tree_row 1 "$V" "$L" '<model> [--engine <n>] [--chat-interface <n>] [--no-chat-interface] [--defaults] [--force]'
+    tree_row 0 '' "$T" 'remove' 'unwire a model and remove it'
+    tree_row 1 "$V" "$T" '<model> [--engine <n>]' 'one model'
+    tree_row 1 "$V" "$L" '--all [--engine <n>]' 'every model'
+    tree_row 0 '' "$T" 'apply <file|-> [--vm <n>] [--prune]' 'make the machine match a file'
+    tree_row 0 '' "$T" 'generate [--config-only] [--config <file>]' 'VM post-install script generator'
+    tree_row 0 '' "$T" 'component' 'the types and their components'
+    last_type="${TYPES[${#TYPES[@]} - 1]}"
+    for t in "${TYPES[@]}"; do
+        if [[ "$t" == "$last_type" ]]; then
+            tree_row 1 "$V" "$L" "$t"
+        else
+            tree_row 1 "$V" "$T" "$t"
+        fi
+        mapfile -t names < <(component_names "$t")
+        ((${#names[@]} > 0)) || continue
+        last_name="${names[${#names[@]} - 1]}"
+        for n in "${names[@]}"; do
+            local pad="$V"
+            [[ "$t" == "$last_type" ]] && pad="$B"
+            if [[ "$n" == "$last_name" ]]; then
+                tree_row 2 "$V$pad" "$L" "$n <action> [arguments]"
+            else
+                tree_row 2 "$V$pad" "$T" "$n <action> [arguments]"
+            fi
+        done
+    done
+    tree_row 0 '' "$T" 'exec <type> <name> <command> [arguments]' "the component's own program"
+    tree_row 0 '' "$T" 'guide' 'how to use this CLI (AI agent, program)'
+    tree_row 0 '' "$T" 'catalog' 'what can be installed'
+    tree_row 0 '' "$T" 'host' 'this machine: CPU, memory, disk, GPU'
+    tree_row 0 '' "$T" 'config' 'the configuration format and checks'
+    tree_row 1 "$V" "$T" 'schema' 'the format, as a JSON Schema'
+    tree_row 1 "$V" "$L" 'validate <file|-> [--target] [--vm <n>]' 'check a file, show its plan'
+    tree_row 0 '' "$T" 'help'
+    tree_row 0 '' "$L" 'version'
+}
+
 usage() {
     cat <<'EOF'
 Usage: easy-cs-ai [--verbose] [--dry-run] [--json] <command> [arguments]
 
 AI agent or program: run `easy-cs-ai guide` first, it tells how to use this CLI.
 
-Commands:
-  status                                   installed components with their live status
-  install <type> <name> [--defaults] [--default] [options]
-  install [<type>] --defaults              install the default choices
-  uninstall <type> <name> [--purge] [--force]
-  uninstall [<type>] --all [--purge] [--force]
-  component <type> <name> <action> [arguments]   component action of the contract (component engine ollama list-models)
-  component [<type>]                       list the components of a type, or of every type
-  exec <type> <name> <command> [arguments] run the component's own program on the installed instance (exec engine ollama ps)
-  add <model> [--engine <n>] [--chat-interface <n>] [--no-chat-interface] [--defaults] [--force]
-  remove <model> [--engine <n>]            remove --all [--engine <n>]
-  apply <file|-> [--vm <name>] [--prune]   make the machine match a configuration file (--vm: one VM of a file that names several)
-  generate [--config-only] [--config <file>] [options]   VM post-install script generator (one script per VM when the stack is split in two)
-  help, version
-
-For an AI agent or a program (start with guide):
-  guide                                    how to use this CLI: procedure and safety rules
-  catalog                                  what can be installed (components, options, ranks)
-  host                                     this machine: platform, CPU, memory, disk, GPU
-  config schema                            the configuration format, as a JSON Schema
-  config validate <file|-> [--target this|fresh] [--vm <name>]   check a configuration, show its plan
-  component provisioning llmfit suggest|plan   the models that fit a VM, or the VM that models and components need
+EOF
+    print_tree
+    cat <<'EOF'
 
 --json prints one JSON document on stdout instead of the human output (for programs).
-
-Types: provisioning, proxy, engine, chat-interface
 EOF
 }
 
