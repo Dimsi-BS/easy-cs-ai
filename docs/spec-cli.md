@@ -45,7 +45,7 @@ easy-cs-ai [global options] <command> [arguments…]
 | `apply <file\|-> [--vm <name>] [--prune]` | Make the machine match a configuration file (`--vm` selects one VM of a file that names several) |
 | `generate [--config-only] [parameters…]` | Produce the parameterless VM post-install script (one per VM when the configuration names several), or only its configuration file |
 | `catalog`, `host`, `config schema`, `config validate`, `guide` | Read-only discovery and validation for a person as well as for a program or an AI agent, see [spec: capabilities](spec-capabilities.md) |
-| `exec <type> <name> <command> [arguments…]` | Run the component's own program (`ollama`, `nginx`…) as it is, see [Native tool commands](#native-tool-commands) |
+| `exec <type> <name> <command> [arguments…]` | Run the component's own program (`ollama`, `nginx`…) aimed at the instance installed by easy-cs-ai (its address, its Compose file), the tool's arguments untouched, see [Native tool commands](#native-tool-commands) |
 | `component [<type>]` | List the component types and their components, or the components of one type, see [Dispatch](#dispatch) |
 | `component <type> <name> <action> [arguments…]` | Component command: an action of the contract, forwarded to the script |
 
@@ -79,19 +79,21 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 
 **Principle: what a tool already does is executed by the tool, never reimplemented.** The CLI and the scripts only add what the project's conventions require around the call (root check, lock, state, journal, JSON on stdout, exit codes). Why the program is reached through an explicit command and not by any word that is no action: [decision](decision-explicit-native-commands.md).
 
-- `exec <type> <name> <command> [arguments…]` runs **as is by the component's own program**, declared in `describe` as `native.command` (`ollama`, `nginx`, `llmfit`…), with the command and the arguments as the tool receives them:
+- **What `exec` is for: the component's own program, aimed at the instance easy-cs-ai installed.** A tool does not know how the project installed it: Ollama listens on the address and port recorded at install (not always its default), and the Compose project of a chat interface is a file the project wrote, not something to remember. `exec` runs the tool as it would run by hand, with the context of the installation added around it, and nothing else: the CLI never rewrites, parses or filters what the tool does.
+- `exec <type> <name> <command> [arguments…]` runs the component's own program, declared in `describe` as `native.command` (`ollama`, `nginx`, `llmfit`…), with the command and the arguments exactly as the tool receives them, in the environment prepared for it (below):
 
   | Command line | Executed |
   | --- | --- |
-  | `exec engine ollama run llama3.2:3b` | `ollama run llama3.2:3b` |
-  | `exec engine ollama ps` | `ollama ps` |
-  | `exec proxy nginx -t` | `nginx -t` |
-  | `exec provisioning llmfit system` | `llmfit system` |
+  | `exec engine ollama run llama3.2:3b` | `OLLAMA_HOST=127.0.0.1:11434 ollama run llama3.2:3b` |
+  | `exec engine ollama ps` | `OLLAMA_HOST=127.0.0.1:11434 ollama ps` |
+  | `exec chat-interface librechat logs -f` | `docker compose -f <compose_file> logs -f` |
+  | `exec proxy nginx -t` | `nginx -t` (no context to add) |
+  | `exec provisioning llmfit system` | `llmfit system` (no context to add) |
 
-  Arguments, streams, TTY and exit code are the tool's own (it is `exec`'d, nothing is parsed or filtered). The CLI does not check root here: the tool decides. Everything after `<name>` belongs to the tool, so the global options of the CLI go **before** the command (`easy-cs-ai --dry-run exec engine ollama ps`).
+  The address, port and file above are those recorded in the state of the installation; `127.0.0.1:11434` is the default. Arguments, streams, TTY and exit code are the tool's own (it is `exec`'d, nothing is parsed or filtered). The CLI does not check root here: the tool decides. Everything after `<name>` belongs to the tool, so the global options of the CLI go **before** the command (`easy-cs-ai --dry-run exec engine ollama ps`).
 - **Explicit, never guessed.** The verb comes first, as for `install` and `uninstall`, and `component <type> <name> <action>` is only ever an action of the contract. A word that is not one is a usage error that points to `exec`, it no longer falls through to the tool. Otherwise a contract action added later would silently take over the same name of the tool, and a typo would reach the tool instead of being reported. The old forms `<type> <name> <tool command>` and `<type> <name> -- <tool command>` (and the form with no `component`, see [Command line](#command-line)) are gone, `--` included: it was the explicit form of this.
 - **What runs is shown, not implied.** The name of a component is not always the name of its program (a Docker Compose component has none of its own), so the CLI states the resolved command, on stderr, never on stdout, which belongs to the tool: `--verbose` logs `exec: OLLAMA_HOST=127.0.0.1:11434 ollama ps` before running it, and `--dry-run` logs `plan: exec OLLAMA_HOST=127.0.0.1:11434 ollama ps`, with the variables it would export, and runs nothing, as the plans of `install` and `uninstall` do.
-- The CLI only prepares the environment so that the tool talks to the instance the project installed: it exports the variables listed in `describe.native.env` (e.g. `OLLAMA_HOST`), built from the `params` recorded in the state. The component must therefore be installed (exit 4 otherwise).
+- **The context is the environment, nothing more.** The CLI only prepares what the tool needs to talk to the instance the project installed: it exports the variables listed in `describe.native.env` (e.g. `OLLAMA_HOST`), built from the `params` recorded in the state. The component must therefore be installed (exit 4 otherwise). Without `exec`, running `ollama ps` by hand reaches the default address, which is another instance, or none, as soon as the install used another `--bind` or `--port`.
 - Components without a program of their own (Docker Compose-based chat interfaces) declare `native.command` as `docker compose -f <compose_file>` (from the state `service`), so `exec chat-interface librechat logs -f` is `docker compose -f … logs -f`, and `exec chat-interface librechat exec api npm run create-user` runs Compose's own `exec`. A component with nothing to run natively leaves `native` out, and `exec` on it is a usage error.
 - **Refusals.** Exit 2 (usage): no command, no component name, an unknown type or component, a component that declares no `native`, and `--json` before `exec` (the output is the tool's, it is not turned into JSON). Exit 4 (precondition): the component is not installed, or its program is not found on the machine (checked before running, instead of the shell's 127). Otherwise the exit code is the tool's own.
 - The type-specific actions of the contract are themselves **thin wrappers** over native commands (`list-models` reads the engine's API, as `ollama list` is a table, `remove-model` runs `ollama rm`, `provisioning suggest` runs `llmfit recommend --json`). They exist only to add the convention-mandated parts: JSON on stdout, state update, journal, a size-aware wait. See the [contract](spec-script-contract.md#wrapping-native-tools).

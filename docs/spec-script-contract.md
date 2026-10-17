@@ -97,7 +97,7 @@ These are the "component commands" mirrored by `easy-cs-ai component <type> <nam
 | `proxy` configuration check | `nginx -t` before every reload | exit code 6 on failure |
 
 - When the tool's output is already in the required form, it is passed through untouched. Parsing is limited to `jq` over the tool's JSON.
-- The component's own commands are reachable as they are through `easy-cs-ai exec <type> <name> <command>`, see [spec: CLI](spec-cli.md#native-tool-commands). `describe` declares the program (`native.command`) and the variables to export (`native.env`).
+- The component's own commands are reachable, untouched and aimed at the instance the project installed, through `easy-cs-ai exec <type> <name> <command>`, see [spec: CLI](spec-cli.md#native-tool-commands). `describe` declares the program (`native.command`) and the variables to export (`native.env`).
 
 ### Secrets
 
@@ -183,7 +183,7 @@ easy-cs-ai: ollama install end exit=0 duration=48s
   - A named component whose `describe` fails or is not valid JSON is undeclared too, with a `WARN` on stderr.
   - The tests of `plan` point `EASY_CS_AI_LIB` at the `lib/` directory of a fake tree whose components (siblings of that `lib/`) declare `resources`, or lack the script, see [spec: model fit](spec-model-fit.md#definition-of-done).
 - `endpoint` is optional and for engines: `{ "protected": true | false }`, **whether the engine enforces HTTPS and an API key itself**, so that `add` does not wrap it with the proxy (absent means `false`, as for every shipped engine today). It is the static counterpart of the `endpoint.protected` the script records in its [state](spec-state-format.md#fields): the [validation](spec-config.md#what-a-model-needs) reads it to know whether a model needs a proxy before anything is installed, and the state stays what `add` reads at run time. The two must agree. Adding it is not a bump of `schema_version`.
-- `native` is optional: `command` is the component's own program, run as is by `easy-cs-ai exec <type> <name> <command>` (see [spec: CLI](spec-cli.md#native-tool-commands)); `env` maps variables to export to templates over the recorded `params` (`{bind}`, `{port}`…), so the program reaches the instance the project installed. For a Docker Compose component, `command` is `docker compose -f {compose_file}` (from the state `service`). Omitted when the component has nothing to run natively.
+- `native` is optional: `command` is the component's own program, run by `easy-cs-ai exec <type> <name> <command>`, its arguments untouched (see [spec: CLI](spec-cli.md#native-tool-commands)); `env` maps variables to export to templates over the recorded `params` (`{bind}`, `{port}`…), so the program reaches the instance the project installed. For a Docker Compose component, `command` is `docker compose -f {compose_file}` (from the state `service`). Omitted when the component has nothing to run natively.
 
 ### `status`
 

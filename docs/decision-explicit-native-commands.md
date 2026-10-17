@@ -6,6 +6,8 @@
 
 ## Context
 
+**Why a command for the native tools at all.** A tool does not know how easy-cs-ai installed it: Ollama listens on the address and port recorded at install, and the Compose project of a chat interface is a file the project wrote. Run by hand, `ollama ps` reaches the default address, which is another instance, or none, when the install used another `--bind` or `--port`. The CLI therefore runs the tool **with the context of the installation** (the variables of `native.env`, the Compose file) and nothing else: what the tool does is never rewritten, parsed or filtered. This is the role of `exec`; the rest of this document is about how it is spelled.
+
 The CLI forwarded to the component's own program (`ollama`, `nginx`, `llmfit`…) any word after `<type> <name>` that was not an action of the contract, and `--` forced it: `engine ollama ps` ran `ollama ps`.
 
 Adding the `size` action to the llmfit component showed the cost. `size` was not in the list of actions the CLI knows, so `easy-cs-ai provisioning llmfit size <model>` went to llmfit itself, which answered `unrecognized subcommand 'size'`. The cause is general: **the actions of the contract and the commands of the tools share one namespace**, so an action added later silently takes over a command of the tool with the same name, and a typo is not reported by the CLI but by the tool, in its own words.

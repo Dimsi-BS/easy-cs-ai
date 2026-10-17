@@ -4,7 +4,7 @@
 
 This directory contains the files specific to the packaging layer: the `easy-cs-ai` CLI dispatcher and the tarball/`.deb`/`.rpm` packaging definitions (see [docs/decision-packaging](../docs/decision-packaging.md)).
 
-- `bin/easy-cs-ai` — the dispatcher: `status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate` (hands over to [vm_script](../vm_script/README.md)), component actions and `exec` (the component's own program). From a checkout it runs the scripts of [install_scripts](../install_scripts/README.md) directly.
+- `bin/easy-cs-ai` — the dispatcher: `status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate` (hands over to [vm_script](../vm_script/README.md)), component actions and `exec` (the component's own program, aimed at the instance easy-cs-ai installed). From a checkout it runs the scripts of [install_scripts](../install_scripts/README.md) directly.
 - `bin/ecsai` — the short name, a link to `easy-cs-ai` created by `build.sh` (tarball) and by `nfpm.yaml` (`.deb`/`.rpm`). The program is the same; the documentation uses the full name.
 - `build.sh` — stages the tree and builds the tarball (`package/build.sh --output dist`)
 - `build-native.sh` — builds the `.deb` and the `.rpm` from that tree (`package/build-native.sh --output dist`, after `build.sh`), named `easy-cs-ai_<v>_all.deb` and `easy-cs-ai-<v>-1.noarch.rpm`, each with its `.sha256`. It needs [nfpm](https://nfpm.goreleaser.com/) in `PATH`, or `--nfpm <binary>` (a name or a path, relative or absolute)
