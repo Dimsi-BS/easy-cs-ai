@@ -68,11 +68,77 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     cli help
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage: easy-cs-ai"* ]]
-    # an AI agent with only the binary is sent to the guide first, and the commands for it are together
-    [[ "$output" == *"Usage: easy-cs-ai"*"AI agent or program: run \`easy-cs-ai guide\` first, it tells how to use this CLI."*"Commands:"* ]]
-    [[ "$output" == *"For an AI agent or a program (start with guide):"*"guide "*"catalog "*"host "*"config schema"*"config validate"*"llmfit suggest|plan"* ]]
+    # an AI agent with only the binary is sent to the guide first, then the tree of the commands
+    [[ "$output" == *"Usage: easy-cs-ai"*"AI agent or program: run \`easy-cs-ai guide\` first, it tells how to use this CLI."*"easy-cs-ai"*"status"*"guide "*"catalog "*"host "*"config"*"schema"*"validate"* ]]
     cli --version
     [ "$output" = "0.1.0-rc2" ]
+}
+
+# help_tree <charset>: the help text drawn with that charset, whatever the locale
+help_tree() { run --separate-stderr env EASY_CS_AI_CHARSET="$1" bash "$CLI" help; }
+
+# has <text> <fragment>: the fragment is in the text, taken literally (no glob)
+has() { [[ "$1" == *"$2"* ]]; }
+
+@test "the commands are one tree: the same text from --help, help and the bare command" {
+    export EASY_CS_AI_CHARSET=unicode
+    cli --help
+    [ "$status" -eq 0 ]
+    local tree="$output"
+    cli help
+    [ "$output" = "$tree" ]
+    cli
+    [ "$status" -eq 2 ]
+    [ "$stderr" = "$tree" ]
+    # --json does not change it
+    cli --json help
+    [ "$output" = "$tree" ]
+    has "$tree" $'easy-cs-ai\n│\n├── status '
+    has "$tree" $'\n└── version'
+    has "$tree" $'\n├── install '
+    has "$tree" $'\n│   ├── <type> <name> [--default] [options]  '
+    has "$tree" $'\n│   └── [<type>] --defaults '
+    has "$tree" $'\n│   └── validate <file|-> '
+    # no run of dashes as a branch: the tree is not confused with the options
+    if has "$tree" '|-- ' || has "$tree" '`-- '; then false; fi
+}
+
+@test "every general command of the table is in the tree" {
+    local c
+    help_tree ascii
+    for c in status install uninstall add remove apply generate component exec guide catalog host config help version; do
+        has "$output" $'\n'"+-  $c" || has "$output" $'\n'"\`-  $c" || { echo "missing: $c"; false; }
+    done
+}
+
+@test "the tree lists the shipped components under their type, with no script run" {
+    help_tree unicode
+    has "$output" $'├── component '
+    has "$output" $'\n│   ├── provisioning\n│   ├── proxy\n│   │   └── prox <action> [arguments]\n│   ├── engine\n│   │   ├── eng <action> [arguments]\n│   │   └── eng2 <action> [arguments]\n│   └── chat-interface\n│       └── chat <action> [arguments]\n├── exec '
+    # a component added to the tree of scripts appears with no change of the CLI
+    make_fake proxy prox2 '[]'
+    help_tree unicode
+    has "$output" $'│   │   ├── prox <action> [arguments]\n│   │   └── prox2 <action> [arguments]\n'
+    [ ! -s "$CALLS" ]
+}
+
+@test "the tree is drawn with ASCII only outside a UTF-8 locale, and the charset can be forced" {
+    # the locale chooses ...
+    LC_ALL= LC_CTYPE= LANG=C run --separate-stderr bash "$CLI" help
+    [ "$status" -eq 0 ]
+    has "$output" $'\n+-  status '
+    has "$output" $'\n`-  version'
+    has "$output" $'\n|   `-  [<type>] --defaults'
+    [ -z "$(printf '%s' "$output" | LC_ALL=C tr -d '\0-\177')" ]
+    LC_ALL= LC_CTYPE= LANG=fr_FR.UTF-8 run --separate-stderr bash "$CLI" help
+    has "$output" $'\n├── status '
+    LC_ALL= LC_CTYPE=en_US.utf8 LANG=C run --separate-stderr bash "$CLI" help
+    has "$output" $'\n├── status '
+    # ... unless EASY_CS_AI_CHARSET says otherwise
+    LC_ALL=C.UTF-8 EASY_CS_AI_CHARSET=ascii run --separate-stderr bash "$CLI" help
+    has "$output" $'\n+-  status '
+    LC_ALL=C EASY_CS_AI_CHARSET=unicode run --separate-stderr bash "$CLI" help
+    has "$output" $'\n├── status '
 }
 
 @test "unknown command and unknown type are usage errors" {
