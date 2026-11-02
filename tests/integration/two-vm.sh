@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The inference engine and the web interface on two real VMs, with assertions, see
-# tests/integration/README.md and docs/spec-two-vm.md.
+# tests/integration/README.md and docs/spec-multi-vm.md.
 #
 #   two-vm.sh [--keep]
 #

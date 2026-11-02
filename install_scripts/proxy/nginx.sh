@@ -410,7 +410,7 @@ machine_addresses() {
 
 # certificate_addresses: ",IP:<address>" for each address of the machine, only for a self-signed
 # certificate with no --server-name (the address of the VM is usually not known when its script is
-# generated, docs/spec-two-vm.md#the-certificate-of-the-engine-vm). With a name given the certificate
+# generated, docs/spec-multi-vm.md#the-certificate-of-the-engine-vm). With a name given the certificate
 # is the one of the name, as before.
 certificate_addresses() {
     local addr
@@ -828,7 +828,7 @@ cmd_status() {
 }
 
 # certificate_names: the DNS names and the addresses of the certificate nginx serves, as a JSON array,
-# read from the certificate itself and not from the state (docs/spec-two-vm.md): what the administrator
+# read from the certificate itself and not from the state (docs/spec-multi-vm.md): what the administrator
 # needs to know to pick the host of the URL the web VM uses. [] when it cannot be read.
 certificate_names() {
     local cert out

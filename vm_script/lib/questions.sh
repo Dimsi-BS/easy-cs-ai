@@ -480,7 +480,7 @@ print_summary() {
 }
 
 # The session is the journey walked once, or once per VM when the stack is split in two
-# (docs/spec-two-vm.md#in-the-session): a pass is the five steps over the types of a VM.
+# (docs/spec-multi-vm.md#in-the-session): a pass is the five steps over the types of a VM.
 # shellcheck disable=SC2034  # read by generate.sh
 SESSION_CONFIG=""
 PASS_CONFIG=""

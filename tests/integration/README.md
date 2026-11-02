@@ -64,7 +64,7 @@ It takes about 25 minutes the first time (the image, Docker, Ollama and the thre
 tests/integration/two-vm.sh [--keep]
 ```
 
-The inference engine and the web interface on **two** VMs (`ecsai-engine` and `ecsai-web`, created if absent, on one network `ecsai-net` so that they reach each other), the case of [spec: two VMs](../../docs/spec-two-vm.md). Its settings: `ECSAI_ENGINE_VM` and `ECSAI_WEB_VM` (the names), `ECSAI_ENGINE_MEMORY` (4096 MB) and `ECSAI_WEB_MEMORY` (3072 MB), `ECSAI_ENGINE_DISK` (20 GB) and `ECSAI_WEB_DISK` (24 GB, LibreChat needs 12 GB free for its images), and `ECSAI_TEST_MODEL` as for the first scenario. The two machines need about 7 GB of RAM together.
+The inference engine and the web interface on **two** VMs (`ecsai-engine` and `ecsai-web`, created if absent, on one network `ecsai-net` so that they reach each other), the case of [spec: several VMs](../../docs/spec-multi-vm.md). Its settings: `ECSAI_ENGINE_VM` and `ECSAI_WEB_VM` (the names), `ECSAI_ENGINE_MEMORY` (4096 MB) and `ECSAI_WEB_MEMORY` (3072 MB), `ECSAI_ENGINE_DISK` (20 GB) and `ECSAI_WEB_DISK` (24 GB, LibreChat needs 12 GB free for its images), and `ECSAI_TEST_MODEL` as for the first scenario. The two machines need about 7 GB of RAM together.
 
 With assertions (`ok` / `FAIL`, exit 1 if anything fails):
 

@@ -266,7 +266,7 @@ readonly CONFIG_PLAN_JQ='. as $cfg
      models: $models, prune: $prune}'
 
 # The warnings that come from the validation itself and the next steps of a file that names VMs, see
-# docs/spec-two-vm.md: `models_not_checked` (per VM), `engine_unreachable` and `engine_address_unknown`
+# docs/spec-multi-vm.md: `models_not_checked` (per VM), `engine_unreachable` and `engine_address_unknown`
 # (computed on the whole file, so never by a validation of one slice), and the instructions the
 # administrator follows once the VMs are up. Arguments: $desc and $installed, like the validation.
 # Output: {warnings, next_steps}. The text of a step names only actions and options the `describe`

@@ -2,7 +2,7 @@
 
 bats_require_minimum_version 1.5.0
 
-# Two VMs, the engine and the web interface apart (docs/spec-two-vm.md): the question of the
+# Two VMs, the engine and the web interface apart (docs/spec-multi-vm.md): the question of the
 # session, a pass per VM, one script per VM, the next steps, the warnings between the VMs.
 #
 # Fake scripts shipped (only describe answers): proxy prox with the actions and the options of the
