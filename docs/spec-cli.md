@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. **Proposed**: `generate --edit <file>` (with `--config-only`), see [spec: several VMs](spec-multi-vm.md#editing). What concerns a configuration that names several VMs (`apply --vm`, one script per VM from `generate`) is **implemented**, see [spec: several VMs](spec-multi-vm.md); a file with no `vm` behaves as described.
+**Status:** accepted. **Proposed**: `generate --edit <file>` (which saves the configuration and regenerates its scripts), see [spec: several VMs](spec-multi-vm.md#editing). What concerns a configuration that names several VMs (`apply --vm`, one script per VM from `generate`) is **implemented**, see [spec: several VMs](spec-multi-vm.md); a file with no `vm` behaves as described.
 
 ## Purpose
 
@@ -43,7 +43,7 @@ easy-cs-ai [global options] <command> [arguments…]
 | `remove <model> [--engine <name>]` | Unwire a model and remove it from its engine |
 | `remove --all [--engine <name>]` | Remove every model (of one engine, or of all) |
 | `apply <file\|-> [--vm <name>] [--prune]` | Make the machine match a configuration file (`--vm` selects one VM of a file that names several) |
-| `generate [--config-only [--edit <file>]] [parameters…]` | Produce the parameterless VM post-install script (one per VM when the configuration names several), or only its configuration file, created or, with `--edit`, edited |
+| `generate [--config-only \| --edit <file>] [parameters…]` | Produce the parameterless VM post-install script (one per VM when the configuration names several), or only its configuration file, or, with `--edit`, edit a configuration and regenerate its scripts |
 | `catalog`, `host`, `config schema`, `config validate`, `guide` | Read-only discovery and validation for a person as well as for a program or an AI agent, see [spec: capabilities](spec-capabilities.md) |
 | `exec <type> <name> <command> [arguments…]` | Run the component's own program (`ollama`, `nginx`…) aimed at the instance installed by easy-cs-ai (its address, its Compose file), the tool's arguments untouched, see [Native tool commands](#native-tool-commands) |
 | `component [<type>]` | List the component types and their components, or the components of one type, see [Dispatch](#dispatch) |
@@ -391,7 +391,7 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 
 ## `generate`
 
-`generate [--config-only [--edit <file>]] [parameters…]` hands over to the generator with the remaining arguments, forwarding its streams and exit code. The options and the questions come from `describe`; the rest is in [spec: VM script generator](spec-vm-generator.md). The generator is interactive unless given `--config <file>`, the one exception to the rule that the CLI never prompts: `generate` hands over to it without adding any prompt of its own. The generator produces the layer 3 scripts only (one per VM when the configuration names several, see [spec: several VMs](spec-multi-vm.md)): there is none for layer 1, the CLI chains components with `apply`.
+`generate [--config-only | --edit <file>] [parameters…]` hands over to the generator with the remaining arguments, forwarding its streams and exit code. The options and the questions come from `describe`; the rest is in [spec: VM script generator](spec-vm-generator.md). The generator is interactive unless given `--config <file>`, the one exception to the rule that the CLI never prompts: `generate` hands over to it without adding any prompt of its own. The generator produces the layer 3 scripts only (one per VM when the configuration names several, see [spec: several VMs](spec-multi-vm.md)): there is none for layer 1, the CLI chains components with `apply`.
 
 ## Contract additions
 
