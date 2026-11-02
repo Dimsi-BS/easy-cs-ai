@@ -22,7 +22,7 @@ vm_script/
 
 It is reached through `easy-cs-ai generate` (see [CLI](spec-cli.md#generate)), which hands over with the remaining arguments and forward streams and exit code. They are bash, like everything else (see [scripting language](decision-scripting-language.md)).
 
-`generate --config-only` runs the session only and writes the configuration file, for an administrator who wants to keep it, review it or feed it to `apply` directly. `generate --config-only --edit <file>` opens an existing configuration in the session and writes it back (see [Editing](#editing-a-configuration)).
+`generate --config-only` runs the session only and writes the configuration file, for an administrator who wants to keep it, review it or feed it to `apply` directly. `generate --edit <file>` opens an existing configuration in the session and, when it is saved, writes it back **and regenerates its scripts** (see [Editing](#editing-a-configuration)).
 
 ## Interaction
 
@@ -34,10 +34,10 @@ It is reached through `easy-cs-ai generate` (see [CLI](spec-cli.md#generate)), w
 ### Editing a configuration
 
 ```text
-generate --config-only --edit <file> [--output <path>]
+generate --edit <file> [--output <path>] [package options]
 ```
 
-Opens a configuration that exists in the session and writes it back, to itself or to `--output`: add, edit, rename or remove a VM, redo the models or the links, with the summary of the whole file as the first screen. It needs `--config-only` (exit 2 otherwise), and a file that is missing, unreadable or not JSON is exit 2. A file with validation errors opens, and is not written while one remains. Cancel, `q` and the end of input leave it untouched (exit 0). The full behaviour is in [spec: several VMs](spec-multi-vm.md#editing); the scripts come from `generate --config <file>`.
+Opens a configuration that exists in the session: add, edit, rename or remove a VM, redo the models or the links, with the summary of the whole file as the first screen. Saving writes the file back to itself **and** regenerates the scripts of all its VMs, together (everything or nothing), with `--output` and the [package source](#package-source) as for any generation, so that the scripts never describe another configuration than the file. It is exit 2 with `--config-only` or `--config`, and for a file that is missing, unreadable or not JSON. A file with validation errors opens, the editor proposes the fix of each error (`f`), and nothing is written while one remains. Cancel, `q` and the end of input leave the file and the scripts untouched (exit 0). The full behaviour is in [spec: several VMs](spec-multi-vm.md#editing).
 
 ### `--config <file>`
 
@@ -47,7 +47,7 @@ Takes the [configuration](spec-config.md) from a file instead of a session: **no
 - It makes a generation reproducible and testable: `bats` tests generate a script from a file and check it.
 - A session can be done once by hand with `--config-only`, the file reviewed or edited, then turned into a script with `--config`.
 - The summary is printed on stderr and **not** asked for confirmation.
-- Incompatible with `--config-only` (it would only copy the file) and with `--edit`: exit 2.
+- Incompatible with `--config-only` (it would only copy the file) and with `--edit` (which has a session to run): exit 2.
 - A file that names several VMs gives one script per VM (see [spec: several VMs](spec-multi-vm.md)); each script embeds the slice of its VM, validated as a one-VM file. The summary is printed per VM, and the instructions that follow are the next steps computed by the validation ([spec: several VMs](spec-multi-vm.md#next-steps)), which the generator only prints; it computes nothing of them.
 - `--json` (only with `--config`, a session is interactive: exit 2) prints one JSON document on stdout instead of the human output: the validation document of `config validate --target fresh` extended with a `script` entry (`scripts` and `next_steps` for several VMs), see [spec: capabilities](spec-capabilities.md#commands) and [rendering](spec-rendering.md#for-a-program---json). An invalid file prints the document with its errors, `script: null` and exits 2.
 
@@ -91,7 +91,7 @@ The generator is the **interactive rendering of the [journey](spec-journey.md)**
 
 ### Package source
 
-Not asked with `--config-only` (and given as options with `--config`):
+Not asked with `--config-only` (and given as options with `--config`); with `--edit` it is asked when the configuration is saved, or given as options:
 
 | Item | Meaning | Default |
 | --- | --- | --- |
@@ -128,9 +128,9 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 | --- | --- |
 | 0 | Output written (or dry run done), or the administrator cancelled |
 | 1 | Unexpected error, output file not writable |
-| 2 | Usage error: bad option, unknown component, invalid or incomplete `--config` file, `--config` with `--config-only`, `--edit` without `--config-only`, `--edit` of a file that is missing, unreadable or not JSON |
+| 2 | Usage error: bad option, unknown component, invalid or incomplete `--config` file, `--config` with `--config-only`, `--edit` with `--config-only` or `--config`, `--edit` of a file that is missing, unreadable or not JSON |
 | 4 | Precondition not met: no component shipped, selection impossible to satisfy |
-| 5 | The package checksum could not be fetched or computed |
+| 5 | The package checksum could not be fetched or computed (with `--edit`, nothing is written: the configuration and the scripts stay as they were) |
 
 ## Definition of done
 
