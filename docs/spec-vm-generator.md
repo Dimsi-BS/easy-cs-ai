@@ -2,15 +2,15 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). What concerns several VMs (one script per VM, the `VM:` header line, the next steps, the per-VM `--json` documents) is **implemented** (`vm_script/generate.sh`, `tests/unit/generate_vm.bats`), see [spec: two VMs](spec-two-vm.md); one VM behaves as described.
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). What concerns several VMs (one script per VM, the `VM:` header line, the next steps, the per-VM `--json` documents) is **implemented** (`vm_script/generate.sh`, `tests/unit/generate_vm.bats`), see [spec: several VMs](spec-multi-vm.md); one VM behaves as described. **Proposed, not implemented**: the generator as a **creator and editor of the configuration** (`--edit`, any number of VMs, roles, links), see [spec: several VMs](spec-multi-vm.md).
 
 ## Purpose
 
-The generator produces a **parameterless VM post-install script** (layer 3) with a fixed configuration, guiding an administrator through the required choices. Why it exists, and why there is none for layer 1, is in [decision: VM script generator](decision-vm-generator.md). This spec fixes how it asks, what it reads and what it emits.
+The generator **creates and edits the configuration**, and produces from it a **parameterless VM post-install script** (layer 3) with a fixed configuration, guiding an administrator through the required choices. Why it exists, and why there is none for layer 1, is in [decision: VM script generator](decision-vm-generator.md). This spec fixes how it asks, what it reads and what it emits.
 
 It builds on the [script contract](spec-script-contract.md) (`describe`, `requires`, options), the [CLI spec](spec-cli.md) and the [configuration file](spec-config.md); it does not repeat them.
 
-The common thread: **a session produces a configuration** (the format of [spec: config](spec-config.md)), and the generator turns it into the VM script. The same file is what `--config <file>` reads back, to generate without a session.
+The common thread: **a session produces or edits a configuration** (the format of [spec: config](spec-config.md)), and the generator turns it into the VM script. The same file is what `--config <file>` reads back, to generate without a session.
 
 ## Layout
 
@@ -22,14 +22,22 @@ vm_script/
 
 It is reached through `easy-cs-ai generate` (see [CLI](spec-cli.md#generate)), which hands over with the remaining arguments and forward streams and exit code. They are bash, like everything else (see [scripting language](decision-scripting-language.md)).
 
-`generate --config-only` runs the session only and writes the configuration file, for an administrator who wants to keep it, review it or feed it to `apply` directly.
+`generate --config-only` runs the session only and writes the configuration file, for an administrator who wants to keep it, review it or feed it to `apply` directly. `generate --config-only --edit <file>` opens an existing configuration in the session and writes it back (see [Editing](#editing-a-configuration)).
 
 ## Interaction
 
 - What the generator asks, and how a question is shown, belong to the [journey](spec-journey.md) and to the [rendering](spec-rendering.md#for-a-person-the-interactive-session); this section only fixes what is specific to the generator.
-- Prompts and the summary go to stderr, answers are read from stdin. The result is written to the file given by `--output <path>` (default `./easy-cs-ai-vm.sh`, or `./easy-cs-ai.json` with `--config-only`), never to stdout. For a configuration that names several VMs there is one script per VM, named from `--output` with the VM inserted before the extension (see [spec: two VMs](spec-two-vm.md#what-is-written)).
+- Prompts and the summary go to stderr, answers are read from stdin. The result is written to the file given by `--output <path>` (default `./easy-cs-ai-vm.sh`, or `./easy-cs-ai.json` with `--config-only`), never to stdout. For a configuration that names several VMs there is one script per VM, named from `--output` with the VM inserted before the extension (see [spec: several VMs](spec-multi-vm.md#what-is-written)).
 - `--help`, `--version`, `--verbose` are accepted; `--dry-run` runs the whole session and prints the result to stderr without writing it.
 - The generator needs no root and changes nothing on the machine, with one exception the administrator asks for: it can install llmfit on the spot, see [llmfit is optional](spec-model-fit.md#llmfit-is-optional). It never does so unasked.
+
+### Editing a configuration
+
+```text
+generate --config-only --edit <file> [--output <path>]
+```
+
+Opens a configuration that exists in the session and writes it back, to itself or to `--output`: add, edit, rename or remove a VM, redo the models or the links, with the summary of the whole file as the first screen. It needs `--config-only` (exit 2 otherwise), and a file that is missing, unreadable or not JSON is exit 2. A file with validation errors opens, and is not written while one remains. Cancel, `q` and the end of input leave it untouched (exit 0). The full behaviour is in [spec: several VMs](spec-multi-vm.md#editing); the scripts come from `generate --config <file>`.
 
 ### `--config <file>`
 
@@ -39,13 +47,13 @@ Takes the [configuration](spec-config.md) from a file instead of a session: **no
 - It makes a generation reproducible and testable: `bats` tests generate a script from a file and check it.
 - A session can be done once by hand with `--config-only`, the file reviewed or edited, then turned into a script with `--config`.
 - The summary is printed on stderr and **not** asked for confirmation.
-- Incompatible with `--config-only` (it would only copy the file): exit 2.
-- A file that names several VMs gives one script per VM (see [spec: two VMs](spec-two-vm.md)); each script embeds the slice of its VM, validated as a one-VM file. The summary is printed per VM, and the instructions that follow are the next steps computed by the validation ([spec: two VMs](spec-two-vm.md#next-steps)), which the generator only prints; it computes nothing of them.
+- Incompatible with `--config-only` (it would only copy the file) and with `--edit`: exit 2.
+- A file that names several VMs gives one script per VM (see [spec: several VMs](spec-multi-vm.md)); each script embeds the slice of its VM, validated as a one-VM file. The summary is printed per VM, and the instructions that follow are the next steps computed by the validation ([spec: several VMs](spec-multi-vm.md#next-steps)), which the generator only prints; it computes nothing of them.
 - `--json` (only with `--config`, a session is interactive: exit 2) prints one JSON document on stdout instead of the human output: the validation document of `config validate --target fresh` extended with a `script` entry (`scripts` and `next_steps` for several VMs), see [spec: capabilities](spec-capabilities.md#commands) and [rendering](spec-rendering.md#for-a-program---json). An invalid file prints the document with its errors, `script: null` and exits 2.
 
 ## Implementation notes
 
-- The session offers **one component per type** (per VM when the stack is split, see [spec: two VMs](spec-two-vm.md#in-the-session)): the configuration allows several, but there is no question for a second one; edit the file written by `--config-only` for that (see [journey](spec-journey.md#2-components-and-dependencies)). At the summary, `y` confirms, `n` cancels, and `c`, `o` or `m` redo the components (with their dependencies), the options or the models (`m` is not offered in the `web` pass of two VMs, which has no models step, see [spec: two VMs](spec-two-vm.md#in-the-session)).
+- The session offers **one component per type** (per VM when the stack is split, see [spec: several VMs](spec-multi-vm.md#in-the-session)): the configuration allows several, but there is no question for a second one; the editor keeps what it does not show, and the file can be edited by hand for that (see [journey](spec-journey.md#2-components-and-dependencies)). At the summary, `y` confirms, `n` cancels, and `c`, `o` or `m` redo the components (with their dependencies), the options or the models (`m` is offered only in a pass that has an engine, see [spec: several VMs](spec-multi-vm.md#in-the-session)).
 - The generator plans for another machine: what is installed on the machine running it is ignored (`EASY_CS_AI_ASSUME_EMPTY`), so a configuration is validated as for a fresh VM, and a requirement that the file does not satisfy is an incomplete file (exit 2).
 - The validation, the ordering of components and the summary are the code of `apply` (`lib/cli-apply.sh`), so the generator and `apply` cannot disagree.
 - `--dry-run` also applies to `--config-only`: the configuration goes to stderr.
@@ -102,7 +110,7 @@ One file, small, self-contained apart from the package it downloads:
 
 1. **header** (see below);
 2. **download** the package from the pinned URL, verify the sha256 (mismatch → exit 5, nothing installed), install it (`apt-get install` of the local file, `dnf`, or unpack the tarball);
-3. the **configuration** (the slice of its VM when the file names several, see [spec: two VMs](spec-two-vm.md)), embedded as a quoted heredoc (`<<'EOF'`, so nothing is expanded; the delimiter is chosen so that it does not occur in the content), written to a temporary file readable by root only;
+3. the **configuration** (the slice of its VM when the file names several, see [spec: several VMs](spec-multi-vm.md)), embedded as a quoted heredoc (`<<'EOF'`, so nothing is expanded; the delimiter is chosen so that it does not occur in the content), written to a temporary file readable by root only;
 4. `easy-cs-ai apply` on that file, which is removed afterwards.
 
 There is no list of `install` / `add` commands to generate: the orchestration, order, wiring and rollback are the CLI's (see [apply](spec-config.md#apply)). The package version is pinned, so the configuration always meets the CLI version it was generated for.
@@ -120,7 +128,7 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 | --- | --- |
 | 0 | Output written (or dry run done), or the administrator cancelled |
 | 1 | Unexpected error, output file not writable |
-| 2 | Usage error: bad option, unknown component, invalid or incomplete `--config` file, `--config` with `--config-only` |
+| 2 | Usage error: bad option, unknown component, invalid or incomplete `--config` file, `--config` with `--config-only`, `--edit` without `--config-only`, `--edit` of a file that is missing, unreadable or not JSON |
 | 4 | Precondition not met: no component shipped, selection impossible to satisfy |
 | 5 | The package checksum could not be fetched or computed |
 
@@ -132,12 +140,12 @@ The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
 - `bats` tests of the models step with a fake llmfit: specs asked and forwarded as `--target-*`, suggestions picked by number and by name, a negative `check` kept as a warning in the summary, specs offered again as defaults when the step is redone, llmfit absent (the offer, declined by default and asked once, the message with the install command, free text, exit 0), accepted (installed, then the specs and the suggestions), failing to install (a warning, free text), and a package without llmfit (nothing offered).
 - `bats` tests of the stack without llmfit: models written with `"force": true` and the summary warning; no models, no warning; `--config` with a model and `force` and no llmfit gets the warning, and without `force` it does not.
 - Integration test: generate a script, run it on a fresh VM, `status` healthy, run it a second time, nothing changes.
-- Several VMs: the tests of [spec: two VMs](spec-two-vm.md#definition-of-done).
+- Several VMs, links, roles and the editor: the tests of [spec: several VMs](spec-multi-vm.md#definition-of-done).
 - `shellcheck` clean on the generator; `--help` text consistent with this spec.
 
 ## Open questions
 
 - **Secrets**: how the generated script gets its secrets (API key, admin passwords). The configuration describes a secret by its source, never by value ([Secrets](spec-config.md#secrets)); what is open is whether a literal is allowed in the file at all, and the mode of the generated file (`0600` if it ever holds one). Until decided, a secret option is asked as "generated at run time" and never written. Linked to the CloudStack user-data caveat in the [contract](spec-script-contract.md#secrets), see also [spec: config](spec-config.md#open-questions).
-- **Several VMs**: one script per VM of a configuration that names its VMs (the `vm` field of [spec: config](spec-config.md#several-vms)), the question that fills it, and the instructions printed at the end, are specified in [spec: two VMs](spec-two-vm.md). The one-VM behaviour described here does not change.
+- **Several VMs**: one script per VM of a configuration that names its VMs (the `vm` field and the `links` of [spec: config](spec-config.md#several-vms)), the questions that fill them, the editor, and the instructions printed at the end, are specified in [spec: several VMs](spec-multi-vm.md). The one-VM behaviour described here does not change.
 - **Package hosting**: where the packages live and how the checksum is published (see [decision: VM script generator](decision-vm-generator.md#open-questions)).
 - **User-data limit**: the exact limit of the target CloudStack instance, and the typical size of the generated script, to measure once the generator exists.
