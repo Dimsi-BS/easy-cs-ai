@@ -39,10 +39,18 @@ session() {
     run --separate-stderr bash -c 'bash "$0" "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
 }
 ANSWERS=""
-# ask <answers…>: the first answer, the VM question, is left to its default (one VM).
-ask() { ANSWERS="$(printf '%s\n' "" "$@")"; export ANSWERS; session; }
-# ask_raw <answers…>: no answer is added, the first one is the answer to the VM question.
-ask_raw() { ANSWERS="$(printf '%s\n' "$@")"; export ANSWERS; session; }
+# _join_lines <answers…>: one line per answer, a trailing empty one kept (unlike "$(printf …)",
+# which strips it): an empty default answer at the end must still reach the session.
+_join_lines() {
+    local a
+    REPLY_LINES=""
+    for a in "$@"; do REPLY_LINES+="$a"$'\n'; done
+}
+# ask <answers…>: appends the answer to the question of another VM, left to its default (one VM
+# only), since this package ships an engine and a chat interface (docs/spec-multi-vm.md#principles).
+ask() { _join_lines "$@" ""; ANSWERS="$REPLY_LINES"; export ANSWERS; session; }
+# ask_raw <answers…>: no answer is added, the last one is the answer to the question of another VM.
+ask_raw() { _join_lines "$@"; ANSWERS="$REPLY_LINES"; export ANSWERS; session; }
 
 # --- usage -------------------------------------------------------------------------------
 

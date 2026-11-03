@@ -7,5 +7,6 @@
     { "type": "proxy", "name": "prox", "vm": "web" },
     { "type": "chat-interface", "name": "chat", "vm": "web" }
   ],
-  "models": [{ "name": "m1", "vm": "engine", "engine": "ollama" }]
+  "models": [{ "name": "m1", "vm": "engine", "engine": "ollama" }],
+  "links": [{ "web_vm": "web", "engine_vm": "engine" }]
 }

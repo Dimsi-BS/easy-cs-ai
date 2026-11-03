@@ -60,8 +60,8 @@ validate() { cli config validate "$CFG" --target fresh --json "$@"; }
 codes() { jq -r '[.errors[].code] | sort | join(",")' <<<"$output"; }
 paths() { jq -r '[.errors[] | "\(.code)@\(.path)"] | sort | join(" ")' <<<"$output"; }
 
-# two_vms: the engine VM holds fit, prox and eng; the web VM prox and chat. $1 is
-# the models array (default none).
+# two_vms: the engine VM holds fit, prox and eng; the web VM prox and chat, linked to the engine
+# VM. $1 is the models array (default none).
 two_vms() {
     cat >"$CFG" <<JSON
 {
@@ -73,7 +73,8 @@ two_vms() {
     { "type": "proxy", "name": "prox", "vm": "web" },
     { "type": "chat-interface", "name": "chat", "vm": "web" }
   ],
-  "models": ${1:-[]}
+  "models": ${1:-[]},
+  "links": [ { "web_vm": "web", "engine_vm": "engine" } ]
 }
 JSON
 }
@@ -100,11 +101,12 @@ JSON
     jq '.components[0].vm = "Engine"' "$CFG" >"$CFG.tmp" && mv "$CFG.tmp" "$CFG"
     validate
     [ "$status" -eq 2 ]
-    [ "$(paths)" = 'invalid_value@$.components[0].vm' ]
+    # a VM of the wrong shape also orphans it from the links (a correct, separate complaint)
+    [[ "$(paths)" == *'invalid_value@$.components[0].vm'* ]]
     two_vms
     jq '.components[0].vm = "1engine"' "$CFG" >"$CFG.tmp" && mv "$CFG.tmp" "$CFG"
     validate
-    [ "$(paths)" = 'invalid_value@$.components[0].vm' ]
+    [[ "$(paths)" == *'invalid_value@$.components[0].vm'* ]]
 }
 
 @test "missing_vm: the first component without a vm when another has one" {
@@ -112,7 +114,8 @@ JSON
     jq 'del(.components[2].vm)' "$CFG" >"$CFG.tmp" && mv "$CFG.tmp" "$CFG"
     validate
     [ "$status" -eq 2 ]
-    [ "$(paths)" = 'missing_vm@$.components[2]' ]
+    # the engine losing its vm also leaves the link without an engine on that VM (a separate complaint)
+    [[ "$(paths)" == *'missing_vm@$.components[2]'* ]]
 }
 
 @test "the same component on two VMs is valid, twice on one VM is duplicate_component" {
@@ -295,11 +298,13 @@ JSON
     [ "$(jq -r '.errors[0].vm' <<<"$output")" = engine ]
 }
 
-@test "an engine VM with no model needs no proxy" {
+@test "a linked engine VM with no model and no proxy is engine_unreachable" {
     two_vms
     jq 'del(.components[1])' "$CFG" >"$CFG.tmp" && mv "$CFG.tmp" "$CFG"
     validate
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 2 ]
+    [ "$(codes)" = engine_unreachable ]
+    [ "$(jq -r '.errors[0].vm' <<<"$output")" = engine ]
 }
 
 @test "with --target this, what is installed satisfies a model's needs" {

@@ -330,14 +330,14 @@ _propose_proxy() {
         names="${names%, }"
         prompt="$names needs a proxy to be reached from outside the VM (the engine listens on the loopback only). Add $proxy? (y/n)"
     else
-        prompt="The web VM reaches $engine through a proxy (it listens on the loopback only). Add $proxy? (y/n)"
+        prompt="Other VMs reach $engine through a proxy (it listens on the loopback only). Add $proxy? (y/n)"
     fi
     _read "$prompt" y
     if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
         SEL[proxy]="$proxy"
         step_options proxy
     elif [[ "$VM_MODE" == engine ]]; then
-        log_warn "the web VM could not reach $engine without a proxy, choose the components again"
+        log_warn "other VMs could not reach $engine without a proxy, choose the components again"
         PROXY_DECLINED=1
     else
         log_warn "without a proxy the models cannot be reached from outside the VM: none is added"
@@ -347,7 +347,13 @@ _propose_proxy() {
 }
 
 step_models() {
-    local m s script="" suggested=0 prompt picked
+    local m s script="" suggested=0 prompt picked default_models
+    # the editor redoing the models of a VM seeds SESSION_MODELS first, to offer them back as
+    # the default; a fresh pass has none yet, so this changes nothing for it.
+    default_models="$(
+        local IFS=,
+        printf '%s' "${SESSION_MODELS[*]:-}"
+    )"
     SESSION_MODELS=()
     SESSION_FIT_WARN=()
     SESSION_PLAN=""
@@ -376,7 +382,7 @@ step_models() {
     fi
     prompt="Models to add on ${SEL[engine]} (comma separated, empty for none)"
     ((${#SUGGESTIONS[@]})) && prompt="Models to add on ${SEL[engine]} (names or numbers of the list, comma separated, empty for none)"
-    _read "$prompt" ""
+    _read "$prompt" "$default_models"
     local IFS=','
     for m in $REPLY; do
         m="${m#"${m%%[![:space:]]*}"}"
@@ -479,39 +485,144 @@ print_summary() {
     _print_vm_recommendation
 }
 
-# The session is the journey walked once, or once per VM when the stack is split in two
+# The session is the journey walked once, or once per VM for a stack of any size
 # (docs/spec-multi-vm.md#in-the-session): a pass is the five steps over the types of a VM.
 # shellcheck disable=SC2034  # read by generate.sh
 SESSION_CONFIG=""
 PASS_CONFIG=""
 PASS_DONE='[]'    # the passes already confirmed: [{vm, config}], the one-VM configuration of each
+VM_NAMES=()       # the names given so far, in order
+LINKS_JSON='[]'   # the links answered, see _ask_links
 
-# _assemble <vm> <config>: the configuration of the whole stack, from the passes done and the
-# one in progress: every component gets the VM of its pass, every model the VM and the engine of
-# the pass that holds it.
-_assemble() {
-    jq -n --argjson prev "$PASS_DONE" --arg vm "$1" --argjson cur "$2" '
-        ($prev + [{vm: $vm, config: $cur}]) as $parts
-        | {schema_version: 1,
-           components: [$parts[] | .vm as $v | .config.components[] | . + {vm: $v}],
-           models: [$parts[] | .vm as $v | (.config.components | map(select(.type == "engine"))[0].name) as $e
-                    | (.config.models // [])[] | . + {vm: $v, engine: $e}]}
+# _assemble_done: the configuration of every pass in PASS_DONE: every component gets the vm of its
+# pass, every model the vm and the engine of the pass that holds it.
+_assemble_done() {
+    jq -n --argjson parts "$PASS_DONE" '
+        {schema_version: 1,
+         components: [$parts[] | .vm as $v | .config.components[] | . + {vm: $v}],
+         models: [$parts[] | .vm as $v | (.config.components | map(select(.type == "engine"))[0].name) as $e
+                  | (.config.models // [])[] | . + {vm: $v, engine: $e}]}
         | if (.models | length) == 0 then del(.models) else . end'
 }
 
-# run_pass <vm>: the five steps over the types of a VM (all of them when <vm> is empty, for a stack
-# on one VM). Leaves the one-VM configuration of the pass in PASS_CONFIG. Cancelling cancels everything.
+# _vm_ok <name>: the shape of spec-config.md#several-vms.
+_vm_ok() { [[ "$1" =~ ^[a-z][a-z0-9-]*$ ]]; }
+
+# _vm_taken <name>: the name is already used by an earlier VM of this session.
+_vm_taken() {
+    local n
+    for n in "${VM_NAMES[@]}"; do [[ "$n" == "$1" ]] && return 0; done
+    return 1
+}
+
+# _default_vm_name <role>: the role, made unique by a number (engine, web, web-2…); for custom
+# (and the first VM, named only once a second one is added), vm-1, vm-2…
+_default_vm_name() {
+    local role="$1" base="$1" n
+    if [[ "$role" != engine && "$role" != web ]]; then
+        base=vm
+        n=1
+        while _vm_taken "$base-$n"; do n=$((n + 1)); done
+        printf '%s-%s\n' "$base" "$n"
+        return 0
+    fi
+    if ! _vm_taken "$base"; then
+        printf '%s\n' "$base"
+        return 0
+    fi
+    n=2
+    while _vm_taken "$base-$n"; do n=$((n + 1)); done
+    printf '%s-%s\n' "$base" "$n"
+}
+
+# _ask_vm_name <default>: a name of the right shape, not already taken, asked again otherwise.
+# Leaves the answer in REPLY and appends it to VM_NAMES.
+_ask_vm_name() {
+    local default="$1"
+    while :; do
+        _read "Name of the VM" "$default"
+        if ! _vm_ok "$REPLY"; then
+            log_warn "'$REPLY' is not lowercase letters, digits and dashes, starting with a letter"
+        elif _vm_taken "$REPLY"; then
+            log_warn "'$REPLY' is already the name of another VM"
+        else
+            VM_NAMES+=("$REPLY")
+            return 0
+        fi
+    done
+}
+
+# _ask_role: engine, web or custom (default), for a new VM.
+# _ask_role: leaves the answer in REPLY (never "$(...)", which would only end a subshell on end
+# of input instead of the whole session).
+_ask_role() {
+    while :; do
+        _read "Role of the new VM: engine, web or custom" custom
+        case "$REPLY" in
+        engine | web | custom) return 0 ;;
+        esac
+        log_warn "'$REPLY' is not engine, web or custom"
+    done
+}
+
+# _selected_any: at least one type has a component selected (SEL is not empty).
+_selected_any() {
+    local t
+    for t in "${TYPES[@]}"; do [[ -n "${SEL[$t]:-}" ]] && return 0; done
+    return 1
+}
+
+# _choose_component <type> <names>: the component of that type to add, rank 1 preselected.
+_choose_component() {
+    local t="$1" names="$2" rank
+    rank="$(rank_lookup "$t")"
+    [[ " $names " == *" $rank "* ]] || rank="${names%% *}"
+    while :; do
+        _read "$t (${names% })" "$rank"
+        if [[ " $names " == *" $REPLY "* ]]; then
+            SEL[$t]="$REPLY"
+            return 0
+        fi
+        log_warn "'$REPLY' is not one of: $names"
+    done
+}
+
+# step_components_custom <vm>: the custom role, docs/spec-multi-vm.md#roles: every type, one at a
+# time, "Add a <type> on <vm>? (y/n)", and on y the choice of the component. Nothing is required
+# except that the VM ends with a component: with none the walk starts again.
+step_components_custom() {
+    local vm="$1" t names
+    while :; do
+        for t in "${TYPES[@]}"; do
+            names="$(component_names "$t" | tr '\n' ' ')"
+            [[ -n "${names// /}" ]] || continue
+            [[ -z "${SEL[$t]:-}" ]] || continue
+            _read "Add a $t on $vm? (y/n)" n
+            if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
+                _choose_component "$t" "$names"
+            fi
+        done
+        _selected_any && return 0
+        log_warn "this VM has no component yet, choose again"
+    done
+}
+
+# run_pass <role> <vm>: the five steps over the types of a VM. <role> is "" for the plain,
+# unrestricted pass (the one-VM session, and the first VM of a several-VM one, run exactly alike,
+# docs/spec-multi-vm.md#creating), or engine / web / custom for the VMs that follow. <vm> is the
+# name of the VM, empty for the plain pass. Leaves the one-VM configuration of the pass in
+# PASS_CONFIG. Cancelling cancels everything.
 run_pass() {
-    local vm="${1:-}" step=1 answer menu="components (c), options (o), models (m)" full
-    VM_MODE="$vm"
+    local role="${1:-}" vm="${2:-}" step=1 answer menu="components (c), options (o), models (m)"
+    VM_MODE="$role"
     PASS_REQUIRED=""
     PASS_TYPES=("${TYPES[@]}")
-    case "$vm" in
+    case "$role" in
     engine) PASS_TYPES=(provisioning proxy engine); PASS_REQUIRED=engine ;;
     web)
         PASS_TYPES=(proxy chat-interface)
         PASS_REQUIRED=chat-interface
-        # the web VM has no models step: nothing of the engine VM (its specs, its models) is its own
+        # the web role has no models step: nothing of an engine (its specs, its models) is its own
         menu="components (c), options (o)"
         TARGET_RAM="" TARGET_VRAM="" TARGET_CORES=""
         ;;
@@ -523,7 +634,10 @@ run_pass() {
     fi
     while :; do
         case "$step" in
-        1) step_components; step=2 ;;
+        1)
+            if [[ "$role" == custom ]]; then step_components_custom "$vm"; else step_components; fi
+            step=2
+            ;;
         2) if step_dependencies; then step=3; else step=1; fi ;;
         3) step_options; step=4 ;;
         4)
@@ -534,11 +648,6 @@ run_pass() {
         5)
             PASS_CONFIG="$(session_config)"
             print_summary "$PASS_CONFIG"
-            if [[ "$vm" == web ]]; then
-                # the warnings that need both VMs come after the ones of this VM, in the last summary
-                full="$(_assemble "$vm" "$PASS_CONFIG")"
-                print_cross_warnings "$full"
-            fi
             _read "Confirm (y), cancel (n) or redo a step: $menu" y
             answer="$REPLY"
             case "$answer" in
@@ -553,7 +662,7 @@ run_pass() {
             c | C) step=1 ;;
             o | O) step=3 ;;
             m | M)
-                if [[ "$vm" == web ]]; then log_warn "'$answer' is not a valid answer"; else step=4; fi
+                if [[ "$role" == web ]]; then log_warn "'$answer' is not a valid answer"; else step=4; fi
                 ;;
             *) log_warn "'$answer' is not a valid answer" ;;
             esac
@@ -562,37 +671,576 @@ run_pass() {
     done
 }
 
-# print_cross_warnings <config>: the warnings of a stack on several VMs that need several of them to
-# be computed (an engine nothing exposes, an address not known yet), each naming its VM.
+# print_cross_warnings <config>: the problems of a stack on several VMs that need several of them to
+# be computed: the errors (an engine nothing exposes, two VMs with the same server name) and the
+# warning (an address not known yet), each naming its VM.
 print_cross_warnings() {
-    local lines
-    lines="$(config_cross "$1" "$(apply_describes "$1")" | jq -r '.warnings[] | select(.code == "engine_unreachable" or .code == "engine_address_unknown") | "    [VM \(.vm)] \(.message)"')"
-    [[ -z "$lines" ]] || printf '  [WARN] between the VMs, to read before creating them:\n%s\n' "$lines" >&2
+    local cross errlines warnlines
+    cross="$(config_cross "$1" "$(apply_describes "$1")")"
+    errlines="$(jq -r '.errors[] | select(.code == "engine_unreachable" or .code == "duplicate_server_name") | "    [VM \(.vm)] \(.message)"' <<<"$cross")"
+    warnlines="$(jq -r '.warnings[] | select(.code == "engine_address_unknown") | "    [VM \(.vm)] \(.message)"' <<<"$cross")"
+    [[ -z "$errlines" ]] || printf '  [ERROR] between the VMs, to fix before this can be confirmed:\n%s\n' "$errlines" >&2
+    [[ -z "$warnlines" ]] || printf '  [WARN] between the VMs, to read before creating them:\n%s\n' "$warnlines" >&2
 }
 
-# run_session: one VM, or two when the administrator splits the stack. Leaves the configuration in
-# SESSION_CONFIG.
-run_session() {
-    local choice=1
-    # the question is asked when there is something to split: an engine and a chat interface
-    if [[ -n "$(component_names engine)" && -n "$(component_names chat-interface)" ]]; then
-        while :; do
-            _read "One VM for everything (1), or the web interface on a second VM, apart from the inference engine (2)?" 1
-            case "$REPLY" in
-            1 | 2) choice="$REPLY"; break ;;
-            esac
-            log_warn "'$REPLY' is not 1 or 2"
+# _vm_has_type <vm> <type>: a component of that type is on that VM, in SESSION_CONFIG.
+_vm_has_type() {
+    jq -e --arg v "$1" --arg t "$2" 'any((.components // [])[]; .vm == $v and .type == $t)' <<<"$SESSION_CONFIG" >/dev/null
+}
+
+# _ask_links: for every VM with a chat interface that has at least one other VM with an engine,
+# "Which VMs hold the engines whose models <web_vm> lists?" (docs/spec-multi-vm.md#creating). Each
+# answer is validated against the real rules (an unknown VM, the VM itself, no engine, a protected
+# engine, a cycle) by the same computation config validate uses, so nothing is reimplemented here
+# (rule 4 of the journey). Leaves the links in LINKS_JSON.
+_ask_links() {
+    # Both VM lists are read into arrays first: a `while read … done < <(…)` loop redirects stdin
+    # for its whole body, which would swallow the answer of the _read prompt below.
+    local web o others default name candidate merged desc errs line
+    local -a all_vms
+    mapfile -t all_vms < <(apply_vms "$SESSION_CONFIG")
+    LINKS_JSON='[]'
+    desc="$(apply_describes "$SESSION_CONFIG")"
+    for web in "${all_vms[@]}"; do
+        [[ -n "$web" ]] || continue
+        _vm_has_type "$web" chat-interface || continue
+        others=""
+        for o in "${all_vms[@]}"; do
+            [[ -n "$o" && "$o" != "$web" ]] || continue
+            _vm_has_type "$o" engine || continue
+            others="${others:+$others }$o"
         done
+        if _vm_has_type "$web" engine; then default=none; else default="${others:-none}"; fi
+        while :; do
+            _read "Which VMs hold the engines whose models $web lists? (names separated by spaces, none)" "$default"
+            if [[ "$REPLY" == none ]]; then
+                candidate="$LINKS_JSON"
+            else
+                candidate="$LINKS_JSON"
+                for name in $REPLY; do
+                    candidate="$(jq -c --arg w "$web" --arg e "$name" '. + [{web_vm: $w, engine_vm: $e}]' <<<"$candidate")"
+                done
+            fi
+            merged="$(jq -c --argjson links "$candidate" '. + {links: $links}' <<<"$SESSION_CONFIG")"
+            errs="$(config_cross "$merged" "$desc" | jq -r '.errors[] | select(.path | startswith("$.links")) | .message')"
+            if [[ -n "$errs" ]]; then
+                while IFS= read -r line; do log_warn "$line"; done <<<"$errs"
+                continue
+            fi
+            LINKS_JSON="$candidate"
+            break
+        done
+    done
+}
+
+# _final_summary: the summary of the whole configuration, once every VM and the links are known
+# (docs/spec-multi-vm.md#creating): the links, and the warnings and errors that need several VMs,
+# which a pass cannot give. Confirm (y, default) writes, cancel (n) or end of input writes nothing.
+_final_summary() {
+    printf '\nLinks: %s\n' "$(jq -r '(.links // []) | if length == 0 then "none" else map("\(.web_vm) -> \(.engine_vm)") | join(", ") end' <<<"$SESSION_CONFIG")" >&2
+    print_cross_warnings "$SESSION_CONFIG"
+    _read "Write the configuration? (y/n)" y
+    if [[ "$REPLY" != y && "$REPLY" != Y ]]; then
+        log_info "cancelled, nothing written"
+        exit 0
     fi
-    if [[ "$choice" == 1 ]]; then
-        run_pass ""
+}
+
+# run_session: the first VM exactly as a one-VM session, then, for any number of further VMs, a
+# role, a name and a pass, then the links, then the summary of the whole configuration
+# (docs/spec-multi-vm.md#creating). With one VM, ends exactly as a one-VM session does. Leaves the
+# configuration in SESSION_CONFIG.
+run_session() {
+    local role name
+    VM_NAMES=()
+    PASS_DONE='[]'
+    run_pass "" ""
+    # the question is asked when there is something to split: an engine and a chat interface
+    if [[ -z "$(component_names engine)" || -z "$(component_names chat-interface)" ]]; then
         SESSION_CONFIG="$PASS_CONFIG"
         return 0
     fi
-    PASS_DONE='[]'
-    run_pass engine
-    PASS_DONE="$(jq -c --argjson c "$PASS_CONFIG" '. + [{vm: "engine", config: $c}]' <<<"$PASS_DONE")"
-    run_pass web
-    # shellcheck disable=SC2034  # read by generate.sh
-    SESSION_CONFIG="$(_assemble web "$PASS_CONFIG")"
+    _read "Add another VM? (y/n)" n
+    if [[ "$REPLY" != y && "$REPLY" != Y ]]; then
+        SESSION_CONFIG="$PASS_CONFIG"
+        return 0
+    fi
+    _ask_vm_name "$(_default_vm_name custom)"
+    name="$REPLY"
+    PASS_DONE="$(jq -c --argjson c "$PASS_CONFIG" --arg v "$name" '. + [{vm: $v, config: $c}]' <<<"$PASS_DONE")"
+    while :; do
+        _ask_role
+        role="$REPLY"
+        _ask_vm_name "$(_default_vm_name "$role")"
+        name="$REPLY"
+        run_pass "$role" "$name"
+        PASS_DONE="$(jq -c --argjson c "$PASS_CONFIG" --arg v "$name" '. + [{vm: $v, config: $c}]' <<<"$PASS_DONE")"
+        _read "Add another VM? (y/n)" n
+        [[ "$REPLY" == y || "$REPLY" == Y ]] || break
+    done
+    SESSION_CONFIG="$(_assemble_done)"
+    _ask_links
+    SESSION_CONFIG="$(jq -c --argjson l "$LINKS_JSON" '. + (if ($l | length) > 0 then {links: $l} else {} end)' <<<"$SESSION_CONFIG")"
+    _final_summary
+}
+
+# ======================================================================================
+# The editor: generate --edit <file>, docs/spec-multi-vm.md#editing. Opens an existing
+# configuration, shows the summary of the whole thing and a letter menu, and keeps applying
+# commands to EDIT_CONFIG until the person writes (y) or leaves (q, cancel, end of input).
+# ======================================================================================
+
+# shellcheck disable=SC2034  # read and written by generate.sh's run_editor
+EDIT_CONFIG=""     # the configuration as it stands, updated by each command
+EDIT_ERRORS='[]'   # the errors of the last summary, see _editor_summary
+EDIT_WARNINGS='[]' # the warnings of the last summary
+
+# _editor_vm_name <vm>: "no VM" (empty string) prints as "the configuration" in messages.
+_editor_vm_label() { [[ -n "$1" ]] && printf '%s\n' "$1" || printf 'the configuration\n'; }
+
+# _editor_slice <config> <vm>: the slice of that VM, or the whole file when it names none.
+_editor_slice() {
+    if [[ -n "$2" ]]; then apply_slice "$1" "$2"; else jq -c 'del(.links)' <<<"$1"; fi
+}
+
+# _editor_fmt_options <slice> <type> <name>: "--k=v …", a secret (an object value) shown as
+# "(secret)", never its source.
+_editor_fmt_options() {
+    jq -r --arg t "$2" --arg n "$3" '
+        (.components[] | select(.type == $t and .name == $n) | .options // {})
+        | to_entries | map("--\(.key)=\(if (.value | type) == "object" then "(secret)" else (.value | tostring) end)") | join(" ")' <<<"$1"
+}
+
+# _editor_print_vm_body <slice>: components in install order (as written when the order is
+# circular, which the editor still has to show), then its models.
+_editor_print_vm_body() {
+    local config="$1" desc order type name
+    desc="$(apply_describes "$config")"
+    if order="$(apply_order "$config" "$desc" 2>/dev/null)"; then
+        while read -r type name; do
+            [[ -n "$name" ]] || continue
+            printf '    %s %s %s\n' "$type" "$name" "$(_editor_fmt_options "$config" "$type" "$name")"
+        done <<<"$order"
+    else
+        jq -r '.components[]? | "    \(.type) \(.name) (order unresolved: circular requirement)"' <<<"$config"
+    fi
+    printf '    models: %s\n' "$(jq -r '[.models[]?.name] | if length == 0 then "none" else join(", ") end' <<<"$config")"
+}
+
+# _editor_compute <config>: leaves the errors and warnings of the whole configuration in
+# EDIT_ERRORS / EDIT_WARNINGS (links included), without printing anything: used by the summary
+# and by the fix loop, which needs the current list without redrawing the screen.
+_editor_compute() {
+    local config="$1" desc named=0 cross
+    desc="$(apply_describes "$config")"
+    apply_named "$config" && named=1
+    EDIT_ERRORS="$(apply_problems "$config" "$desc" true)"
+    EDIT_WARNINGS="$(jq -c --argjson desc "$desc" "$CONFIG_WARNINGS_JQ" <<<"$config" 2>/dev/null)" || EDIT_WARNINGS='[]'
+    if ((named)); then
+        cross="$(config_cross "$config" "$desc" 2>/dev/null)" || cross='{"errors":[],"warnings":[],"next_steps":[]}'
+        EDIT_ERRORS="$(jq -c --argjson c "$cross" '. + $c.errors' <<<"$EDIT_ERRORS")"
+        EDIT_WARNINGS="$(jq -c --argjson c "$cross" '. + $c.warnings' <<<"$EDIT_WARNINGS")"
+    fi
+}
+
+# _editor_summary <config>: the summary of the whole configuration (VMs, components, options
+# with secrets masked, models, links, platforms) then every warning and every numbered error,
+# each with its code, its vm and the command that fixes it. Leaves them in EDIT_ERRORS /
+# EDIT_WARNINGS for the command loop (f, and refusing y while an error stands).
+_editor_summary() {
+    local config="$1" vm named=0 errors warnings
+    apply_named "$config" && named=1
+    _editor_compute "$config"
+    errors="$EDIT_ERRORS"
+    warnings="$EDIT_WARNINGS"
+    {
+        printf '\nConfiguration\n'
+        if ((named)); then
+            while IFS= read -r vm; do
+                [[ -n "$vm" ]] || continue
+                printf '  VM %s\n' "$vm"
+                _editor_print_vm_body "$(apply_slice "$config" "$vm")"
+            done < <(apply_vms "$config")
+            printf '  links: %s\n' "$(jq -r '(.links // []) | if length == 0 then "none" else map("\(.web_vm) -> \(.engine_vm)") | join(", ") end' <<<"$config")"
+        else
+            _editor_print_vm_body "$config"
+        fi
+        if [[ "$warnings" != '[]' ]]; then
+            printf '  [WARN]\n'
+            jq -r '.[] | "    \(.path): \(.message)" + (if .vm then " (VM \(.vm))" else "" end)' <<<"$warnings"
+        fi
+        if [[ "$errors" != '[]' ]]; then
+            printf '  [ERROR]\n'
+            jq -r 'to_entries[] | "    \(.key + 1). \(.value.path): \(.value.message)" + (if .value.vm then " (VM \(.value.vm))" else "" end) + " [\(.value.code)]"' <<<"$errors"
+        fi
+    } >&2
+}
+
+# _editor_seed <slice>: SEL, OPTV and SESSION_MODELS from an existing slice, so a redone pass
+# offers its current content as the defaults (docs/spec-multi-vm.md#editing).
+_editor_seed() {
+    local slice="$1" t name opts
+    SEL=() OPTV=() SESSION_MODELS=()
+    for t in "${TYPES[@]}"; do
+        name="$(jq -r --arg t "$t" '[.components[]? | select(.type == $t)][0].name // empty' <<<"$slice")"
+        [[ -n "$name" ]] || continue
+        SEL[$t]="$name"
+        opts="$(jq -c --arg t "$t" --arg n "$name" '(.components[] | select(.type == $t and .name == $n) | .options) // {}' <<<"$slice")"
+        OPTV[$name]="$opts"
+    done
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        SESSION_MODELS+=("$name")
+    done < <(jq -r '.models[]?.name' <<<"$slice")
+}
+
+# step_options_edit: like step_options, but the default of each option is its current value
+# (from OPTV, seeded by _editor_seed) rather than the describe's default.
+step_options_edit() {
+    local t name oname default secret descr cur
+    for t in "${TYPES[@]}"; do
+        name="${SEL[$t]:-}"
+        [[ -n "$name" ]] || continue
+        _describe_of "$t" "$name"
+        [[ -n "${OPTV[$name]:-}" ]] || OPTV[$name]='{}'
+        while IFS=$'\x1f' read -r oname default secret descr <&3; do
+            [[ -n "$oname" ]] || continue
+            if [[ "$secret" == true ]]; then
+                log_info "$name: $oname is a secret, it is generated at run time and never written"
+                continue
+            fi
+            cur="$(jq -r --arg k "$oname" 'if has($k) then .[$k] | tostring else empty end' <<<"${OPTV[$name]}")"
+            [[ -n "$cur" ]] || cur="$default"
+            printf '  %s\n' "$descr" >&2
+            _read "$name --$oname" "$cur"
+            if [[ "$REPLY" == "$default" ]]; then
+                OPTV[$name]="$(jq -c --arg k "$oname" 'del(.[$k])' <<<"${OPTV[$name]}")"
+            elif [[ -n "$REPLY" ]]; then
+                OPTV[$name]="$(jq -c --arg k "$oname" --arg v "$REPLY" '. + {($k): $v}' <<<"${OPTV[$name]}")"
+            fi
+        done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (.description // "")] | join("")' <<<"${DESC[$name]}")
+    done
+}
+
+# _editor_walk_components <vm>: every type, preselected from SEL (seeded by _editor_seed):
+# "Keep/add a <type> on <vm>? (y/n)", y default when it is already there. On y, the choice of
+# the component (the current one preselected); on n, it leaves that type out.
+_editor_walk_components() {
+    local vm="$1" t names default_yn rank
+    for t in "${TYPES[@]}"; do
+        names="$(component_names "$t" | tr '\n' ' ')"
+        [[ -n "${names// /}" ]] || continue
+        default_yn=n
+        [[ -z "${SEL[$t]:-}" ]] || default_yn=y
+        _read "Keep/add a $t on $vm? (y/n)" "$default_yn"
+        if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
+            rank="${SEL[$t]:-}"
+            [[ -n "$rank" ]] || rank="$(rank_lookup "$t")"
+            [[ " $names " == *" $rank "* ]] || rank="${names%% *}"
+            while :; do
+                _read "$t (${names% })" "$rank"
+                if [[ " $names " == *" $REPLY "* ]]; then
+                    SEL[$t]="$REPLY"
+                    break
+                fi
+                log_warn "'$REPLY' is not one of: $names"
+            done
+        else
+            unset "SEL[$t]"
+        fi
+    done
+}
+
+# _editor_run_pass <vm>: redo the pass of an existing VM from its current content, always as
+# custom (docs/spec-multi-vm.md#editing: "it never imposes a role"). Leaves the new one-VM
+# configuration in PASS_CONFIG; SUMMARY_ERRORS says whether it still needs fixing.
+_editor_run_pass() {
+    local vm="$1" step=1 answer
+    printf '\nVM %s\n' "$vm" >&2
+    while :; do
+        case "$step" in
+        1) _editor_walk_components "$vm"; step=2 ;;
+        2) if step_dependencies; then step=3; else step=1; fi ;;
+        3) step_options_edit; step=4 ;;
+        4)
+            PROXY_DECLINED=0
+            step_models
+            if ((PROXY_DECLINED)); then step=1; else step=5; fi
+            ;;
+        5)
+            PASS_CONFIG="$(session_config)"
+            print_summary "$PASS_CONFIG"
+            _read "Confirm (y), cancel (n) or redo a step: components (c), options (o), models (m)" y
+            answer="$REPLY"
+            case "$answer" in
+            y | Y) return 0 ;;
+            n | N) return 1 ;;
+            c | C) step=1 ;;
+            o | O) step=3 ;;
+            m | M) step=4 ;;
+            *) log_warn "'$answer' is not a valid answer" ;;
+            esac
+            ;;
+        esac
+    done
+}
+
+# _editor_vms <config>: the VM names, one per line; a single empty line for a file with none
+# (it is then "the" VM of the editor, with no name).
+_editor_vms() {
+    if apply_named "$1"; then apply_vms "$1"; else printf '\n'; fi
+}
+
+# _editor_set_vm_slice <config> <vm> <new-slice>: the configuration with that VM's components
+# and models replaced (its vm added back when the file names VMs), keeping every other VM, its
+# links, and anything else the editor does not touch (order of components, `default`…).
+_editor_set_vm_slice() {
+    local config="$1" vm="$2" slice="$3"
+    if [[ -n "$vm" ]]; then
+        slice="$(jq -c --arg v "$vm" '
+            .components |= map(. + {vm: $v})
+            | .models = ((.models // []) | map(. + {vm: $v}))
+            | if (.models | length) == 0 then del(.models) else . end' <<<"$slice")"
+        jq -c --arg v "$vm" --argjson s "$slice" '
+            .components |= (map(select(.vm != $v)) + $s.components)
+            | .models = (((.models // []) | map(select(.vm != $v))) + ($s.models // []))
+            | if (.models | length) == 0 then del(.models) else . end' <<<"$config"
+    else
+        printf '%s\n' "$slice"
+    fi
+}
+
+# _editor_promote <vm>: a one-VM file (no vm field) gets one, becoming the whole content of
+# that VM; `vm` is all or none (docs/spec-config.md#several-vms).
+_editor_promote() {
+    EDIT_CONFIG="$(jq -c --arg v "$1" '
+        .components |= map(. + {vm: $v})
+        | .models = ((.models // []) | map(. + {vm: $v}))
+        | if (.models | length) == 0 then del(.models) else . end' <<<"$EDIT_CONFIG")"
+}
+
+# _editor_add_vm: `a`, a role, a name and a pass, then its own links if it holds a chat
+# interface (docs/spec-multi-vm.md#editing: "a adds a VM: its role..., then its pass, then its
+# links"). A one-VM file (no vm yet) is named first, becoming a several-VM one. Reads and
+# updates EDIT_CONFIG directly: called straight, never through "$(...)", since a session that
+# ends on end of input exits the whole program from inside run_pass / _ask_links_for_one, and a
+# command substitution would only end the subshell.
+_editor_add_vm() {
+    local role name was_named=0
+    apply_named "$EDIT_CONFIG" && was_named=1
+    if ((! was_named)); then
+        _ask_vm_name vm-1
+        _editor_promote "$REPLY"
+        printf 'the existing machine is now VM %s\n' "$REPLY" >&2
+    fi
+    _ask_role
+    role="$REPLY"
+    _ask_vm_name "$(_default_vm_name "$role")"
+    name="$REPLY"
+    SEL=() OPTV=() SESSION_MODELS=()
+    case "$role" in
+    engine) PASS_REQUIRED=engine ;;
+    web) PASS_REQUIRED=chat-interface ;;
+    *) PASS_REQUIRED="" ;;
+    esac
+    run_pass "$role" "$name" || return 0
+    EDIT_CONFIG="$(_editor_set_vm_slice "$EDIT_CONFIG" "$name" "$PASS_CONFIG")"
+    if jq -e --arg v "$name" 'any((.components // [])[]; .vm == $v and .type == "chat-interface")' <<<"$EDIT_CONFIG" >/dev/null; then
+        SESSION_CONFIG="$EDIT_CONFIG"
+        _ask_links_for_one "$name"
+        EDIT_CONFIG="$(jq -c --arg v "$name" --argjson l "$LINKS_JSON" '
+            .links = ((.links // []) | map(select(.web_vm != $v)) + $l)' <<<"$SESSION_CONFIG")"
+    fi
+}
+
+# _ask_links_for_one <web>: the links question for one VM only (used by a and l), the current
+# links (if any) offered as the default. Leaves the answer in LINKS_JSON (that VM's links alone).
+_ask_links_for_one() {
+    local web="$1" others o default name candidate merged desc errs line current
+    desc="$(apply_describes "$SESSION_CONFIG")"
+    current="$(jq -r --arg w "$web" '[(.links // [])[] | select(.web_vm == $w) | .engine_vm] | join(" ")' <<<"$SESSION_CONFIG")"
+    others=""
+    while IFS= read -r o; do
+        [[ -n "$o" && "$o" != "$web" ]] || continue
+        _vm_has_type "$o" engine || continue
+        others="${others:+$others }$o"
+    done < <(apply_vms "$SESSION_CONFIG")
+    if [[ -n "$current" ]]; then
+        default="$current"
+    elif _vm_has_type "$web" engine; then
+        default=none
+    else
+        default="${others:-none}"
+    fi
+    LINKS_JSON='[]'
+    while :; do
+        _read "Which VMs hold the engines whose models $web lists? (names separated by spaces, none)" "$default"
+        if [[ "$REPLY" == none ]]; then
+            candidate='[]'
+        else
+            candidate='[]'
+            for name in $REPLY; do
+                candidate="$(jq -c --arg w "$web" --arg e "$name" '. + [{web_vm: $w, engine_vm: $e}]' <<<"$candidate")"
+            done
+        fi
+        merged="$(jq -c --arg w "$web" --argjson links "$candidate" '
+            .links = ((.links // []) | map(select(.web_vm != $w)) + $links)' <<<"$SESSION_CONFIG")"
+        errs="$(config_cross "$merged" "$desc" | jq -r '.errors[] | select(.path | startswith("$.links")) | .message')"
+        if [[ -n "$errs" ]]; then
+            while IFS= read -r line; do log_warn "$line"; done <<<"$errs"
+            continue
+        fi
+        LINKS_JSON="$candidate"
+        break
+    done
+}
+
+# _editor_edit_vm <vm>: `e <vm>`, redo its pass from its current content. Cancelling (n) at its
+# own confirm leaves that VM untouched. Updates EDIT_CONFIG directly (see _editor_add_vm: never
+# called through "$(...)").
+_editor_edit_vm() {
+    local vm="$1" slice
+    slice="$(_editor_slice "$EDIT_CONFIG" "$vm")"
+    _editor_seed "$slice"
+    if _editor_run_pass "$(_editor_vm_label "$vm")"; then
+        EDIT_CONFIG="$(_editor_set_vm_slice "$EDIT_CONFIG" "$vm" "$PASS_CONFIG")"
+    else
+        log_info "unchanged"
+    fi
+}
+
+# _editor_redo_models <vm>: `m <vm>`, redo its models only, keeping its components. Updates
+# EDIT_CONFIG directly (never called through "$(...)").
+_editor_redo_models() {
+    local vm="$1" slice
+    slice="$(_editor_slice "$EDIT_CONFIG" "$vm")"
+    _editor_seed "$slice"
+    if [[ -z "${SEL[engine]:-}" ]]; then
+        log_warn "VM $(_editor_vm_label "$vm") has no engine, nothing to size models for"
+        return 0
+    fi
+    step_models
+    PASS_CONFIG="$(session_config)"
+    print_summary "$PASS_CONFIG"
+    _read "Confirm (y) or cancel (n)" y
+    if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
+        EDIT_CONFIG="$(_editor_set_vm_slice "$EDIT_CONFIG" "$vm" "$PASS_CONFIG")"
+    else
+        log_info "unchanged"
+    fi
+}
+
+# _editor_redo_links: `l`, the links question again for every VM with a chat interface, the
+# current links offered as the default. Updates EDIT_CONFIG directly (never called through
+# "$(...)"); a plain `for` over an array, not a `while read … done < <(…)`, which would
+# redirect stdin for the whole body and starve the _read prompts inside it.
+_editor_redo_links() {
+    local vm
+    local -a vms=()
+    SESSION_CONFIG="$EDIT_CONFIG"
+    mapfile -t vms < <(apply_vms "$EDIT_CONFIG")
+    for vm in "${vms[@]}"; do
+        [[ -n "$vm" ]] || continue
+        _vm_has_type "$vm" chat-interface || continue
+        _ask_links_for_one "$vm"
+        SESSION_CONFIG="$(jq -c --arg w "$vm" --argjson links "$LINKS_JSON" '
+            .links = ((.links // []) | map(select(.web_vm != $w)) + $links)' <<<"$SESSION_CONFIG")"
+    done
+    EDIT_CONFIG="$SESSION_CONFIG"
+}
+
+# _editor_rename_vm <config> <old> <new>: `n <vm>`, its components, its models and the links
+# that name it follow.
+_editor_rename_vm() {
+    jq -c --arg o "$2" --arg n "$3" '
+        .components |= map(if .vm == $o then . + {vm: $n} else . end)
+        | (if has("models") then .models |= map(if .vm == $o then . + {vm: $n} else . end) else . end)
+        | (if has("links") then .links |= map(
+             (if .web_vm == $o then .web_vm = $n else . end)
+             | (if .engine_vm == $o then .engine_vm = $n else . end)) else . end)' <<<"$1"
+}
+
+# _editor_remove_vm <config> <vm>: `r <vm>`, its components, its models and the links that name
+# it; the last VM is refused by the caller before this runs.
+_editor_remove_vm() {
+    jq -c --arg v "$2" '
+        .components |= map(select(.vm != $v))
+        | (if has("models") then .models |= map(select(.vm != $v)) else . end)
+        | (if (.models // []) == [] then del(.models) else . end)
+        | (if has("links") then .links |= map(select(.web_vm != $v and .engine_vm != $v)) else . end)' <<<"$1"
+}
+
+# _editor_fix: `f`, one pass over the errors EDIT_ERRORS held at the time it was chosen
+# (docs/spec-multi-vm.md#editing). Each kind of error is handled the way the spec lists: an
+# unknown entry is offered for removal, duplicate_server_name and the link errors point to the
+# fix and offer to run it; anything else sends the person to the VM it is about. Before showing
+# an error, it is checked against the current configuration: one an earlier fix in this same
+# pass already resolved is skipped silently. Updates EDIT_CONFIG directly (never called through
+# "$(...)").
+_editor_fix() {
+    local errors="$EDIT_ERRORS" i=0 err code path vm msg still
+    while :; do
+        err="$(jq -c ".[$i] // empty" <<<"$errors")"
+        [[ -n "$err" ]] || break
+        code="$(jq -r '.code' <<<"$err")"
+        path="$(jq -r '.path' <<<"$err")"
+        _editor_compute "$EDIT_CONFIG"
+        still="$(jq --arg c "$code" --arg p "$path" 'any(.[]; .code == $c and .path == $p)' <<<"$EDIT_ERRORS")"
+        if [[ "$still" != true ]]; then
+            i=$((i + 1))
+            continue
+        fi
+        vm="$(jq -r '.vm // empty' <<<"$err")"
+        msg="$(jq -r '.message' <<<"$err")"
+        printf '\n%s: %s [%s]\n' "$path" "$msg" "$code" >&2
+        case "$code" in
+        unknown_key | unknown_component | unknown_option | invalid_value | wrong_type)
+            _read "Remove this entry? (y/n)" y
+            if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
+                # $path is the display form ("$.foo[0].bar"); jq's own path syntax drops the "$"
+                EDIT_CONFIG="$(jq -c "del(${path#\$})" <<<"$EDIT_CONFIG" 2>/dev/null)" ||
+                    log_warn "could not remove $path by itself, edit VM $(_editor_vm_label "$vm") instead"
+            fi
+            ;;
+        duplicate_server_name)
+            _read "Edit VM $vm now to change its server-name? (y/n)" y
+            [[ "$REPLY" != y && "$REPLY" != Y ]] || _editor_edit_vm "$vm"
+            ;;
+        unlinked_vm | engine_unreachable | link_cycle | link_protected_engine)
+            _read "Redo the links (l), edit VM $vm (e), remove it (r), or leave it (any other answer)" l
+            case "$REPLY" in
+            l | L) _editor_redo_links ;;
+            e | E) _editor_edit_vm "$vm" ;;
+            r | R) _editor_remove_vm_checked "$vm" ;;
+            esac
+            ;;
+        missing_requirement | unresolved_engine | unresolved_chat_interface | ambiguous_engine | ambiguous_chat_interface | engine_other_vm | chat_interface_other_vm)
+            if [[ -n "$vm" ]]; then
+                _read "Edit VM $vm now to fix this? (y/n)" y
+                [[ "$REPLY" != y && "$REPLY" != Y ]] || _editor_edit_vm "$vm"
+            else
+                log_warn "fix it by hand, or with e/m/l/n/r"
+            fi
+            ;;
+        *)
+            if [[ -n "$vm" ]]; then
+                _read "Edit VM $vm now to fix this? (y/n)" n
+                [[ "$REPLY" != y && "$REPLY" != Y ]] || _editor_edit_vm "$vm"
+            else
+                log_warn "fix it by hand, or with e/m/l/n/r"
+            fi
+            ;;
+        esac
+        i=$((i + 1))
+    done
+}
+
+# _editor_remove_vm_checked <vm>: `r` from the fix loop, the last VM refused as the real `r`
+# command does.
+_editor_remove_vm_checked() {
+    if (($(apply_vms "$EDIT_CONFIG" | grep -c .) <= 1)); then
+        log_warn "the last VM cannot be removed"
+    else
+        EDIT_CONFIG="$(_editor_remove_vm "$EDIT_CONFIG" "$1")"
+    fi
 }
