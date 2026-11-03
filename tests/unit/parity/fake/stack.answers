@@ -1,4 +1,3 @@
-  # one VM, the default
 # Engine, chat interface, and the proxy it requires; one option changed, a default that warns.
 none  # provisioning
 none  # proxy, it is proposed below
@@ -10,3 +9,4 @@ y  # chat requires proxy: add proxy prox?
   # llmfit is not installed here: install it now? no
 m1, m2  # models to add
 y  # confirm
+  # add another VM: no (default)

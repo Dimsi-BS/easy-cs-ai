@@ -129,15 +129,15 @@ def needs($p; $m; $s): ($m.name | tostring) as $n
         (if ($m.force // false) == true or satisfied("provisioning"; $s) then empty
          else ev($p; "missing_requirement"; "model \($n) needs a provisioning component to check that it fits and none is installed or in the file\(if $ranks.provisioning != null then ": add provisioning \($ranks.provisioning), or set force" else " (or set force)" end)"; $s) end)
     end;
-
 if type != "object" then e("$"; "wrong_type"; "an object is expected") else
-  (only_keys(["schema_version", "components", "models"]; "$")),
+  (only_keys(["schema_version", "components", "models", "links"]; "$")),
   (if has("schema_version") | not then e("$.schema_version"; "wrong_type"; "required")
    elif (.schema_version | type) != "number" then e("$.schema_version"; "wrong_type"; "a number is expected")
    elif .schema_version > '"$APPLY_SCHEMA_VERSION"' then e("$.schema_version"; "unsupported_schema_version"; "\(.schema_version) is newer than the supported version '"$APPLY_SCHEMA_VERSION"'")
    else empty end),
   (if has("components") and (.components | type) != "array" then e("$.components"; "wrong_type"; "an array is expected") else empty end),
   (if has("models") and (.models | type) != "array" then e("$.models"; "wrong_type"; "an array is expected") else empty end),
+  (if has("links") and (.links | type) != "array" then e("$.links"; "wrong_type"; "an array is expected") else empty end),
   (if (.components | type) == "array" then
     (.components | to_entries[] | .key as $i | .value as $c | "$.components[\($i)]" as $p
      | (if ($c | type) == "object" and ($c.vm | type) == "string" then $c.vm else null end) as $cvm
@@ -192,7 +192,7 @@ if type != "object" then e("$"; "wrong_type"; "an object is expected") else
             (if $m.chat_interface == null then empty
              elif ($m.chat_interface | type) != "string" or (known("chat-interface"; $m.chat_interface; $sv) | not) then
                (if named and ($m.chat_interface | type) == "string" and any(comps[]; .type == "chat-interface" and .name == $m.chat_interface)
-                then ev("\($p).chat_interface"; "chat_interface_other_vm"; "\"\($m.chat_interface)\" is on another VM than the model: a link between two VMs is made by hand"; $sv)
+                then ev("\($p).chat_interface"; "chat_interface_other_vm"; "\"\($m.chat_interface)\" is on another VM than the model: a link between two VMs is a links entry of the file, finished by hand"; $sv)
                 else ev("\($p).chat_interface"; "unresolved_chat_interface"; "\"\($m.chat_interface)\" is neither listed in components nor installed"; $sv) end)
              else empty end)
           elif ((listed("chat-interface"; $sv)) | length) > 1 and pick("chat-interface"; $sv) == null then ev("\($p).chat_interface"; "ambiguous_chat_interface"; "several chat interfaces and none is the default, name one or null"; $sv)
@@ -205,6 +205,79 @@ if type != "object" then e("$"; "wrong_type"; "an object is expected") else
      else empty end)
    else empty end)
 end'
+
+# The errors and warnings that need the whole file (several VMs and their
+# `links`), built on top of APPLY_COMMON_JQ: `vm_has`, `protected` and the
+# `link_errs` of docs/spec-config.md#links (unknown_vm, link_to_self,
+# link_without_chat_interface, link_without_engine, link_protected_engine,
+# duplicate_link, link_cycle, unlinked_vm), plus `valid_links` for the cross-VM
+# computations of docs/spec-multi-vm.md (engine_unreachable,
+# engine_address_unknown, duplicate_server_name, next_steps). Needs `$desc` and
+# APPLY_COMMON_JQ already spliced in, as APPLY_VALIDATE_JQ does. Not part of
+# APPLY_VALIDATE_JQ: `apply` installs one VM at a time and does not read
+# `links`, which never reaches a slice. Used by install_scripts/lib/cli-ai.sh.
+# shellcheck disable=SC2016,SC2034
+readonly APPLY_LINKS_JQ='
+def e($p; $c; $m): {path: $p, code: $c, message: $m};
+def ev($p; $c; $m; $v): e($p; $c; $m) + (if $v != null then {vm: $v} else {} end);
+def only_keys($allowed; $p): to_entries[] | select(.key | IN($allowed[]) | not) | e("\($p).\(.key)"; "unknown_key"; "unknown key");
+def has_vm($v): (vms | index($v)) != null;
+def chat_on($v): [comps[] | select(.vm == $v and .type == "chat-interface")];
+def eng_on($v): [comps[] | select(.vm == $v and .type == "engine")];
+def protected($c): ($desc["engine/\($c.name)"].endpoint.protected // false);
+# valid_links: the links of the file that resolve (known VMs, not to self, a chat interface on
+# web_vm, a non-protected engine on engine_vm): the ones a program can act on. A link with any
+# other shape or problem (duplicate, cycle, unknown VM…) is left to link_errs below.
+def valid_links: [(.links // [])[]? | select(type == "object" and (.web_vm | type) == "string" and (.engine_vm | type) == "string")
+  | select(.web_vm != .engine_vm and has_vm(.web_vm) and has_vm(.engine_vm))
+  | select((chat_on(.web_vm) | length) > 0 and (eng_on(.engine_vm) | length) > 0)
+  | select(any(eng_on(.engine_vm)[]; protected(.)) | not)
+  | {web_vm, engine_vm}];
+# link_errs: the errors of the top-level `links` array, see docs/spec-config.md#links.
+# A link is {web_vm, engine_vm}: the chat interface of web_vm lists the models engine_vm serves.
+def link_errs:
+  (.links // []) as $links
+  | if ($links | type) != "array" then empty else
+      ($links | to_entries[] | .key as $i | .value as $l | "$.links[\($i)]" as $p
+       | if ($l | type) != "object" then e($p; "wrong_type"; "an object is expected") else
+           ($l | only_keys(["web_vm", "engine_vm"]; $p)),
+           (if ($l.web_vm | type) != "string" then e("\($p).web_vm"; "wrong_type"; "a string is expected") else empty end),
+           (if ($l.engine_vm | type) != "string" then e("\($p).engine_vm"; "wrong_type"; "a string is expected") else empty end),
+           (if ($l.web_vm | type) == "string" and ($l.engine_vm | type) == "string" then
+              (if named | not then e($p; "unknown_vm"; "the file names no VM: no component has a vm")
+               elif has_vm($l.web_vm) | not then e("\($p).web_vm"; "unknown_vm"; "no component is on VM \"\($l.web_vm)\" (the file names: \(vms | join(", ")))")
+               elif has_vm($l.engine_vm) | not then e("\($p).engine_vm"; "unknown_vm"; "no component is on VM \"\($l.engine_vm)\" (the file names: \(vms | join(", ")))")
+               elif $l.web_vm == $l.engine_vm then e($p; "link_to_self"; "VM \"\($l.web_vm)\" cannot link its own engine, that is what add does on one VM")
+               elif (chat_on($l.web_vm) | length) == 0 then e("\($p).web_vm"; "link_without_chat_interface"; "VM \"\($l.web_vm)\" has no chat interface to list the models of \($l.engine_vm)")
+               elif (eng_on($l.engine_vm) | length) == 0 then e("\($p).engine_vm"; "link_without_engine"; "VM \"\($l.engine_vm)\" has no engine for \($l.web_vm) to reach")
+               elif any(eng_on($l.engine_vm)[]; protected(.)) then e($p; "link_protected_engine"; "the engine of VM \"\($l.engine_vm)\" is protected: it enforces HTTPS and its key itself, and is not put behind a proxy, so no documented way links it to a chat interface")
+               else empty end)
+            else empty end)
+         end),
+      ([$links | to_entries[] | select((.value | type) == "object" and (.value.web_vm | type) == "string" and (.value.engine_vm | type) == "string") | {i: .key, k: [.value.web_vm, .value.engine_vm]}]
+       | group_by(.k)[] | select(length > 1) | .[1:][] | e("$.links[\(.i)]"; "duplicate_link"; "the link \(.k[0]) -> \(.k[1]) is already given")),
+      (def reaches($adj; $from; $to; $seen):
+         if $from == $to then true
+         elif ($seen | index($from)) != null then false
+         else any(($adj[$from] // [])[]; reaches($adj; .; $to; $seen + [$from]))
+         end;
+       ([$links | to_entries[] | select((.value | type) == "object" and (.value.web_vm | type) == "string" and (.value.engine_vm | type) == "string"
+           and .value.web_vm != .value.engine_vm and has_vm(.value.web_vm) and has_vm(.value.engine_vm)
+           and (chat_on(.value.web_vm) | length) > 0 and (eng_on(.value.engine_vm) | length) > 0
+           and (any(eng_on(.value.engine_vm)[]; protected(.)) | not))
+         | {i: .key, w: .value.web_vm, en: .value.engine_vm}]) as $valid
+       | (reduce $valid[] as $l ({adj: {}, errs: []};
+            if reaches(.adj; $l.en; $l.w; []) then .errs += [{i: $l.i, w: $l.w, en: $l.en}]
+            else .adj[$l.w] = ((.adj[$l.w] // []) + [$l.en]) end)).errs[]
+       | e("$.links[\(.i)]"; "link_cycle"; "the links close a cycle: \(.w) and \(.en) would reach each other, directly or through others, a VM cannot link its own engine through other VMs")),
+      (if (vms | length) >= 2 then
+         ([$links[]? | select(type == "object") | (.web_vm, .engine_vm) | select(type == "string")]) as $linked
+         | (vms[] as $v | select(($linked | index($v)) == null)
+            | (([(.components // []) | to_entries[] | select((.value | type) == "object" and .value.vm == $v) | .key])[0]) as $fi
+            | ev("$.components[\($fi)]"; "unlinked_vm"; "VM \"\($v)\" is in no link: a configuration with several VMs describes machines that work together, link it, edit it, or remove it"; $v))
+       else empty end)
+    end;
+'
 
 # apply_describes <config>: describe of every listed component that is shipped.
 apply_describes() {

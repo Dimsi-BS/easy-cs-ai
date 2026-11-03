@@ -1,4 +1,3 @@
-  # one VM, the default
 # llmfit in the stack and ready: the models are named, the VM they need is only shown.
   # provisioning: llmfit
 none  # proxy
@@ -9,3 +8,4 @@ m  # order: models first
 m1, m2  # models to add
 y  # m1, m2 need a proxy: add prox? yes
 y  # confirm
+  # add another VM: no (default)

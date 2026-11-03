@@ -1,4 +1,3 @@
-  # one VM, the default
 # llmfit in the stack and ready: the specs of the VM, a suggestion, the first one is picked.
   # provisioning: llmfit, the rank 1
 none  # proxy
@@ -12,3 +11,4 @@ none  # chat-interface
 1  # models: the first suggestion
 y  # llama3.2:3b needs a proxy: add prox? yes
 y  # confirm
+  # add another VM: no (default)

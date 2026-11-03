@@ -236,7 +236,12 @@ def comp_schema:
          engine: ({type: "string", description: "default: the only engine listed, else the one with default true"} + (if ($engines | length) > 0 then {enum: $engines} else {} end)),
          vm: {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: "the VM the model is installed on, with engine its place; only in a file whose components have a vm. Default: the VM of the engine"},
          chat_interface: ({type: ["string", "null"], description: "default: like engine, none when no chat interface is listed; null for none"} + (if ($chats | length) > 0 then {enum: ($chats + [null])} else {} end)),
-         force: {type: "boolean", description: "true skips the llmfit fit check"}}}}}}'
+         force: {type: "boolean", description: "true skips the llmfit fit check"}}}},
+     links: {type: "array", description: "which VM reaches the engine of which other VM, in a file whose components carry a vm; the link is finished by hand once the VMs are up",
+             items: {type: "object", required: ["web_vm", "engine_vm"], additionalProperties: false,
+                     properties: {
+                       web_vm: {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: "the VM whose chat interface lists the models"},
+                       engine_vm: {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: "the VM whose engine, through its proxy, serves the models"}}}}}}'
 
 readonly CONFIG_RULES='A deployment: which components, with which options, and which models. At most one entry per component (per VM when components carry a vm: on every component or on none, a model goes to the engine of one VM), at most one default per type (and per VM), the order of the entries carries no meaning (the install order comes from requires). A component required by another (see its description) must be listed or already installed. A secret option is never a plain value: give {"file": path} (mode 0600), {"env": NAME} or {"generate": true}. Validate with: easy-cs-ai config validate FILE --target fresh|this --json'
 
@@ -265,61 +270,85 @@ readonly CONFIG_PLAN_JQ='. as $cfg
         + (if $installed != null then {installed: ($installed | index($c.name) != null)} else {} end)],
      models: $models, prune: $prune}'
 
-# The warnings that come from the validation itself and the next steps of a file that names VMs, see
-# docs/spec-multi-vm.md: `models_not_checked` (per VM), `engine_unreachable` and `engine_address_unknown`
-# (computed on the whole file, so never by a validation of one slice), and the instructions the
-# administrator follows once the VMs are up. Arguments: $desc and $installed, like the validation.
-# Output: {warnings, next_steps}. The text of a step names only actions and options the `describe`
-# of the scripts declares, so the CLI never gives a command that fails.
+# The errors and warnings that come from the validation itself and the next steps of a file that
+# names VMs, see docs/spec-multi-vm.md: `models_not_checked` (per VM), `engine_unreachable` and
+# `duplicate_server_name` (errors) and `engine_address_unknown` (warning), all computed on the
+# whole file so never by a validation of one slice, and the instructions the administrator follows
+# once the VMs are up, from the file's `links` (docs/spec-config.md#links). Arguments: $desc and
+# $installed, like the validation. Output: {errors, warnings, next_steps}. The text of a step names
+# only actions and options the `describe` of the scripts declares, so the CLI never gives a command
+# that fails.
 # shellcheck disable=SC2016
-readonly CONFIG_CROSS_JQ='. as $cfg | '"$APPLY_COMMON_JQ"'
+readonly CONFIG_CROSS_JQ='. as $cfg | '"$APPLY_COMMON_JQ$APPLY_LINKS_JQ"'
 def vm_has($v; $t): any(comps[]; .vm == $v and .type == $t);
-def eng_on($v): [comps[] | select(.vm == $v and .type == "engine")];
-def protected($c): ($desc["engine/\($c.name)"].endpoint.protected // false);
 def models_on($v): [places[] | select(.p.err == null and .p.vm == $v) | .m];
 def vmw($v): if $v != null then {vm: $v} else {} end;
-def layout: if named and (vms | length) == 2 then
-    ([vms[] as $e | vms[] as $w | select($e != $w and vm_has($e; "engine") and (vm_has($e; "chat-interface") | not)
-        and vm_has($w; "chat-interface") and (eng_on($w) | length) == 0) | {e: $e, w: $w}][0]) else null end;
 def proxy_of($v): [comps[] | select(.vm == $v and .type == "proxy")][0];
-def exposed($l): $l != null and vm_has($l.e; "proxy") and (eng_on($l.e) | all(protected(.) | not));
+def chat_of($v): chat_on($v)[0];
 def tls_of($p): ($p.options.tls // ($desc["proxy/\($p.name)"].options[]? | select(.name == "tls") | .default) // "self-signed");
 def not_checked: [(if named then vms else [null] end)[] as $v
   | select(any(places[]; .p.err == null and .p.vm == $v and .m.force == true) and ((listed("provisioning"; $v) | length) == 0))
   | {path: "$.models", code: "models_not_checked", message: "models not checked for fit on the VM: llmfit is not part of the stack"} + vmw($v)];
-def unreachable: if named then [vms[] as $v
-  | select(any(eng_on($v)[]; protected(.) | not) and (vm_has($v; "proxy") | not) and (models_on($v) | length) == 0
-           and any(vms[]; . != $v and vm_has(.; "chat-interface")))
+def linked_engines: [valid_links[] | .engine_vm] | unique;
+def unreachable: [linked_engines[] as $v
+  | select((vm_has($v; "proxy") | not) and (models_on($v) | length) == 0)
   | {path: "$.components", code: "engine_unreachable", vm: $v,
-     message: "The engine listens on the loopback of its VM and nothing exposes it: the chat interface of the other VM cannot reach it. Add a proxy to that VM before the first model"}] else [] end;
-def address_unknown: layout as $l | if exposed($l) and (models_on($l.e) | length) > 0 then
-    (proxy_of($l.e)) as $p
-    | if ($p.options // {} | has("server-name") | not) and tls_of($p) == "self-signed" then
-        [{path: "$.components", code: "engine_address_unknown", vm: $l.e,
-          message: "The address of the engine VM is not known yet: its proxy will take the host name of the machine as its server name, and a self-signed certificate will also cover the addresses the machine has when it is installed. The web VM must reach the engine VM by one of those names or addresses. If none does, re-run `install proxy \($p.name)` on the engine VM with the options it was installed with and `--server-name <name or address>` (an option left out returns to its default), before linking the models"}]
-      else [] end
-  else [] end;
-def steps: layout as $l | if (vms | length) < 2 then [] else
-    (if exposed($l) then proxy_of($l.e) else null end) as $p
-    | ([comps[] | select(.vm == $l.w and .type == "chat-interface")][0]) as $c
-    | (if $l != null and $p != null and (models_on($l.e) | length) > 0 and $c != null
-          and (["install", "status", "show-key", "list-upstreams"] - ($desc["proxy/\($p.name)"].actions // []) | length) == 0
-          and (["model", "api-key-file", "ca-file"] - (($desc["chat-interface/\($c.name)"].action_options["add-endpoint"] // []) | map(.name)) | length) == 0
-       then true else false end) as $full
-    | [(if $full then "Run each script as root on its VM, the \($l.e) VM first." else "Run each script as root on its VM." end)]
-      + (if $full then
-          ["On the \($l.e) VM, read the API key, the URL of each model and the names\nand addresses its certificate covers:\n  sudo easy-cs-ai component proxy \($p.name) show-key\n  easy-cs-ai component proxy \($p.name) list-upstreams\n  easy-cs-ai component proxy \($p.name) status          (certificate_names)",
-           "Let the \($l.w) VM reach the \($l.e) VM on the HTTPS port of its proxy\n(443 unless you set --port): firewall, security group.",
-           "On the \($l.w) VM, link each model:\n"
-           + ([models_on($l.e)[] | "  sudo easy-cs-ai component chat-interface \($c.name) add-endpoint <name> <url> \\\n    --model \(.name) --api-key-file <file>"] | join("\n"))
-           + "\n<name> is free, <url> is the one read in step 2, <file> holds the key\n(mode 0600, or - for stdin).\nWith the default self-signed certificate, copy the certificate of the\nengine VM (/etc/easy-cs-ai/nginx/server.crt) to the web VM and add\n--ca-file <file>. The host in <url> must be one the certificate covers\n(certificate_names, step 2): the server name printed by list-upstreams,\nor, when no server name was given, an address of the engine VM, which\nyou put in place of the host. If the web VM can reach neither, or the\naddress changed since the proxy was installed, re-run on the engine VM\n  sudo easy-cs-ai install proxy \($p.name) <the options it was installed with> \\\n    --server-name <name or address>\n(an option left out returns to its default) which renews a self-signed\ncertificate (copy it again), then read step 2 again."]
-        else [] end)
+     message: "The engine listens on the loopback of its VM and nothing exposes it: the chat interface of the linked VM cannot reach it. Add a proxy to that VM, or remove the link"}];
+def exposed_engines: [linked_engines[] | select(vm_has(.; "proxy"))];
+def address_unknown: [exposed_engines[] as $v | select((models_on($v) | length) > 0)
+  | proxy_of($v) as $p
+  | select(($p.options // {} | has("server-name") | not) and (tls_of($p) == "self-signed"))
+  | {path: "$.components", code: "engine_address_unknown", vm: $v,
+     message: "The address of the engine VM is not known yet: its proxy will take the host name of the machine as its server name, and a self-signed certificate will also cover the addresses the machine has when it is installed. The linked VM must reach the engine VM by one of those names or addresses. If none does, re-run `install proxy \($p.name)` on the engine VM with the options it was installed with and `--server-name <name or address>` (an option left out returns to its default), before linking the models"}];
+def server_names: [(.components // []) | to_entries[]
+  | select((.value | type) == "object" and .value.type == "proxy" and ((.value.options // {}) | has("server-name")))
+  | {i: .key, vm: .value.vm, name: ((.value.options["server-name"]) | tostring | ascii_downcase)}];
+def dup_server_name: [server_names | group_by(.name)[] | select((map(.vm) | unique | length) > 1)
+  | . as $g | ($g[0].vm) as $first | $g[1:][] | select(.vm != $first)
+  | {path: "$.components[\(.i)].options.server-name", code: "duplicate_server_name", vm: .vm,
+     message: "VM \"\(.vm)\" repeats the server-name of VM \"\($first)\": two machines cannot answer to the same name. Give each VM its own name, or leave it out"}];
+def steps_links: [valid_links[] | select(vm_has(.engine_vm; "proxy") and (models_on(.engine_vm) | length) > 0)];
+def engines_of_steps: [steps_links[] | .engine_vm] | unique;
+def full: (steps_links | length) > 0 and all(steps_links[];
+    (proxy_of(.engine_vm)) as $p | (chat_of(.web_vm)) as $c
+    | $p != null and $c != null
+      and (["install", "status", "show-key", "list-upstreams"] - ($desc["proxy/\($p.name)"].actions // []) | length) == 0
+      and (["model", "api-key-file", "ca-file"] - (($desc["chat-interface/\($c.name)"].action_options["add-endpoint"] // []) | map(.name)) | length) == 0);
+def steps: steps_links as $sl | if ($sl | length) == 0 then (if (vms | length) < 2 then [] else ["Run each script as root on its VM."] end)
+  else
+    full as $full
+    | if ($full | not) then ["Run each script as root on its VM."]
+      else
+        engines_of_steps as $evms
+        | ["Run each script as root on its VM, the \($evms | join(", ")) VM\(if ($evms | length) > 1 then "s" else "" end) first."]
+          + [$evms[] as $ev | (proxy_of($ev)) as $p
+             | "On the \($ev) VM, read the API key, the URL of each model and the names\nand addresses its certificate covers:\n  sudo easy-cs-ai component proxy \($p.name) show-key\n  easy-cs-ai component proxy \($p.name) list-upstreams\n  easy-cs-ai component proxy \($p.name) status          (certificate_names)"]
+          + [$evms[] as $ev | ([$sl[] | select(.engine_vm == $ev) | .web_vm]) as $wvms
+             | "Let the \($wvms | join(", ")) VM\(if ($wvms | length) > 1 then "s" else "" end) reach the \($ev) VM on the HTTPS port of its proxy\n(443 unless you set --port): firewall, security group."]
+          + [$sl[] as $l | (chat_of($l.web_vm)) as $c
+             | "On the \($l.web_vm) VM, link each model of the \($l.engine_vm) VM:\n"
+               + ([models_on($l.engine_vm)[] | "  sudo easy-cs-ai component chat-interface \($c.name) add-endpoint \($l.engine_vm)-\(.name) <url> \\\n    --model \(.name) --api-key-file <file>"] | join("\n"))
+               + "\n<url> is the one read in step 2, <file> holds the key (mode 0600, or - for\nstdin), and the endpoint name is suggested unique on the VM (a chat\ninterface may link several engine VMs).\nWith the default self-signed certificate, copy the certificate of the\n\($l.engine_vm) VM (/etc/easy-cs-ai/nginx/server.crt) to the \($l.web_vm) VM and add\n--ca-file <file>. The host in <url> must be one the certificate covers\n(certificate_names, step 2): the server name printed by list-upstreams,\nor, when no server name was given, an address of the \($l.engine_vm) VM, which\nyou put in place of the host. If the \($l.web_vm) VM can reach neither, or the\naddress changed since the proxy was installed, re-run on the \($l.engine_vm) VM\n  sudo easy-cs-ai install proxy \((proxy_of($l.engine_vm)).name) <the options it was installed with> \\\n    --server-name <name or address>\n(an option left out returns to its default) which renews a self-signed\ncertificate (copy it again), then read step 2 again."]
+      end
   end;
-{warnings: (not_checked + unreachable + address_unknown), next_steps: steps}'
+{errors: ([link_errs] + unreachable + dup_server_name), warnings: (not_checked + address_unknown), next_steps: steps}'
 
-# config_cross <config> <desc>: {warnings, next_steps}, see CONFIG_CROSS_JQ.
+# config_cross <config> <desc>: {errors, warnings, next_steps}, see CONFIG_CROSS_JQ.
 config_cross() {
     jq -c --argjson desc "$2" --argjson installed '{}' "$CONFIG_CROSS_JQ" <<<"$1"
+}
+
+# config_validate_cross <config> <desc>: print the errors that need the whole file (the `links`
+# codes, `engine_unreachable`, `duplicate_server_name`, see docs/spec-multi-vm.md#validation) and
+# exit 2 when any. `generate --config` calls this before writing any script, as `config validate`
+# does through `config_report`'s exit code; `apply` does not, see docs/spec-config.md#links.
+config_validate_cross() {
+    local problems line
+    problems="$(config_cross "$1" "$2" | jq -r '.errors[] | "\(.path): \(.message)"')"
+    if [[ -n "$problems" ]]; then
+        while IFS= read -r line; do log_error "$line"; done <<<"$problems"
+        fail "$EXIT_USAGE" "the configuration is invalid"
+    fi
 }
 
 # next_steps_text <next_steps-json>: what a person reads after the scripts are written. The title,
@@ -359,16 +388,17 @@ config_report() {
     desc="$(apply_describes "$config")"
     errors="$(apply_problems "$config" "$desc" true "$hostids")"
     warnings="$(jq -c --argjson desc "$desc" "$CONFIG_WARNINGS_JQ" <<<"$config" 2>/dev/null)" || warnings='[]'
-    # what the validation itself warns about, and the steps left once the VMs are up
-    cross="$(config_cross "$config" "$desc" 2>/dev/null)" || cross='{"warnings":[],"next_steps":[]}'
+    # what the validation itself refuses or warns about (links included), and the steps left once
+    # the VMs are up
+    cross="$(config_cross "$config" "$desc" 2>/dev/null)" || cross='{"errors":[],"warnings":[],"next_steps":[]}'
     if [[ -n "$vm" ]]; then
-        # a validation of one slice gives neither the warnings nor the steps that need the other VMs
-        cross="$(jq -c '.warnings |= map(select(.code != "engine_unreachable" and .code != "engine_address_unknown")) | .next_steps = []' <<<"$cross")"
+        # a validation of one slice gives none of the errors, warnings or steps that need the other VMs
+        cross='{"errors":[],"warnings":[],"next_steps":[]}'
         errors="$(jq -c --arg vm "$vm" 'map(select(.vm == null or .vm == $vm))' <<<"$errors")"
         warnings="$(jq -c --arg vm "$vm" 'map(select(.vm == null or .vm == $vm))' <<<"$warnings")"
-        cross="$(jq -c --arg vm "$vm" '.warnings |= map(select(.vm == null or .vm == $vm))' <<<"$cross")"
     fi
     warnings="$(jq -c --argjson c "$cross" '. + $c.warnings' <<<"$warnings")"
+    errors="$(jq -c --argjson c "$cross" '. + $c.errors' <<<"$errors")"
     [[ "$target" != this ]] || installed="$(state_list | jq -R . | jq -sc .)"
     if [[ "$errors" == '[]' ]]; then
         if ((named)); then
@@ -385,7 +415,7 @@ config_report() {
                     errors="$(jq -c --arg v "$v" '. + [{path: "$.components", vm: $v, code: "circular_requirement", message: "the requirements of the listed components are circular"}]' <<<"$errors")"
                 fi
             done <<<"$vmlist"
-            plan="$(jq -c '{vms: .}' <<<"$vmplans")"
+            plan="$(jq -c --argjson links "$(jq -c '.links // []' <<<"$config")" '{vms: ., links: $links}' <<<"$vmplans")"
             [[ "$errors" == '[]' ]] || plan=null
             [[ "$errors" != '[]' ]] || steps="$(jq -c '.next_steps' <<<"$cross")"
         elif order="$(apply_order "$config" "$desc" 2>/dev/null)"; then

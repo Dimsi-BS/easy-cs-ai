@@ -1,4 +1,3 @@
-  # one VM, the default
 # The default stack of the shipped scripts, every option left at its default, one model.
   # provisioning: llmfit, the rank 1
   # proxy: nginx
@@ -32,3 +31,4 @@
   # llmfit is not installed here: install it now? no
 llama3.2:3b  # models to add
 y  # confirm
+  # add another VM: no (default)

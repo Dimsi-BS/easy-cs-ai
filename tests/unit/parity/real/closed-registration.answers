@@ -1,4 +1,3 @@
-  # one VM, the default
 # No llmfit, a server name, the registration closed: nothing warns, the model is added unchecked.
 none  # provisioning
   # proxy: nginx
@@ -29,3 +28,4 @@ false  # librechat --allow-registration
   # llmfit is not installed here: install it now? no
 llama3.2:3b  # models to add
 y  # confirm
+  # add another VM: no (default)
