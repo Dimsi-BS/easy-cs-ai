@@ -500,7 +500,10 @@ run_editor() {
                 printf 'removing VM %s: %s\n' "$arg1" \
                     "$(jq -r --arg v "$arg1" '[.components[] | select(.vm == $v) | "\(.type) \(.name)"] | join(", ")' <<<"$EDIT_CONFIG")" >&2
                 _read "Remove VM $arg1? (y/n)" y
-                [[ "$REPLY" != y && "$REPLY" != Y ]] || EDIT_CONFIG="$(_editor_remove_vm "$EDIT_CONFIG" "$arg1")"
+                if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
+                    EDIT_CONFIG="$(_editor_remove_vm "$EDIT_CONFIG" "$arg1")"
+                    _editor_maybe_flatten
+                fi
             fi
             ;;
         f | F) _editor_fix ;;

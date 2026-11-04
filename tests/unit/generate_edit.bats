@@ -181,12 +181,35 @@ JSON
 @test "r <vm> removes it with its components, its models and the links naming it" {
     two_vm_file f.json
     GEN_ARGS=("${PKG[@]}" --output f.sh)
-    edit f.json "r web" y y
+    # k: keep the vm field down to one VM (see the dedicated tests below for the default, drop)
+    edit f.json "r web" y k y
     [ "$status" -eq 0 ]
     [ "$(jq -r '[.components[].vm] | unique | join(",")' f.json)" = engine ]
     [ "$(jq -c '.links' f.json)" = '[]' ]
     [ -x f-engine.sh ]
     [ ! -e f-web.sh ]
+}
+
+@test "removing down to one VM asks to keep its vm field or drop it; default drops it" {
+    two_vm_file f.json
+    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    edit f.json "r web" y "" y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"One VM is left: keep its vm field (k), or drop it, a one-VM file (d) [d]:"* ]]
+    [ "$(jq 'any(.components[]; has("vm"))' f.json)" = false ]
+    [ "$(jq 'has("links")' f.json)" = false ]
+    [ -x f.sh ]
+    [ ! -e f-engine.sh ]
+}
+
+@test "removing down to one VM, k keeps the vm field (one name, no links)" {
+    two_vm_file f.json
+    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    edit f.json "r web" y k y
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.components[0].vm' f.json)" = engine ]
+    [ "$(jq -c '.links' f.json)" = '[]' ]
+    [ -x f-engine.sh ]
 }
 
 @test "the last VM cannot be removed" {
@@ -231,6 +254,38 @@ JSON
     [ "$status" -eq 0 ]
     [ "$(jq -r '[.models[].name] | join(",")' f.json)" = "m1,m2" ]
     [ "$(jq -r '[.components[] | select(.vm == "engine") | .type] | join(",")' f.json)" = "proxy,engine" ]
+}
+
+# --- e: cascade when a dependent (a model, a link) is removed with its component --------------
+
+@test "e <vm> removing the engine announces its models; n leaves them (an error f then fixes)" {
+    two_vm_file f.json
+    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    before="$(cat f.json)"
+    # VM engine: keep proxy, decline engine, decline chat-interface, its options, confirm
+    edit f.json "e engine" "" "" n n "" "" y n q
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"removing the engine also removes 1 model(s) of VM engine"* ]]
+    [[ "$stderr" == *"unresolved_engine"* ]]
+    [ "$(cat f.json)" = "$before" ]
+}
+
+@test "e <vm> removing the engine, y removes its models too" {
+    two_vm_file f.json
+    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    edit f.json "e engine" "" "" n n "" "" y y q
+    [[ "$stderr" == *"removing the engine also removes 1 model(s) of VM engine"* ]]
+    [[ "$stderr" != *"unresolved_engine"* ]]
+}
+
+@test "e <vm> removing the chat interface announces the links that reach it; y removes them" {
+    two_vm_file f.json
+    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    # VM web: keep proxy, decline engine (not shipped there), decline chat-interface, options, confirm
+    edit f.json "e web" "" "" "" n "" "" y y q
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"removing the chat interface leaves 1 link(s) from VM web without one"* ]]
+    [[ "$stderr" != *"link_without_chat_interface"* ]]
 }
 
 # --- a: add a VM -----------------------------------------------------------------------------
@@ -281,4 +336,52 @@ JSON
     edit f.json f y y
     [ "$status" -eq 0 ]
     [ "$(jq 'has("ghost")' f.json)" = false ]
+}
+
+@test "f on wrong_type re-asks that one option directly" {
+    two_vm_file f.json
+    jq '.components[0].options = {"tls": {"bad": true}}' f.json >f.json.tmp && mv f.json.tmp f.json
+    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    edit f.json f lets-encrypt y
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.components[0].options.tls' f.json)" = "lets-encrypt" ]
+}
+
+@test "f on duplicate_server_name re-asks the second VM's server-name directly" {
+    two_vm_file f.json
+    jq '.components[0].options["server-name"] = "same" | .components[2].options["server-name"] = "same"' f.json >f.json.tmp && mv f.json.tmp f.json
+    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    edit f.json f other y
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.components[0].options["server-name"]' f.json)" = "same" ]
+    [ "$(jq -r '.components[2].options["server-name"]' f.json)" = "other" ]
+}
+
+@test "f on missing_requirement adds the missing proxy directly" {
+    cat >one.json <<'JSON'
+{ "schema_version": 1, "components": [ { "type": "engine", "name": "eng" } ], "models": [ { "name": "m1", "force": true } ] }
+JSON
+    GEN_ARGS=("${PKG[@]}" --output one.sh)
+    edit one.json f y "" "" "" y
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '[.components[] | select(.type == "proxy") | .name] | join(",")' one.json)" = "prox" ]
+}
+
+@test "f on unresolved_engine re-asks that model's place directly" {
+    two_vm_file f.json
+    jq '.models[0].engine = "ghost"' f.json >f.json.tmp && mv f.json.tmp f.json
+    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    edit f.json f "" eng y
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.models[0].engine' f.json)" = "eng" ]
+    [ "$(jq -r '.models[0].vm' f.json)" = "engine" ]
+}
+
+@test "f on link_to_self offers to redo the links" {
+    two_vm_file f.json
+    jq '.links += [{"web_vm":"web","engine_vm":"web"}]' f.json >f.json.tmp && mv f.json.tmp f.json
+    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    edit f.json f l engine y
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.links' f.json)" = '[{"web_vm":"web","engine_vm":"engine"}]' ]
 }
