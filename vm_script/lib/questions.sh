@@ -894,11 +894,12 @@ _editor_seed() {
     done < <(jq -r '.models[]?.name' <<<"$slice")
 }
 
-# step_options_edit: like step_options, but the default of each option is its current value
-# (from OPTV, seeded by _editor_seed) rather than the describe's default.
+# step_options_edit [<only>]: like step_options, but the default of each option is its current
+# value (from OPTV, seeded by _editor_seed) rather than the describe's default.
 step_options_edit() {
-    local t name oname default secret descr cur
+    local only="${1:-}" t name oname default secret descr cur
     for t in "${TYPES[@]}"; do
+        [[ -z "$only" || "$t" == "$only" ]] || continue
         name="${SEL[$t]:-}"
         [[ -n "$name" ]] || continue
         _describe_of "$t" "$name"
@@ -918,7 +919,7 @@ step_options_edit() {
             elif [[ -n "$REPLY" ]]; then
                 OPTV[$name]="$(jq -c --arg k "$oname" --arg v "$REPLY" '. + {($k): $v}' <<<"${OPTV[$name]}")"
             fi
-        done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (.description // "")] | join("")' <<<"${DESC[$name]}")
+        done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (.description // "")] | join("\u001f")' <<<"${DESC[$name]}")
     done
 }
 
@@ -1099,11 +1100,29 @@ _ask_links_for_one() {
 # own confirm leaves that VM untouched. Updates EDIT_CONFIG directly (see _editor_add_vm: never
 # called through "$(...)").
 _editor_edit_vm() {
-    local vm="$1" slice
+    local vm="$1" slice old_engine old_chat new_engine new_chat nmodels nlinks label
     slice="$(_editor_slice "$EDIT_CONFIG" "$vm")"
+    old_engine="$(jq -r '[.components[] | select(.type == "engine") | .name] | length' <<<"$slice")"
+    old_chat="$(jq -r '[.components[] | select(.type == "chat-interface") | .name] | length' <<<"$slice")"
     _editor_seed "$slice"
-    if _editor_run_pass "$(_editor_vm_label "$vm")"; then
+    label="$(_editor_vm_label "$vm")"
+    if _editor_run_pass "$label"; then
+        new_engine="$(jq -r '[.components[] | select(.type == "engine") | .name] | length' <<<"$PASS_CONFIG")"
+        new_chat="$(jq -r '[.components[] | select(.type == "chat-interface") | .name] | length' <<<"$PASS_CONFIG")"
+        # removing the engine of this VM leaves its own models without one; removing its chat
+        # interface leaves the links that reach it without one (docs/spec-multi-vm.md#editing)
+        if ((old_engine > 0 && new_engine == 0)) && ((nmodels = $(jq '[.models[]?] | length' <<<"$slice"))); then
+            printf 'removing the engine also removes %d model(s) of VM %s\n' "$nmodels" "$label" >&2
+            _read "Remove them too? (y/n)" y
+            [[ "$REPLY" == y || "$REPLY" == Y ]] || PASS_CONFIG="$(jq -c --argjson m "$(jq -c '.models // []' <<<"$slice")" '.models = $m' <<<"$PASS_CONFIG")"
+        fi
         EDIT_CONFIG="$(_editor_set_vm_slice "$EDIT_CONFIG" "$vm" "$PASS_CONFIG")"
+        if ((old_chat > 0 && new_chat == 0)) && ((nlinks = $(jq --arg v "$vm" '[(.links // [])[] | select(.web_vm == $v)] | length' <<<"$EDIT_CONFIG"))); then
+            printf 'removing the chat interface leaves %d link(s) from VM %s without one\n' "$nlinks" "$label" >&2
+            _read "Remove them too? (y/n)" y
+            [[ "$REPLY" != y && "$REPLY" != Y ]] ||
+                EDIT_CONFIG="$(jq -c --arg v "$vm" '.links = ((.links // []) | map(select(.web_vm != $v)))' <<<"$EDIT_CONFIG")"
+        fi
     else
         log_info "unchanged"
     fi
@@ -1170,13 +1189,119 @@ _editor_remove_vm() {
         | (if has("links") then .links |= map(select(.web_vm != $v and .engine_vm != $v)) else . end)' <<<"$1"
 }
 
+# _editor_maybe_flatten: after a removal leaves exactly one VM, asks whether to keep its vm
+# field (one name) or drop it together with the links, a one-VM file (docs/spec-multi-vm.md
+# #editing). Default: drop. Updates EDIT_CONFIG directly (never called through "$(...)").
+_editor_maybe_flatten() {
+    apply_named "$EDIT_CONFIG" || return 0
+    (($(apply_vms "$EDIT_CONFIG" | grep -c .) == 1)) || return 0
+    _read "One VM is left: keep its vm field (k), or drop it, a one-VM file (d)" d
+    if [[ "$REPLY" != k && "$REPLY" != K ]]; then
+        EDIT_CONFIG="$(jq -c '
+            .components |= map(del(.vm))
+            | (if has("models") then .models |= map(del(.vm)) else . end)
+            | del(.links)' <<<"$EDIT_CONFIG")"
+    fi
+}
+
+# _editor_reask_option <path>: re-asks one option directly ("$.components[N].options.OPT"), its
+# current value as the default; used for an option outside its values and for
+# duplicate_server_name, which names the same shape of path (docs/spec-multi-vm.md#editing: "an
+# option outside its values asks that option again with its default"; "duplicate_server_name
+# re-asks the server-name option of the second VM"). Returns 1 when the path is not that shape.
+_editor_reask_option() {
+    local path="$1" idx opt type name oname default secret descr cur
+    [[ "$path" =~ ^\$\.components\[([0-9]+)\]\.options\.(.+)$ ]] || return 1
+    idx="${BASH_REMATCH[1]}"
+    opt="${BASH_REMATCH[2]}"
+    type="$(jq -r ".components[$idx].type // empty" <<<"$EDIT_CONFIG")"
+    name="$(jq -r ".components[$idx].name // empty" <<<"$EDIT_CONFIG")"
+    [[ -n "$type" ]] || return 1
+    _describe_of "$type" "$name"
+    while IFS=$'\x1f' read -r oname default secret descr <&3; do
+        [[ "$oname" == "$opt" ]] || continue
+        cur="$(jq -r --argjson i "$idx" --arg k "$opt" '.components[$i].options[$k] // empty' <<<"$EDIT_CONFIG")"
+        [[ -n "$cur" ]] || cur="$default"
+        printf '  %s\n' "$descr" >&2
+        _read "$name --$oname" "$cur"
+        if [[ "$REPLY" == "$default" ]]; then
+            EDIT_CONFIG="$(jq -c --argjson i "$idx" --arg k "$opt" '
+                .components[$i].options |= ((. // {}) | del(.[$k]))' <<<"$EDIT_CONFIG")"
+        else
+            EDIT_CONFIG="$(jq -c --argjson i "$idx" --arg k "$opt" --arg v "$REPLY" '
+                .components[$i].options |= ((. // {}) + {($k): $v})' <<<"$EDIT_CONFIG")"
+        fi
+        return 0
+    done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (.description // "")] | join("\u001f")' <<<"${DESC[$name]}")
+    return 1
+}
+
+# _editor_reask_model_place <path>: a model whose vm/engine/chat_interface does not resolve
+# ("a model that resolves to no engine asks its place again", docs/spec-multi-vm.md#editing).
+# Returns 1 when the path is not that shape.
+_editor_reask_model_place() {
+    local path="$1" idx name vm engine
+    [[ "$path" =~ ^\$\.models\[([0-9]+)\]\.(engine|vm|chat_interface)$ ]] || return 1
+    idx="${BASH_REMATCH[1]}"
+    name="$(jq -r ".models[$idx].name // empty" <<<"$EDIT_CONFIG")"
+    [[ -n "$name" ]] || return 1
+    printf '  engines available: %s\n' \
+        "$(jq -r '[.components[] | select(.type == "engine") | "\(.vm // "-")/\(.name)"] | join(", ")' <<<"$EDIT_CONFIG")" >&2
+    _read "VM of the engine for model $name (empty: resolve it from the file)" "$(jq -r ".models[$idx].vm // empty" <<<"$EDIT_CONFIG")"
+    vm="$REPLY"
+    _read "Engine for model $name on VM $(_editor_vm_label "$vm") (empty: resolve it)" "$(jq -r ".models[$idx].engine // empty" <<<"$EDIT_CONFIG")"
+    engine="$REPLY"
+    EDIT_CONFIG="$(jq -c --argjson i "$idx" --arg v "$vm" --arg e "$engine" '
+        (if $v == "" then del(.models[$i].vm) else .models[$i].vm = $v end)
+        | (if $e == "" then del(.models[$i].engine) else .models[$i].engine = $e end)' <<<"$EDIT_CONFIG")"
+}
+
+# _editor_reask_requirement <vm> <message>: `missing_requirement` proposes the component that is
+# missing ("Add <proxy>? (y/n)", then its options, docs/spec-multi-vm.md#editing). Returns 1 when
+# the message names neither a proxy nor a provisioning component (what a model needs, see
+# docs/spec-config.md#what-a-model-needs: there is no other kind of missing_requirement for a VM
+# the editor can add from its catalog).
+_editor_reask_requirement() {
+    local vm="$1" msg="$2" type names rank slice
+    if [[ "$msg" == *"needs a proxy"* ]]; then
+        type=proxy
+    elif [[ "$msg" == *"provisioning component"* ]]; then
+        type=provisioning
+    else
+        return 1
+    fi
+    names="$(component_names "$type" | tr '\n' ' ')"
+    if [[ -z "${names// /}" ]]; then
+        log_warn "this package ships no $type"
+        return 0
+    fi
+    _read "Add a $type on VM $(_editor_vm_label "$vm")? (y/n)" y
+    [[ "$REPLY" == y || "$REPLY" == Y ]] || return 0
+    slice="$(_editor_slice "$EDIT_CONFIG" "$vm")"
+    _editor_seed "$slice"
+    rank="$(rank_lookup "$type")"
+    [[ " $names " == *" $rank "* ]] || rank="${names%% *}"
+    while :; do
+        _read "$type (${names% })" "$rank"
+        if [[ " $names " == *" $REPLY "* ]]; then
+            SEL[$type]="$REPLY"
+            break
+        fi
+        log_warn "'$REPLY' is not one of: $names"
+    done
+    step_options_edit "$type"
+    PASS_CONFIG="$(session_config)"
+    EDIT_CONFIG="$(_editor_set_vm_slice "$EDIT_CONFIG" "$vm" "$PASS_CONFIG")"
+}
+
 # _editor_fix: `f`, one pass over the errors EDIT_ERRORS held at the time it was chosen
 # (docs/spec-multi-vm.md#editing). Each kind of error is handled the way the spec lists: an
-# unknown entry is offered for removal, duplicate_server_name and the link errors point to the
-# fix and offer to run it; anything else sends the person to the VM it is about. Before showing
-# an error, it is checked against the current configuration: one an earlier fix in this same
-# pass already resolved is skipped silently. Updates EDIT_CONFIG directly (never called through
-# "$(...)").
+# unknown entry is offered for removal, an option outside its values (and duplicate_server_name)
+# is re-asked directly, missing_requirement proposes the component that is missing, a model with
+# no place asks it again, a link error offers to redo the links (or edit/remove the VM it
+# names), and anything else sends the person to the VM it is about. Before showing an error, it
+# is checked against the current configuration: one an earlier fix in this same pass already
+# resolved is skipped silently. Updates EDIT_CONFIG directly (never called through "$(...)").
 _editor_fix() {
     local errors="$EDIT_ERRORS" i=0 err code path vm msg still
     while :; do
@@ -1194,7 +1319,7 @@ _editor_fix() {
         msg="$(jq -r '.message' <<<"$err")"
         printf '\n%s: %s [%s]\n' "$path" "$msg" "$code" >&2
         case "$code" in
-        unknown_key | unknown_component | unknown_option | invalid_value | wrong_type)
+        unknown_key | unknown_component | unknown_option)
             _read "Remove this entry? (y/n)" y
             if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
                 # $path is the display form ("$.foo[0].bar"); jq's own path syntax drops the "$"
@@ -1202,25 +1327,39 @@ _editor_fix() {
                     log_warn "could not remove $path by itself, edit VM $(_editor_vm_label "$vm") instead"
             fi
             ;;
-        duplicate_server_name)
-            _read "Edit VM $vm now to change its server-name? (y/n)" y
-            [[ "$REPLY" != y && "$REPLY" != Y ]] || _editor_edit_vm "$vm"
+        invalid_value | wrong_type | duplicate_server_name)
+            _editor_reask_option "$path" || {
+                _read "Edit VM $(_editor_vm_label "$vm") now to fix this? (y/n)" y
+                [[ "$REPLY" != y && "$REPLY" != Y || -z "$vm" ]] || _editor_edit_vm "$vm"
+            }
             ;;
-        unlinked_vm | engine_unreachable | link_cycle | link_protected_engine)
-            _read "Redo the links (l), edit VM $vm (e), remove it (r), or leave it (any other answer)" l
+        missing_requirement)
+            _editor_reask_requirement "$vm" "$msg" || {
+                if [[ -n "$vm" ]]; then
+                    _read "Edit VM $vm now to fix this? (y/n)" y
+                    [[ "$REPLY" != y && "$REPLY" != Y ]] || _editor_edit_vm "$vm"
+                else
+                    log_warn "fix it by hand, or with e/m/l/n/r"
+                fi
+            }
+            ;;
+        unresolved_engine | ambiguous_engine | engine_other_vm | unresolved_chat_interface | ambiguous_chat_interface | chat_interface_other_vm)
+            _editor_reask_model_place "$path" || {
+                if [[ -n "$vm" ]]; then
+                    _read "Edit VM $vm now to fix this? (y/n)" y
+                    [[ "$REPLY" != y && "$REPLY" != Y ]] || _editor_edit_vm "$vm"
+                else
+                    log_warn "fix it by hand, or with e/m/l/n/r"
+                fi
+            }
+            ;;
+        unlinked_vm | engine_unreachable | link_cycle | link_protected_engine | unknown_vm | link_to_self | link_without_chat_interface | link_without_engine | duplicate_link)
+            _read "Redo the links (l), edit the VM (e), remove it (r), or leave it (any other answer)" l
             case "$REPLY" in
             l | L) _editor_redo_links ;;
-            e | E) _editor_edit_vm "$vm" ;;
-            r | R) _editor_remove_vm_checked "$vm" ;;
+            e | E) [[ -n "$vm" ]] && _editor_edit_vm "$vm" || log_warn "this error names no single VM, use e <vm> by hand" ;;
+            r | R) [[ -n "$vm" ]] && _editor_remove_vm_checked "$vm" || log_warn "this error names no single VM, use r <vm> by hand" ;;
             esac
-            ;;
-        missing_requirement | unresolved_engine | unresolved_chat_interface | ambiguous_engine | ambiguous_chat_interface | engine_other_vm | chat_interface_other_vm)
-            if [[ -n "$vm" ]]; then
-                _read "Edit VM $vm now to fix this? (y/n)" y
-                [[ "$REPLY" != y && "$REPLY" != Y ]] || _editor_edit_vm "$vm"
-            else
-                log_warn "fix it by hand, or with e/m/l/n/r"
-            fi
             ;;
         *)
             if [[ -n "$vm" ]]; then
@@ -1242,5 +1381,6 @@ _editor_remove_vm_checked() {
         log_warn "the last VM cannot be removed"
     else
         EDIT_CONFIG="$(_editor_remove_vm "$EDIT_CONFIG" "$1")"
+        _editor_maybe_flatten
     fi
 }
