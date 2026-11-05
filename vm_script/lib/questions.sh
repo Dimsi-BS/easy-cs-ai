@@ -29,6 +29,7 @@ _read() {
 _describe_of() {
     local type="$1" name="$2"
     if [[ -z "${DESC[$name]:-}" ]]; then
+        # shellcheck disable=SC2153 # EXIT_ERROR is common.sh's exit code, not a typo of EDIT_ERRORS
         DESC[$name]="$(bash "$(script_path "$type" "$name")" describe)" || fail "$EXIT_ERROR" "describe of $name failed"
     fi
 }
@@ -1357,8 +1358,12 @@ _editor_fix() {
             _read "Redo the links (l), edit the VM (e), remove it (r), or leave it (any other answer)" l
             case "$REPLY" in
             l | L) _editor_redo_links ;;
-            e | E) [[ -n "$vm" ]] && _editor_edit_vm "$vm" || log_warn "this error names no single VM, use e <vm> by hand" ;;
-            r | R) [[ -n "$vm" ]] && _editor_remove_vm_checked "$vm" || log_warn "this error names no single VM, use r <vm> by hand" ;;
+            e | E)
+                if [[ -n "$vm" ]]; then _editor_edit_vm "$vm"; else log_warn "this error names no single VM, use e <vm> by hand"; fi
+                ;;
+            r | R)
+                if [[ -n "$vm" ]]; then _editor_remove_vm_checked "$vm"; else log_warn "this error names no single VM, use r <vm> by hand"; fi
+                ;;
             esac
             ;;
         *)
