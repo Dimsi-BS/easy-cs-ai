@@ -183,8 +183,8 @@ Planned work, in dependency order:
 | Package / CLI   | `apply` command                  | Written, unit-tested with fake components |
 | Package / CLI   | `generate` command               | Written (hands over to the generator) |
 | Package / CLI   | `component` and `exec` commands  | Written, unit-tested with fake components (`component` replaces the types as commands of the root) |
-| VM post-install | Engine and web interface on two VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [two-VM scenario](tests/integration/README.md#the-scenario-of-two-vms-two-vmsh) is written |
+| VM post-install | Engine and web interfaces on several VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [several-VM scenario](tests/integration/README.md#the-scenario-of-several-vms-multi-vmsh) is written |
 | VM post-install | Post-install script              | Written (emitted by the generator), unit-tested |
 | VM post-install | Script generator (`generate`)    | Written, unit-tested |
 | Package / CLI   | `component` and `exec` commands  | Written, unit-tested with fake components (`component` replaces the types as commands of the root) |
-| VM post-install | Engine and web interface on two VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [two-VM scenario](tests/integration/README.md#the-scenario-of-two-vms-two-vmsh) is written |
+| VM post-install | Engine and web interfaces on several VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [several-VM scenario](tests/integration/README.md#the-scenario-of-several-vms-multi-vmsh) is written |

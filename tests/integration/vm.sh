@@ -14,7 +14,7 @@
 #           stays, unless --net); --all also removes the image cache
 #
 # Several VMs: ECSAI_VM_NAME picks the VM a command is for, ECSAI_VM_NETWORK puts them on one
-# network so that they reach each other (see tests/integration/two-vm.sh)
+# network so that they reach each other (see tests/integration/multi-vm.sh)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

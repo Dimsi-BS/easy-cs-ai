@@ -58,25 +58,25 @@ It leaves the VM empty (`uninstall --all --purge`), unless `--keep` or a failure
 
 It takes about 25 minutes the first time (the image, Docker, Ollama and the three images of LibreChat are downloaded) and 10 when the image is cached.
 
-## The scenario of two VMs: `two-vm.sh`
+## The scenario of several VMs: `multi-vm.sh`
 
 ```text
-tests/integration/two-vm.sh [--keep]
+tests/integration/multi-vm.sh [--keep]
 ```
 
-The inference engine and the web interface on **two** VMs (`ecsai-engine` and `ecsai-web`, created if absent, on one network `ecsai-net` so that they reach each other), the case of [spec: several VMs](../../docs/spec-multi-vm.md). Its settings: `ECSAI_ENGINE_VM` and `ECSAI_WEB_VM` (the names), `ECSAI_ENGINE_MEMORY` (4096 MB) and `ECSAI_WEB_MEMORY` (3072 MB), `ECSAI_ENGINE_DISK` (20 GB) and `ECSAI_WEB_DISK` (24 GB, LibreChat needs 12 GB free for its images), and `ECSAI_TEST_MODEL` as for the first scenario. The two machines need about 7 GB of RAM together.
+The inference engine and **two** web interfaces on **three** VMs (`ecsai-engine`, `ecsai-web` and `ecsai-web2`, created if absent, on one network `ecsai-net` so that they reach each other), the case of [spec: several VMs](../../docs/spec-multi-vm.md): one engine VM, linked from more than one web VM. Its settings: `ECSAI_ENGINE_VM`, `ECSAI_WEB_VM` and `ECSAI_WEB2_VM` (the names), `ECSAI_ENGINE_MEMORY` (4096 MB), `ECSAI_WEB_MEMORY` and `ECSAI_WEB2_MEMORY` (3072 MB each), `ECSAI_ENGINE_DISK` (20 GB), `ECSAI_WEB_DISK` and `ECSAI_WEB2_DISK` (24 GB each, LibreChat needs 12 GB free for its images), and `ECSAI_TEST_MODEL` as for the first scenario. The three machines need about 10 GB of RAM together.
 
 With assertions (`ok` / `FAIL`, exit 1 if anything fails):
 
-0. one configuration names the two VMs (llmfit, nginx, Ollama and the model on the engine VM, nginx and LibreChat on the web VM): it is valid, and its validation gives the four steps left to do and the warning that the address of the engine VM is not known yet;
-1. the script of the engine VM, then the one of the web VM, run as root: each VM is healthy, nothing of the other is on it, the header of each script says its VM, and LibreChat comes up with no model in its list;
-2. the steps 2 and 3 of the instructions: the API key, the URL and the names of the certificate are read on the engine VM (the host of the URL is one the certificate covers, an address of the VM is among them; when the name of the engine VM is not known to the DNS of the network, which is the case on the libvirt network of the test, the address replaces the host in the URL, as the instructions say), and the web VM reaches the engine VM (401 without the key, 200 with it, the self-signed certificate refused without its copy);
-3. the step 4: `add-endpoint` with the key and the certificate. LibreChat lists the endpoint, the key is a secret of its own (mode 600, nowhere else), and the api container, with the key from its environment and the certificate from its bundle, gets a message answered by the engine VM; without the bundle the certificate is refused;
-4. the two scripts again change nothing (the same files, key and certificate included), and the link survives;
-5. `uninstall --all --purge` on both VMs leaves nothing of the project.
+0. one configuration names the three VMs (llmfit, nginx, Ollama and the model on the engine VM, nginx and LibreChat on each web VM) and links both web VMs to the engine VM: it is valid, and its validation gives the five steps left to do (one engine VM, two links) and the warning that the address of the engine VM is not known yet;
+1. the script of the engine VM, then the one of each web VM, run as root: each VM is healthy, nothing of another VM is on it, the header of each script says its VM, and each LibreChat comes up with no model in its list;
+2. the steps 2 and 3 of the instructions, read once on the engine VM (the API key, the URL and the names of the certificate; the host of the URL is one the certificate covers, an address of the VM is among them; when the name of the engine VM is not known to the DNS of the network, which is the case on the libvirt network of the test, the address replaces the host in the URL, as the instructions say), then step 3 checked from each web VM (401 without the key, 200 with it, the self-signed certificate refused without its copy);
+3. the step 4, once per link: `add-endpoint` with the key and the certificate on each web VM. LibreChat lists the endpoint, the key is a secret of its own (mode 600, nowhere else), and the api container, with the key from its environment and the certificate from its bundle, gets a message answered by the engine VM; without the bundle the certificate is refused;
+4. the three scripts again change nothing (the same files, key and certificate included, on every VM), and both links survive;
+5. `uninstall --all --purge` on all three VMs leaves nothing of the project.
 
-It leaves both machines empty, unless `--keep` or a failure. It takes about 40 minutes the first time (two images, Docker, Ollama, the model and the three images of LibreChat) and 15 when everything is cached.
+It leaves all three machines empty, unless `--keep` or a failure. It takes about an hour the first time (three images, Docker, Ollama, the model and, twice, the three images of LibreChat) and 20 minutes when everything is cached.
 
 ## What it does not cover
 
-Debian, the `provided` and `letsencrypt` certificates, a GPU, vLLM, an install killed by a signal in the middle of a phase, and a chat in a browser (the browser of a developer machine refuses the self-signed certificate; the API-level chat is checked instead), and, in the two-VM scenario, a conversation sent through LibreChat itself (the call of its api container to the engine is checked, not its chat route), an address of the engine VM that changes after the install, and a name of the engine VM that a DNS resolves (the test uses the address of the VM, which its certificate covers).
+Debian, the `provided` and `letsencrypt` certificates, a GPU, vLLM, an install killed by a signal in the middle of a phase, and a chat in a browser (the browser of a developer machine refuses the self-signed certificate; the API-level chat is checked instead), and, in the several-VM scenario, a conversation sent through LibreChat itself (the call of its api container to the engine is checked, not its chat route), an address of the engine VM that changes after the install, and a name of the engine VM that a DNS resolves (the test uses the address of the VM, which its certificate covers).
