@@ -103,9 +103,9 @@ TREE="$WORK/x/easy-cs-ai-$VERSION"
 check "the tarball holds the CLI and the scripts tree" test -x "$TREE/bin/easy-cs-ai" -a -f "$TREE/lib/easy-cs-ai/vm_script/script.sh" -a -f "$TREE/lib/easy-cs-ai/vm_script/config.sh" -a -f "$TREE/lib/easy-cs-ai/ranks.conf"
 check "no documentation is shipped" bash -c "! find '$TREE' -name '*.md' | grep -q ."
 check "no CRLF in the shipped files" bash -c "! grep -rlI \$'\\r' '$TREE' | grep -q ."
-expect "the extracted CLI reports the version" "$VERSION" "$("$TREE/bin/easy-cs-ai" --version 2>/dev/null)"
+expect "the extracted CLI reports the version" "$VERSION" "$("$TREE/bin/easy-cs-ai" --version 2>/dev/null | sed 's/ ([0-9a-f]*)$//')"
 check "the short name ecsai is a link to the CLI" test "$(readlink "$TREE/bin/ecsai")" = easy-cs-ai
-expect "the extracted short name reports the version" "$VERSION" "$("$TREE/bin/ecsai" --version 2>/dev/null)"
+expect "the extracted short name reports the version" "$VERSION" "$("$TREE/bin/ecsai" --version 2>/dev/null | sed 's/ ([0-9a-f]*)$//')"
 
 # --- the deb and the rpm ---------------------------------------------------------------------
 

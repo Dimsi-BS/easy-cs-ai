@@ -7,9 +7,24 @@
 set -euo pipefail
 
 readonly CLI_VERSION=0.1.0-rc3
+# Short commit hash, stamped by package/build.sh; empty in a checkout, where git answers.
+readonly CLI_COMMIT=
 readonly CHANGING_ACTIONS=" install uninstall add-model remove-model add-upstream remove-upstream add-site remove-site add-endpoint remove-endpoint "
 
 # --- Locating the tree ----------------------------------------------------------
+
+# version_line: the version, then the short commit hash when known: 0.1.0-rc3 (abc1234)
+version_line() {
+    local commit=$CLI_COMMIT
+    if [[ -z "$commit" ]]; then
+        commit="$(git -C "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" rev-parse --short HEAD 2>/dev/null)" || commit=
+    fi
+    if [[ -n "$commit" ]]; then
+        printf '%s (%s)\n' "$CLI_VERSION" "$commit"
+    else
+        printf '%s\n' "$CLI_VERSION"
+    fi
+}
 
 find_home() {
     local here candidate
@@ -642,7 +657,7 @@ main() {
         --dry-run) DRY=1; GFLAGS+=(--dry-run) ;;
         --json) _OPT_JSON=1; GFLAGS+=(--json) ;;
         --help) usage; return 0 ;;
-        --version) printf '%s\n' "$CLI_VERSION"; return 0 ;;
+        --version) version_line; return 0 ;;
         *) break ;;
         esac
         shift
@@ -682,7 +697,7 @@ main() {
     esac
     case "$command" in
     help) usage ;;
-    version) printf '%s\n' "$CLI_VERSION" ;;
+    version) version_line ;;
     status) cmd_status "$@" ;;
     install) changing install cmd_install "$@" ;;
     uninstall) changing uninstall cmd_uninstall "$@" ;;

@@ -160,10 +160,13 @@ A generator, run interactively by an administrator, produces the VM post-install
 
 ### Apache CloudStack integration
 
-Not designed yet. Ideas to explore:
+Specified, not implemented: see [docs/spec-cloudstack](docs/spec-cloudstack.md). A new page in the CloudStack UI gives the features of the project from inside Apache CloudStack, for a local AI spread over several VMs (for instance a `web` VM and an `engine` VM):
 
-- initialize a VM with a proper provisioning
-- show the AI model requests (is the model being used?)
+1. **Define a topology**: the VMs, what each one holds (components, options, models checked and sized with llmfit) and which VM reaches which engine. It is the same [configuration file](docs/spec-config.md) and the same [journey](docs/spec-journey.md) as the CLI, so a topology can be downloaded and run from a terminal, and a file loaded into the page.
+2. **Create the resources**: after a list of what will be created, the VMs (each one provisioned at first boot by its generated [post-install script](docs/spec-vm-generator.md)), their disks, network rules and tags. Only resources the page tagged are ever changed or destroyed.
+3. **Monitor what matters for a local AI**: whether each VM, engine and chat interface is up, which models are served, whether they are being used (in use, idle, never used; requests, errors, latency), whether a link between VMs is still to do, and whether a VM is big enough for its models. The VMs themselves stay visible in the other CloudStack pages.
+
+The page adds no rule of its own: it shows the documents of the CLI capabilities through a thin service, and reads the VMs through a read-only status document that the reverse proxy publishes (a proposed addition).
 
 ## Roadmap
 
@@ -188,3 +191,5 @@ Planned work, in dependency order:
 | VM post-install | Script generator (`config edit`, `script`) | Written, unit-tested |
 | Package / CLI   | `component` and `exec` commands  | Written, unit-tested with fake components (`component` replaces the types as commands of the root) |
 | VM post-install | Engine and web interfaces on several VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [several-VM scenario](tests/integration/README.md#the-scenario-of-several-vms-multi-vmsh) is written |
+| CloudStack      | Topology page (define, create, monitor) | Specified ([docs/spec-cloudstack](docs/spec-cloudstack.md)), not started; depends on the `links` and the editor of [several VMs](docs/spec-multi-vm.md) (proposed) |
+| CloudStack      | Status document of the proxy (use of the models) | Specified, not started |

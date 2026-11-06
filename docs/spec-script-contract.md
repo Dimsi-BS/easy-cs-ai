@@ -105,7 +105,7 @@ These are the "component commands" mirrored by `easy-cs-ai component <type> <nam
 - If a secret is needed and none is given, the script **generates** one (`/dev/urandom`, at least 32 random bytes, base64url) and stores it in `/etc/easy-cs-ai/secrets/<component>.<name>` with mode `0600`, owner root. `install` **never prints a secret**, on a TTY or not: the scripts mostly run unattended (cloud-init in a CloudStack VM, where nobody sees a TTY and the output ends up in `/var/log/cloud-init-output.log`).
 - Retrieval channels for a generated secret:
   - the dedicated action, over SSH (`proxy show-key`);
-  - to be decided with the CloudStack integration, not designed yet: `--credentials-file <path>`, writing the generated secrets to a file (mode `0600`, owner root) at a location chosen by the caller, so an external tool can fetch them without going through the logs.
+  - to be decided with the [CloudStack integration](spec-cloudstack.md#open-questions) (which does not depend on it: the user pastes the keys): `--credentials-file <path>`, writing the generated secrets to a file (mode `0600`, owner root) at a location chosen by the caller, so an external tool can fetch them without going through the logs.
 - When the secret is known in advance (fleet provisioning), the caller passes it through the channels above. Note that on CloudStack the user-data is stored in the CloudStack database, returned by its API and readable from the VM through the metadata service: a secret placed there is not confidential, which the VM post-install layer must document.
 - Secrets never appear in logs, `--dry-run` output, `describe`, `status` or the state files.
 
