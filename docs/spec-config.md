@@ -66,7 +66,7 @@ A single machine is a file with one VM; its models designate the chat interface 
 }
 ```
 
-A file written by hand or by a program may leave out what is evident: the name of a **lone** VM, and the `vm_ref` and `component_ref` of a reference when there is one VM and one chat interface (`{}` designates it):
+A file written by hand or by a program may leave out what is evident: the name of a **lone** VM, and the parts of a reference that the [locality rule](#references) resolves (here the chat interface of the model's own VM, which is the only one: `{}` designates it):
 
 ```json
 {
@@ -142,19 +142,23 @@ The **place** of a model is the engine component that holds it, on its VM: it de
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `vm_ref` | with several VMs | The `name` of the VM that holds the component. A name no VM has is `unknown_vm`, with the VM names of the file in the message. Optional when the file has **one** VM (evident: the only one) |
-| `component_ref` | when not evident | The `name` of the component on that VM. Optional when the VM has **one** component of type `chat-interface` (evident: the only one) |
+| `vm_ref` | no | The `name` of the VM that holds the component. A name no VM has is `unknown_vm`, with the VM names of the file in the message. Left out: the VM **of the model** (the nearest), see below |
+| `component_ref` | no | The `name` of the component. Left out: the chat interface that the locality rule finds |
 
-It resolves as follows:
+**Resolution by locality.** What a reference leaves out is found by **walking up from the object that carries it** (the model, in its engine, in its VM, in the file). At each level the candidates are the components of the type aimed at (`chat-interface`) in that level's array: **one** candidate resolves the reference, **several** are `ambiguous_chat_interface`, **none** goes up to the next level. For a model the levels are: 1. the components of **its own VM**; 2. the components of **all the VMs** of the file.
 
-| `component_ref` | Component |
+| Written | Resolved to |
 | --- | --- |
-| given | The chat interface of that name on that VM. None: `unresolved_chat_interface` (the message says so when the name exists with another type, or when the component has no `name` written) |
-| absent | The only chat interface of the VM. More than one: `ambiguous_chat_interface` (the message lists their names, or says that they are unnamed). None: `unresolved_chat_interface` |
+| `{}` | The chat interface of the model's VM when it has exactly one; several: `ambiguous_chat_interface`; none: up to the file, the only chat interface of the file (several: `ambiguous_chat_interface`, none: `unresolved_chat_interface`) |
+| `{ "component_ref": "x" }` | The chat interface named `x`: in the model's VM first, else in the file. The nearest wins (a name on the model's VM hides the same name on another VM); the same name on several VMs, none on the model's, is `ambiguous_chat_interface`; none anywhere: `unresolved_chat_interface` (the message says so when the name exists with another type, or when no component has that `name` written) |
+| `{ "vm_ref": "v" }` | The only chat interface of the VM `v`. `vm_ref` **fixes the scope**: the walk does not go above that VM. Several: `ambiguous_chat_interface`; none: `unresolved_chat_interface` |
+| `{ "vm_ref": "v", "component_ref": "x" }` | The chat interface `x` of the VM `v`, exactly. None: `unresolved_chat_interface` |
+
+**The session never relies on it**: it writes complete references (`vm_ref` and `component_ref`, with the `name` of every chat interface it references), because the configuration it writes stays explicit ([journey, rule 3](spec-journey.md#rules)) and a reference that gives its names never changes meaning when another chat interface is added. The locality rule is for a file written by hand or by a program, where it saves the repetition of what the place already says; the lone VM with its one chat interface is `chat_interfaces: [ {} ]`. A reference resolved **outside the VM of the model** (level 2, or an explicit `vm_ref` to another VM) is the link of two machines.
 
 - A reference never reads `default`: the flag is the state's, not the file's way to designate.
-- A reference to a component that is **unnamed** only resolves by the evident case (one chat interface on the VM). The session writes the `name` of every component it references, and a reference that gives a `component_ref` always names a component that has that `name`, so that adding a second chat interface to a VM never changes what an existing reference designates: that is the stability the explicit name gives.
-- A VM that has **no name** (a lone VM) is designated by omitting `vm_ref`; a `vm_ref` in a file whose only VM has no name is `unknown_vm`.
+- A component that is **unnamed** can only be reached by a reference that leaves out `component_ref` and resolves to it by the locality rule (the only chat interface of its level). A `component_ref` always names a component that has that `name` written, so that adding a second chat interface to a VM never changes what an explicit reference designates: that is the stability the explicit name gives.
+- A VM that has **no name** (a lone VM) is designated by omitting `vm_ref`, as every model's own VM is; a `vm_ref` in a file whose only VM has no name is `unknown_vm`.
 - The resolved references (the VM and the `name`, or the implementation as label, of each component) go into the plan of `config validate` (see [spec: capabilities](spec-capabilities.md#config-validate)).
 
 ### Slices
@@ -247,7 +251,7 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 - Integration test on a fresh VM: `apply` of a configuration, `status` healthy, second `apply` changes nothing, `apply --prune` with a reduced file.
 - `bats` tests of the format of version 2: `wrong_type` and `invalid_value` on the name of a VM, `duplicate_vm`, `missing_vm_name` (a VM with no name among several, and accepted for a lone VM), `empty_vm`, `unknown_type` and `unknown_component` on `component`, `duplicate_name`, a component with no `name` (unnamed, no default name), `duplicate_component` (also with two different `name`s), `missing_option` for each `required_when` of the shipped components (and not raised when the condition does not hold), the same component on two VMs accepted, `several_defaults` per VM, a requirement satisfied by another VM refused, `schema_version` 1 refused with its message, and a flat file refused.
 - `bats` tests of the [models](#models): a model in an engine, `models_on_non_engine` on another type, `protected_engine_other_vm` (a `protected` engine, with a fake component, whose model names a chat interface of another VM; accepted when it names one of the same VM), `duplicate_model` (the same `model` twice in one engine) and the same model accepted in two engines, `model` required, a reserved `name` of a model accepted and without effect, `options` of a model refused with `unknown_option`, `wrong_type` on `models` or on a model, `force`, error paths `$.vms[i].components[j].models[k]`.
-- `bats` tests of the [references](#references): `vm_ref` and `component_ref` given, `vm_ref` left out with one VM and refused (`unknown_vm`) when the lone VM has no name, `component_ref` left out with one chat interface and `ambiguous_chat_interface` with several, a reference that ignores `default`, `unresolved_chat_interface` (also when the name exists with another type, and for a component that has no `name`), `unknown_vm`, `unsupported_count` on `chat_interfaces` with two references, an empty or absent `chat_interfaces`.
+- `bats` tests of the [references](#references): `vm_ref` and `component_ref` given, `vm_ref` left out (the model's VM) and refused (`unknown_vm`) when the lone VM has no name, the locality rule case by case (`{}` with one chat interface on the model's VM, with several, with none on it and one in the file, with none on it and several in the file; `component_ref` alone on the model's VM, on another VM only, on two other VMs; `vm_ref` alone fixing the scope: no walk above that VM), the nearest name hiding the same name elsewhere, `ambiguous_chat_interface` with several candidates at a level, a reference that ignores `default`, `unresolved_chat_interface` (also when the name exists with another type, and for a component that has no `name`), `unknown_vm`, `unsupported_count` on `chat_interfaces` with two references, an empty or absent `chat_interfaces`.
 - `bats` tests of the [slices](#slices): each without the other VMs, models with their engine, a chat interface of the same VM kept and one of another VM emptied, order of the file, paths of the file as written, `apply` refused without `--vm` on several VMs, accepted without it on one, `--vm` with an unknown name, `apply --vm` applying one slice.
 - `bats` tests of [what a model needs](#what-a-model-needs): a model with no proxy in the file is `missing_requirement` at its path (target `fresh`), and accepted when the proxy is installed (`--target this`); a `protected` engine needs none; no provisioning component without `force` is `missing_requirement`, and accepted with `force`; with several VMs, a proxy or a provisioning component on another VM does not count, and an engine VM with no model and no proxy is valid; the exit code of `apply` is 4 when it is the only kind of error.
 - `shellcheck` clean.
@@ -255,5 +259,6 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 ## Open questions
 
 - **Literal secrets in the file.** Answer: forbidden, see [spec: machine interface](spec-capabilities.md#secrets). The file is embedded in the generated VM script, so a literal would sit in the script and, on CloudStack, in the user-data, which is not confidential (see [contract](spec-script-contract.md#secrets)). Options: forbid literals (only `file`, `env`, `generate`), or allow them with a `WARN`. Same question as in [spec: VM script generator](spec-vm-generator.md#open-questions), to be settled together.
+- **Warning on an implicit reference that leaves the model's VM.** A reference resolved by the locality rule at the level of the file links two machines without the person having named the VM. Should the validation warn (a non-blocking `implicit_reference`)? Not decided: for now it is silent, and the session never writes such a reference.
 - **Several instances of one component on a VM** (e.g. two `engine/ollama` with different ports): the format allows them (a free `name`, [`components`](#components), designated by a `component_ref`), the validation refuses them (`duplicate_component`) because the state of layer 1 has one entry per component, one unit, one port, one Compose project. Lifting the limit is a change of layer 1 (state keyed by instance, units and volumes named by instance), then of the validation. Several components of **one type** with different implementations (`engine/ollama` and `engine/vllm`) need the same state change only for what they share, and are the first case to open.
 - **Schema evolution**: how a new `schema_version` is migrated, once a second version exists.
