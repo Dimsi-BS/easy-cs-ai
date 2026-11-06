@@ -43,7 +43,9 @@ Runtime prerequisites: `bash`, `curl`, `jq` (and `yq` if needed), installed by t
 - we need concurrency, non-trivial retries or structured API calls;
 - quoting/error-handling bugs keep recurring despite `shellcheck`.
 
-The preferred escape hatch is then **Go** (single static binary, no runtime on the VM), rather than Python, so that the VM does not need an extra interpreter.
+**Proposed, for one part only:** the computations the CloudStack page needs in the browser (catalog, validation, sizing, script generation) would be a core written in **Rust** and built both for Linux and for WebAssembly, replacing the `jq` programs of the CLI; the install scripts stay bash. See [spec: CloudStack](spec-cloudstack.md#the-core-webassembly). Rust rather than Go because the same source must compile to WebAssembly and `llmfit`, which sizes the VMs, is Rust. Not decided: it depends on the first experiments of [the research](../search/cloudstack/architecture.md#what-to-try-in-this-order).
+
+Otherwise the preferred escape hatch is **Go** (single static binary, no runtime on the VM), rather than Python, so that the VM does not need an extra interpreter.
 
 ## Alternatives considered
 

@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed, specification only. Nothing of this is written: no page, no service, no change to the scripts. **Decision:** the page is a **native section of the CloudStack UI, contributed to `apache/cloudstack`**, not a plugin loaded in an iframe (that would need a web server of its own to host the page, see [search/cloudstack](../search/cloudstack/ui-extension.md)); see [contributing to CloudStack](#contributing-to-cloudstack). It builds on specs that are themselves partly proposed (the [configuration format of version 2, decided and not implemented](spec-config.md#format), and the [editor of several VMs](spec-multi-vm.md)); what it needs from them is listed in [what it relies on](#what-it-relies-on). Every statement about Apache CloudStack itself (its API, its UI plugin mechanism, its limits) comes from memory of the documentation and **is to be verified** against the version targeted, see [to verify](#to-verify-on-cloudstack).
+**Status:** proposed, specification only. Nothing of this is written: no page, no service, no change to the scripts. **Decision:** the page is a **native section of the CloudStack UI, contributed to `apache/cloudstack`**, not a plugin loaded in an iframe (that would need a web server of its own to host the page, see [search/cloudstack](../search/cloudstack/ui-extension.md)); see [contributing to CloudStack](#contributing-to-cloudstack). **Decision 2:** there is **no server of the project**: the core of the logic is written once, in **Rust**, and compiled both for Linux (the CLI) and to **WebAssembly** (the page); the only thing stored server-side is the **group of VMs and its configuration, in CloudStack itself** (see [the core](#the-core-webassembly) and [where a topology lives](#where-a-topology-lives)). What this needs and does not settle is listed in [open questions](#open-questions); the options that were weighed are in [search/cloudstack: architecture](../search/cloudstack/architecture.md). It builds on specs that are themselves partly proposed (the [`links` and the editor of several VMs](spec-multi-vm.md)); what it needs from them is listed in [what it relies on](#what-it-relies-on). Every statement about Apache CloudStack itself (its API, its UI plugin mechanism, its limits) comes from memory of the documentation and **is to be verified** against the version targeted, see [to verify](#to-verify-on-cloudstack).
 
 ## Purpose
 
@@ -12,19 +12,20 @@ An administrator of an Apache CloudStack cloud wants a **local AI** (an inferenc
 2. **Create** the CloudStack resources that topology needs (VMs, disk, network rules, key pair…), each VM provisioned at first boot by the [post-install script](spec-vm-generator.md) the generator produces for it.
 3. **Monitor**, specifically, what concerns the use of a local AI: are the engine and the chat interface up, which models are served, are they being used, is the VM big enough for them. The VMs and their disks are of course also listed in the usual pages of CloudStack: the page does not replace them, it adds the view that only this project can give.
 
-The page is **a third rendering of the [journey](spec-journey.md)**, after the interactive session and the `--json` arguments (see [spec: renderings](spec-rendering.md)): it asks the same questions, calls the same capabilities, shows the same documents, and ends on the same configuration and the same scripts. It owns no rule.
+The page is **a third rendering of the [journey](spec-journey.md)**, after the interactive session and the `--json` arguments (see [spec: renderings](spec-rendering.md)): it asks the same questions, runs the same core (compiled to WebAssembly instead of for Linux), shows the same documents, and ends on the same configuration and the same scripts. It owns no rule.
 
 > **A page decides how something is shown or asked, never what is true.** The components, options, dependencies, sizing, warnings, next steps and scripts are the capabilities' ([rule 4 of the journey](spec-journey.md#rules)). The page only adds what CloudStack alone knows: which resources exist and what they cost.
 
 ## Principles
 
-1. **Same features as the project, no second logic.** Choosing components and options, dependencies, models checked and sized with llmfit, VMs and the chat interface that shows each model, validation, warnings, the generated scripts and the next steps all come from the CLI capabilities (`catalog`, `config schema`, `config validate`, `provisioning llmfit plan`, `script --json`), see [the service](#the-service). The page never recomputes a figure, a margin, a warning or a script. A change of a rule is a change of a capability, and improves the terminal and the page at once.
-2. **One file describes the topology.** What the page edits and saves is the configuration of [spec: config](spec-config.md), the same file `script` and `apply` read. A topology made in the page can be downloaded and run from a terminal, and a file written elsewhere can be loaded in the page ([parity](#definition-of-done)).
-3. **The user decides, CloudStack is the authority on resources.** Nothing is created, resized or deleted without the person having seen the list and confirmed ([rule 3 of the journey](spec-journey.md#rules)). What exists in CloudStack is read from CloudStack, never from a copy of the page.
-4. **Only what it created, and it marks it.** Every resource the page creates carries [tags](#tags); it lists, changes and deletes **only** tagged resources of the topology. A VM, a network or a volume that the user made by hand is never touched, even if it looks related.
-5. **No secret in what the page stores or sends.** The user-data of a VM is stored in the CloudStack database and readable from the VM, so no secret goes there ([contract](spec-script-contract.md#secrets)): the keys are generated on the VMs and stay there. What the page keeps is limited to the [monitoring key](#reading-the-vms).
-6. **Nothing the CloudStack permissions do not allow.** The page acts with the session of the user, through the API layer the UI already uses for every other page: a user who cannot deploy a VM cannot do it here. It adds no privilege and no authentication of its own towards CloudStack.
-7. **Written the way CloudStack's UI is written.** The section follows the conventions of `ui/` of `apache/cloudstack` (its structure, components, translations, tests, licence), because it is meant to be merged there and kept by that community: nothing in it is specific to this repository except the capabilities it calls.
+1. **Same features as the project, one logic.** Choosing components and options, dependencies, models checked and sized with llmfit, VMs and links, validation, warnings, the generated scripts and the next steps all come from **one core**, written once and compiled for the CLI and for the page, see [the core](#the-core-webassembly). The page never recomputes a figure, a margin, a warning or a script, and holds no copy of a rule. A change of a rule is a change of the core, and improves the terminal and the page at once.
+2. **No component of the project to install or host.** Everything the page needs runs in the browser or is CloudStack's own. What a cloud operator does to offer the page is to run a CloudStack version that has it.
+3. **One file describes the topology.** What the page edits and saves is the configuration of [spec: config](spec-config.md), the same file `script` and `apply` read. A topology made in the page can be downloaded and run from a terminal, and a file written elsewhere can be loaded in the page ([parity](#definition-of-done)).
+4. **The user decides, CloudStack is the authority on resources.** Nothing is created, resized or deleted without the person having seen the list and confirmed ([rule 3 of the journey](spec-journey.md#rules)). What exists in CloudStack is read from CloudStack, never from a copy of the page.
+5. **Only what it created, and it marks it.** Every resource the page creates carries [tags](#tags); it lists, changes and deletes **only** tagged resources of the topology. A VM, a network or a volume that the user made by hand is never touched, even if it looks related.
+6. **No secret in what the page stores or sends.** The user-data of a VM is stored in the CloudStack database and readable from the VM, so no secret goes there ([contract](spec-script-contract.md#secrets)): the keys are generated on the VMs and stay there. The one secret the page handles is the [monitoring key](#reading-the-vms), which reads status only and gives no access to the models.
+7. **Nothing the CloudStack permissions do not allow.** The page acts with the session of the user, through the API layer the UI already uses for every other page: a user who cannot deploy a VM cannot do it here. It adds no privilege and no authentication of its own towards CloudStack.
+8. **Written the way CloudStack's UI is written.** The section follows the conventions of `ui/` of `apache/cloudstack` (its structure, components, translations, tests, licence), because it is meant to be merged there and kept by that community: nothing in it is specific to this repository except the capabilities it calls.
 
 ## What it relies on
 
@@ -33,7 +34,9 @@ The page is **a third rendering of the [journey](spec-journey.md)**, after the i
 | Several VMs in one file (`vms`), the chat interface of each model, roles, one script per VM, next steps | [spec: several VMs](spec-multi-vm.md) and [spec: config](spec-config.md#format) | The format of version 2, the editor and any number of VMs: decided, not implemented. Version 1 (`vm` fields, `links`) is what the code reads today |
 | Sizing of each VM: vCPU, RAM, GPU, disk, "equivalent of a CloudStack compute offering" | [spec: model fit](spec-model-fit.md) (`plan`) | implemented |
 | User-data size (32 KB, the default `vm.userdata.max.length`) | [spec: VM generator](spec-vm-generator.md) | the generator already warns |
-| Capabilities as `--json` documents | [spec: capabilities](spec-capabilities.md) | implemented |
+| Capabilities as `--json` documents | [spec: capabilities](spec-capabilities.md) | implemented in bash and `jq`; **to be moved into the Rust core** ([the core](#the-core-webassembly)) |
+| A core written in Rust, as a library that does no input or output, built for Linux and for WebAssembly | New | **proposed here**; reopens [decision: scripting language](decision-scripting-language.md#revisit-when) for that part only |
+| `llmfit` usable as a library compiled to WebAssembly | [findings](../search/llmfit.md) | **not checked**; the sizing depends on it |
 | Status of the components | [`status`](spec-cli.md#status), `component … status` | implemented |
 | Reading the use of the models, from outside the VM | [the status document](#the-status-document) | **new, proposed here** |
 
@@ -42,56 +45,80 @@ The page is **a third rendering of the [journey](spec-journey.md)**, after the i
 ```mermaid
 graph LR
     User["Administrator\n(browser)"] --> Page["Section of the CloudStack UI\n(topology, create, monitor)"]
+    Page --- Core["Core of the project\n(Rust compiled to WebAssembly,\nruns in the page)"]
     Page -->|"CloudStack API\n(session of the UI)"| CS["Apache CloudStack\nmanagement server"]
-    Page -->|"HTTP\n(JSON documents)"| Svc["easy-cs-ai service\n(capabilities + collector)"]
+    CS --- Store["Group of VMs and its configuration\n(stored in CloudStack)"]
     CS --> VM1["VM engine\nproxy + engine"]
     CS --> VM2["VM web\nproxy + chat interface"]
-    Svc -.->|"HTTPS, status document\n(monitoring key)"| VM1
-    Svc -.-> VM2
+    Page -.->|"HTTPS, status document"| VM1
+    Page -.-> VM2
 ```
 
-Three pieces, each with one job:
+Four pieces, each with one job, and **none of them is a server of the project**:
 
 | Piece | Job | Does not |
 | --- | --- | --- |
-| **The page** (a section of the CloudStack UI) | The screens: edit, confirm, create, watch. Calls CloudStack for resources and the service for everything about the AI | Hold any rule of the project; reach a VM itself |
-| **CloudStack** (its API) | Own the resources: offerings, templates, networks, VMs, volumes, tags, metrics, jobs | Know anything about models |
-| **The service** | Run the **capabilities of the CLI** (`--json`, no root, nothing installed on the machine it runs on) for the page, and **collect the status** of the VMs of a topology | Create resources, nor keep more than [what it needs](#what-the-service-keeps) |
+| **The page** (a section of the CloudStack UI) | The screens: edit, confirm, create, watch. Calls CloudStack for resources and the core for everything about the AI, reads the status of the VMs | Hold any rule of the project |
+| **The core** (WebAssembly, in the page) | Every capability that is a computation: catalog, schema, validation, sizing, script generation, next steps | Do input or output: no network, no file, no clock |
+| **CloudStack** (its API) | Own the resources: offerings, templates, networks, VMs, volumes, tags, metrics, jobs, and the **group of VMs with its configuration** | Know anything about models |
+| **The VMs** | Run the stack, and publish their own read-only [status](#the-status-document) | Reach CloudStack |
 
 ### The page
 
-A **section of the CloudStack UI**, with its own entry in the navigation next to the compute pages, written in the UI's own framework and built with it, reached by the users whose CloudStack role allows it. It is not a plugin and not an iframe: it uses the session, the API calls, the components, the notifications and the translations of the UI, and looks like its other pages. It lives in `apache/cloudstack` (see [contributing](#contributing-to-cloudstack)), not in this repository. Its three screens are the [topology](#screen-1-topology), the [creation](#screen-2-creation) and the [monitoring](#screen-3-monitoring). The page has a list of the topologies of the account first (found by their [tags](#tags)), with *new topology*, *import a file* and, for each one, *open*, *download the file*, *destroy*.
+A **section of the CloudStack UI**, with its own entry in the navigation next to the compute pages, written in the UI's own framework and built with it, reached by the users whose CloudStack role allows it. It is not a plugin and not an iframe: it uses the session, the API calls, the components, the notifications and the translations of the UI, and looks like its other pages. It lives in `apache/cloudstack` (see [contributing](#contributing-to-cloudstack)), not in this repository. Its three screens are the [topology](#screen-1-topology), the [creation](#screen-2-creation) and the [monitoring](#screen-3-monitoring). The page has a list of the topologies of the account first (their [groups of VMs](#where-a-topology-lives)), with *new topology*, *import a file* and, for each one, *open*, *download the file*, *destroy*.
 
-The section appears only when the cloud has a **service configured** (an entry of the UI configuration, name to settle with the CloudStack community): without it the page has nothing to call for the AI side and the menu entry is not shown. A cloud that does not use the project is unchanged.
+### The core (WebAssembly)
 
-### The service
+The capabilities of the CLI are what the page needs, and they are **computations on documents**: a catalog of what can be installed, a configuration, and the result. Written as **pure functions**, `(inputs) → document`, they run the same in the browser and on a machine:
 
-> **Not decided: where the capabilities run.** A separate service is one of four ways to give the page the capabilities of the CLI, and the one that costs the user a component to host. The others are to run them **in the browser**, or to **embed `easy-cs-ai` in CloudStack**, through its extensions framework or a backend plugin. They are compared in [search/cloudstack: architecture](../search/cloudstack/architecture.md), with the experiments that decide between them. Everything below (the calls, what the service keeps, the collection) describes **the capabilities and what they must give**, whoever runs them; only the words "service" and "HTTP" are specific to the external-server option, and the [reach of the VMs](../search/cloudstack/architecture.md#who-can-reach-the-vms) depends on where they run.
+| Capability | Inputs | Document | Described in |
+| --- | --- | --- | --- |
+| catalog, schema | The snapshot of the `describe` of the shipped scripts | The catalog and the schema | [spec: capabilities](spec-capabilities.md#catalog) |
+| validate | The snapshot, the configuration | `plan`, `warnings`, `errors`, `next_steps` | [spec: capabilities](spec-capabilities.md#config-validate) |
+| plan, suggest, check | The snapshot, the models and components, the specs of the VM | The sizing, with its estimated margin | [spec: model fit](spec-model-fit.md#declared-resources) |
+| script | The snapshot, the configuration, the package source and the random values given | One script per VM and the next steps | [spec: VM generator](spec-vm-generator.md) |
 
-The CLI is a program for a machine, not for a browser, and the capabilities are what the page needs: they already answer in JSON. The service is the **thinnest possible wrapper** of them over HTTP, so that the page can call them:
+- **The core does no input or output.** It reads no file, opens no connection, asks for no clock or random number: what it needs is **given**, including the snapshot of the catalog (built at each release from the `describe` of the install scripts, which stay the source of truth) and any random value (the page draws it with the browser's, the CLI with the system's). This is what lets one source compile to a native program and to WebAssembly.
+- **Written in Rust, and the install scripts stay bash.** The scripts of layer 1 (`apt`, `systemd`, Docker, nginx) and the orchestration of `apply`, `add`, `status` do not move: they are the part that touches a machine, and the CLI calls the native core where it uses `jq` programs today. This reopens [decision: scripting language](decision-scripting-language.md#revisit-when) **for the core only**, by steps (the validation first, then the generation and the sizing).
+- **Sizing needs llmfit inside the core**, as a library compiled with the others: its hardware detection is not needed (the target is given by `--ram`, `--memory` and `--cpu-cores` already), but whether it builds as a library for WebAssembly is **not known** ([open questions](#open-questions)). Until it is, the page shows the sizing as not available, as the session does without llmfit ([llmfit is optional](spec-model-fit.md#llmfit-is-optional)); no figure is ever re-implemented in the page.
+- **The documents are those of the CLI**, byte for byte: the CLI's `--json` is the output of the same core. There is no second description of a document.
+- **Distribution.** The core is built by this repository and offered to the UI as a **package it depends on**, not as a binary kept in the CloudStack repository or a Rust toolchain in its build; whether the community accepts that is an [open question](#open-questions).
+- **It runs in the page and nowhere else**: nothing is installed on the management server, and a cloud that does not use the project is unchanged.
 
-| Call | Runs | Document |
-| --- | --- | --- |
-| catalog | `easy-cs-ai catalog --json` | [spec: capabilities](spec-capabilities.md#catalog) |
-| schema | `easy-cs-ai config schema` | idem |
-| validate | `config validate <file> --target fresh --json` | idem, with `plan`, `warnings`, `next_steps` |
-| plan a VM | `provisioning llmfit plan` (with `--component` and `<model>@<engine>`) | [spec: model fit](spec-model-fit.md#declared-resources) |
-| suggest / check | `provisioning llmfit suggest`, `check`, with `--target-*` | idem |
-| generate | `script <file> --json` | the scripts and `next_steps` |
-| collect | reads the [status document](#the-status-document) of each VM | [below](#reading-the-vms) |
+#### What the project stores
 
-- **The documents are passed through as they are.** The service adds no field, no rule and no text to them: a document that the CLI changes reaches the page changed. `guide.txt` is not involved (it is for a model that drives the CLI).
-- **It runs the same package as the VMs.** Its version is the one the generated scripts pin (see [package source](spec-vm-generator.md#package-source)), so the page never proposes what a VM cannot install.
-- **It needs no root and changes no machine**, as the generator: capabilities that only read or compute. `provisioning llmfit` must be installed where it runs for sizing to work, otherwise the page says the recommendation is not available, as the session does (see [llmfit is optional](spec-model-fit.md#llmfit-is-optional)).
-- **Where it runs** is an operator's choice (the host of the management server, or any machine that the browser can reach and that can reach the VMs for the [collection](#reading-the-vms)); its address is the one setting of the UI configuration above. Since the page is hosted by CloudStack and the service is not, the browser calls a **second origin**: the cross-origin rules (and the authentication of the calls, see the [first open question](#open-questions)) are part of the design, not an afterthought.
+Nothing outside CloudStack, and nothing that CloudStack already has. The configuration of a topology and its group of VMs are stored **in CloudStack** ([where a topology lives](#where-a-topology-lives)); the monitoring key is [read back from the VM](#reading-the-vms), not kept.
 
-#### What the service keeps
+## Architectures considered
 
-As little as possible, and nothing that CloudStack already has:
+Where the capabilities (validation, sizing, script generation…) run decides what the user has to install, how the page authenticates, and from where the VMs are read. Five were weighed; the reasoning and the sources are in [search/cloudstack: architecture](../search/cloudstack/architecture.md).
 
-- **Nothing about the topology.** The configuration is passed with each call. See [where a topology lives](#where-a-topology-lives).
-- **The monitoring keys** of the topologies, needed to read the VMs (see [reading the VMs](#reading-the-vms)), and the certificate that each VM's proxy presents (public). Nothing else is persisted, in particular no history of the status.
-- Secrets are never in logs, as everywhere in the project.
+| # | Architecture | Component for the user | One logic with the CLI | Main obstacle |
+| --- | --- | --- | --- | --- |
+| 1 | **Everything recoded in the browser** (JavaScript, `jq` in WebAssembly) | None | No: a second logic, or a port of the `jq` programs | Sizing (`llmfit`, Rust) cannot move to the browser |
+| 2 | **An API server** that runs the CLI | **A service** to host, update and protect | Yes | The extra component, and a second origin to authenticate |
+| 3a | **CloudStack extension** (the management server runs the CLI) | The CLI package on each management server, and the extension | Yes | Actions tied to a VM, a network or a VPC; a new mechanism that may change |
+| 3b | **A backend plugin** in CloudStack's Java server | The CLI package on each management server | Yes, if it runs the CLI | Java in the CloudStack repository for a bash toolbox; highest acceptance risk |
+| 4 | **A Rust core built for Linux and WebAssembly, in the browser** (**retained**) | None | **Yes: one source, built twice** | `llmfit` as a library for `wasm32` (to try), the rewrite of the core, a WebAssembly module accepted by the CloudStack community |
+
+Options 2, 3a and 3b stay as **fallbacks** if the experiments on option 4 fail (see [open questions](#open-questions)).
+
+## Contributing to CloudStack
+
+The page is built **in the repository of Apache CloudStack** and proposed there, so that it ships with the UI. This splits the work between two repositories:
+
+| Where | What lives there |
+| --- | --- |
+| **`apache/cloudstack`** (`ui/`) | The section: its routes and menu entry, the three screens, the calls to the CloudStack API, the calls to the core, the reads of the status of the VMs, the translations, the tests of the UI, and the documentation of the feature in the CloudStack docs |
+| **This repository** | The **core** (Rust, built for Linux and for WebAssembly) and the CLI that uses it, the install scripts, the [status document](#the-status-document) of the proxy, the specs (this one included), and the tests of all of these |
+
+What this implies, to settle with the CloudStack community **before** writing the page:
+
+- **The community has to accept a WebAssembly module in the UI**, built elsewhere and consumed as a dependency, whose logic is maintained in another repository. Nothing else of CloudStack depends on it, and no server is added. If it refuses, the alternatives are a section limited to what CloudStack knows (resources and metrics, [without the AI side](#not-in-this-version)), or the [other architectures](../search/cloudstack/architecture.md) (a service, the extensions framework), which add a component for the user.
+- **The process of the project is followed**, not invented here: a discussion and a proposal on its mailing list or issue tracker before a large change, a pull request against the main branch, the project's licence headers, and its release cycle (the section reaches a release when it is merged for it). Where those rules are written is in the project's contribution guide, to read first ([to verify](#to-verify-on-cloudstack)).
+- **The page is developed against a CloudStack that exists**: a development environment of the UI, pointed at a test management server, and a fork of the repository for the branch. Nothing here needs the project's own page to be installed on a production cloud before the merge.
+- **The version it targets** is the main branch at the time, and a release later. A cloud on an older version does not have the page; the CLI works without it.
+- **The page stays thin** ([principle 1](#principles)): the less logic the section holds, the less there is to review, translate and maintain upstream, and the less it moves when a capability of this repository changes.
 
 ## Contributing to CloudStack
 
@@ -161,6 +188,7 @@ Then, in order, each step shown with its state and its CloudStack job:
 Rules:
 
 - **Idempotent and resumable.** The page finds what already exists by the [tags](#tags) and creates only what is missing, so that a failure in the middle, a closed tab or a second click leaves nothing doubled: *create* again continues. It never creates a second VM for a name that already exists in the topology.
+- **The browser drives the creation, CloudStack runs it.** The order (engine VMs first) is kept by the page, and each step is a CloudStack job that goes on if the tab is closed. A closed tab leaves a topology **partly created, never wrong**: everything made is tagged, and opening the topology again shows what is missing and continues. Nothing else acts while no page is open.
 - **A failure stops at that step**, says which job failed with the CloudStack error as given, and **removes nothing on its own**: the user chooses *retry*, *continue without*, or *destroy what was created* (listing it first).
 - **The link between two VMs (a model shown in a chat interface of another VM) is finished by hand once the VMs are up**, as today ([principle 3 of spec: several VMs](spec-multi-vm.md#principles)): the address of an engine VM and its API key do not exist when the scripts are generated, and no secret may travel through the user-data. The page shows the [next steps](spec-multi-vm.md#next-steps) of the validation, as written, **per link to another VM, with the real VM names, as a checklist**, and the [monitoring](#links-state) tells when each one is done. It does not run them: reaching inside a VM is beyond what the CloudStack API gives. A higher-level command that finishes a link is the [open question](spec-multi-vm.md#open-questions) of spec: several VMs, and would serve the page directly.
 - **Editing after creation.** A script is a snapshot, so changing the configuration of a VM that exists is not changing the VM. The page offers, for an existing topology: add a VM (created like the others), and, for a change of a VM that exists, the **command to run on it** (`easy-cs-ai apply`, with the new slice) instead of silently recreating anything. It shows the drift between the file and what the VMs report ([states](#states-of-a-vm)). Replacing a VM is a destroy and a create, announced as such.
@@ -168,7 +196,7 @@ Rules:
 
 ## Tags
 
-Every resource created by the page carries [CloudStack resource tags](#to-verify-on-cloudstack), the only link between a topology and CloudStack (the page has no database):
+Every resource created by the page carries [CloudStack resource tags](#to-verify-on-cloudstack), what marks a resource as part of a topology (the page has no database of its own, and the [group of VMs](#where-a-topology-lives) holds the configuration):
 
 | Key | Value |
 | --- | --- |
@@ -180,19 +208,22 @@ A resource without the topology tag is not part of it. Tag values are short and 
 
 ## Where a topology lives
 
-The page has no database of its own, and the service keeps no topology. The configuration must live somewhere the user's account can reach, survive a closed tab, and be shared between the users of the account. The choices:
+With no server of the project, a topology has to live **in CloudStack**, reachable by the users of the account, surviving a closed tab, shared between them, and following the permissions the account already has.
+
+**Proposed:** the topology is a **group of VMs** (a CloudStack *instance group*, a label that groups VMs and has no effect on their placement), named after the topology, with each VM of the topology deployed into it, and the **configuration** (the file of [spec: config](spec-config.md), which holds no secret by [rule](spec-config.md#secrets)) saved as an **annotation** on that group. The groups of an account are the list of topologies the page opens with; the file stays downloadable at any time.
 
 | Option | For | Against |
 | --- | --- | --- |
-| The browser only (draft) plus *download* | Nothing to build | Lost with the browser; not shared |
-| A CloudStack object of the account (a stored user-data template, or annotations on a resource) | Follows the account's permissions; visible to those who see the VMs | Depends on a CloudStack feature and its size limits; to verify |
-| The service | Simple | A second source of truth next to CloudStack, to protect and back up |
+| **Instance group + annotation** (proposed) | One object per topology, listed by CloudStack, visible next to the VMs; no new concept | The reference of 4.20 lists `INSTANCE_GROUP` among the entity types of annotations; **not confirmed**: the size limit of an annotation, who may add one, and that a group can be annotated and read by a user |
+| Tags only, and the file downloaded | Nothing to store | The configuration is lost with the browser; the topology cannot be edited again |
+| A registered user-data (`registerUserData`) holding the file | A stored text of the account, up to the user-data limit | A user-data is meant for a VM; its size limit (about 24 KB of text) is smaller than a large configuration |
+| The browser (draft) | Nothing to build | Lost with the browser; not shared |
 
-**Proposed:** a draft in the browser while editing, then the configuration saved **in CloudStack** (the first row of the second option) when the topology is created, found back by its tags; the file stays downloadable at any time. The configuration holds no secret by [rule](spec-config.md#secrets), so it can sit there. The choice depends on what the CloudStack version allows, see [open questions](#open-questions).
+A draft is kept in the browser while editing, and saved when the topology is created or the user saves. Whatever the object, **a configuration that cannot be saved there is never silently kept elsewhere**: the page says so and offers the download.
 
 ## Screen 3: monitoring
 
-A page per topology, built around one question: **is the local AI there, and is it used?** It is a dashboard of **status**, not a metrics system: it shows the state now and a short trend, and keeps no long history (the service keeps none, see [what it keeps](#what-the-service-keeps)).
+A page per topology, built around one question: **is the local AI there, and is it used?** It is a dashboard of **status**, not a metrics system: it shows the state now and a short trend, and keeps no long history (nothing stores one: the page shows what it reads, and CloudStack keeps its own metrics for 12 hours by default).
 
 ### Sources
 
@@ -200,7 +231,7 @@ A page per topology, built around one question: **is the local AI there, and is 
 | --- | --- | --- |
 | The VM exists, its state, offering, addresses, its job | CloudStack API (`listVirtualMachines`) | Always |
 | CPU, memory, disk and network of the VM | CloudStack's own metrics of the VM | Always |
-| What runs inside: components, models, what is wired, use of the models | The [status document](#the-status-document) of the VM | Through the service, when the VM answers |
+| What runs inside: components, models, links, use of the models | The [status document](#the-status-document) of the VM | From the browser, when the VM answers and [can be reached](#reaching-the-vms-from-a-browser) |
 
 CloudStack tells **what the hypervisor sees**. Only the VM knows whether the engine answers, which models it holds and whether anyone is using them. The two are shown side by side and never merged into one verdict: a VM `Running` in CloudStack whose engine is down is the most useful thing the page can show.
 
@@ -255,7 +286,7 @@ Short and about the AI, not generic monitoring: an engine down, a model not serv
 
 ### Reading the VMs
 
-CloudStack's API does not look inside a VM, and neither the page nor the service may log in to one. The project adds a **read-only status** that a VM publishes itself, and the service reads it.
+CloudStack's API does not look inside a VM, and the page may not log in to one. The project adds a **read-only status** that a VM publishes itself, and the page reads it.
 
 #### The status document
 
@@ -271,23 +302,28 @@ Proposed, to add to the proxy component and its contract (**not implemented**): 
 | `system` | Free disk of the model store, memory seen by the VM |
 
 - **It never holds a secret, a prompt or an answer.** The access log is read for counts, status codes, times and the model location only: the content of a request is not in the log and is never read. A log is not kept longer than the counters need.
-- **It is read-only and read with a key of its own**, the **monitoring key**: generated on the VM at install like the API key, stored under `/etc/easy-cs-ai/secrets/`, accepted **only** on the status path, and useless for inference. The API key is never the monitoring key, so a leak of the monitoring key leaks no access to the models. It is read on the VM with `component proxy nginx show-key` (a second key, named in [open questions](#open-questions)), as the API key is.
+- **It is read-only and read with a key of its own**, the **monitoring key**: accepted **only** on the status path and useless for inference. The API key is never the monitoring key, so a leak of the monitoring key leaks no access to the models. How the key is chosen and how the page gets it is an [open question](#open-questions), with a proposal: the page draws it and puts it in the user-data of the VM, which it can read back later, instead of a key generated on the VM and pasted.
 - **A VM with no proxy** (no shipped stack, a proxy is required as soon as an engine holds a model) has no status document and is shown as `Unreachable`-by-design: only the CloudStack part is shown for it, and the page says so.
 - The document is a capability of the VM, usable without CloudStack: `easy-cs-ai status --json` stays the local, root-free way, and the document is its remote form.
 
-#### How the service reads it
+#### Reaching the VMs from a browser
 
-- The service reads each VM's status over **HTTPS with the monitoring key**, on the address CloudStack gives for the VM (the VM's IP or the public IP and port of its rule) and the certificate recorded for the VM, **verified against it** (never switched off, as for `--ca-file` in the [contract of the link](spec-multi-vm.md#chat-interface-librechat-add-endpoint)). The first time, the user is shown the certificate's fingerprint and its names and accepts it, as for an SSH host.
-- **The monitoring key reaches the service once, given by the user** (read on the VM, pasted in the page, as the API key is read for the links). The page says where to read it, and the key never goes through the user-data. It is stored by the service for that topology ([what it keeps](#what-the-service-keeps)), nowhere else.
-- Polling is on demand and bounded: while a monitoring page is **open and visible**, every 30 seconds by default, never faster than the VM refreshes its document, and **not at all** when no page is open. A failed read is a state, not an error to hide, and is never retried in a tight loop.
-- The service reads only VMs of the topologies whose tags and monitoring key it was given, on the addresses CloudStack reports for them (it is not an open fetcher: the URL is never given by the page).
+The read is made **by the browser of the user**, so what the browser can reach decides what the page can show, and this is the main limit of having no server:
+
+- **Reach.** The VM must have an address the user's network reaches (a public IP or a rule, a VPN). A VM on a private network the browser cannot reach is shown as **not reachable from here**, with the CloudStack side only, and the page says why. It is not an error of the VM.
+- **Cross-origin.** The page is on the origin of the UI, the VM is another: the proxy of the VM must answer the browser's checks for **that origin only**, on the status path only. The origin is known when the script is generated (it is the one the page runs on), so it is an **option of the proxy** given at generation (name to settle), written in the configuration and never a wildcard.
+- **The certificate.** A browser refuses a self-signed certificate until the user accepts it **for that VM**, and cannot be asked to by the page: the page shows a link to open the VM once, with the instruction, and reads again. A certificate the browser already trusts (Let's Encrypt, or the customer's) needs nothing. A change of certificate shows again as not trusted, which is the right behaviour.
+- **Private networks.** Recent browsers add a check for a page that reaches a private address, a preflight the VM's proxy has to answer too ([Chrome's description](https://developer.chrome.com/blog/private-network-access-preflight), a rollout that has changed since 2022). **To test** on the browsers the users have.
+- **Polling** is on demand and bounded: while a monitoring page is **open and visible**, every 30 seconds by default, never faster than the VM refreshes its document, and **never when no page is open**: nothing watches a topology that nobody looks at, which is why [alerts sent out](#not-in-this-version) are not in this version. A failed read is a state, not an error to hide, and is never retried in a tight loop.
+- **Only the addresses CloudStack reports for the VMs of the topology are read**: the page never fetches an address it was given by anything else.
 
 ## Security
 
-- The page uses the user's CloudStack session and API rights. The service is a second door: whatever it accepts, it must reject a caller that is not an authenticated user of the page (first open question), and it only reads and computes.
-- No secret in the configuration, the user-data, the tags, the status document or the logs. The only stored secrets are the monitoring keys, on the service, mode `0600` or in the service's secret store.
-- Data of the models (prompts, answers) never leaves the VMs and is never read by the status collection.
-- The service never opens connections to addresses the user did not get from CloudStack for the topology (no request forgery).
+- The page uses the user's CloudStack session and API rights, and nothing else: there is no second door, since there is no service.
+- **No secret in the configuration**, the tags, the group or the annotation, the status document or the logs. The **monitoring key** is the one exception under discussion ([open questions](#open-questions)): a key that reads status only, kept in the user-data of its VM, readable by those who can already see that VM in CloudStack.
+- The API key of a proxy is generated on its VM and stays there, as today; the page never sees it, and the links are finished by hand.
+- Data of the models (prompts, answers) never leaves the VMs and is never read by the status.
+- The origin allowed by a VM's proxy for the status is the one of the UI, on the status path only.
 - Destruction is only of tagged resources, after a listed confirmation.
 
 ## Not in this version
@@ -303,9 +339,11 @@ Proposed, to add to the proxy component and its contract (**not implemented**): 
 
 The first reading of the documentation is in [search/cloudstack](../search/cloudstack/README.md) (2026-11-06, read and not tried): it confirms that a UI `plugins` entry shows a page in an iframe, that tags and registered user-data exist, and that the user-data limit counts **after base64** (about 24 KB of script, not 32 KB). The points below remain to check on a real instance of the version targeted; each is a premise, none is relied on as fact:
 
-- **How a section is added to the UI and what the contribution requires**: the structure of `ui/` (sections, router, components, translations, tests), the version of its framework, the contribution guide and the proposal process of the project, whether a section may depend on an external service, and what the community expects for a feature of this size. [search/cloudstack](../search/cloudstack/ui-extension.md) found the way to add a section (`src/config/section`, `src/config/router.js`) in the UI guide only.
+- **How a section is added to the UI and what the contribution requires**: the structure of `ui/` (sections, router, components, translations, tests), the version of its framework, the contribution guide and the proposal process of the project, whether a section may carry a WebAssembly module built elsewhere, and what the community expects for a feature of this size. [search/cloudstack](../search/cloudstack/ui-extension.md) found the way to add a section (`src/config/section`, `src/config/router.js`) in the UI guide only.
 - **Resource tags** on VMs, volumes, networks and rules, their key and value limits, and that a tag on a rule or a network exists as needed.
-- **Stored user-data / annotations** as a place for the configuration ([where a topology lives](#where-a-topology-lives)): availability, size limits, permissions.
+- **Instance groups and annotations** as the place of a topology ([where a topology lives](#where-a-topology-lives)): that a group can be annotated and read by a user, the size limit of an annotation, the permissions, and how a VM is deployed into a group.
+- **WebAssembly in the UI**: whether the UI's content security policy lets a module run, the MIME type the server gives `.wasm`, the size the UI can carry, and how the UI's build takes a package that contains a module.
+- **Reading a VM from the UI's page**: the cross-origin and private-network checks of the browsers in use, and the `getVirtualMachineUserData` right of a user over the VMs of the account (for the [monitoring key](#reading-the-vms)).
 - The **user-data size limit** (`vm.userdata.max.length`, default 32 KB per the [generator spec](spec-vm-generator.md#implementation-notes)) and how to read it from the API.
 - **Metrics** of a VM through the API (CPU, memory, disk, network) and their freshness.
 - **Networks**: what the account may create, and the differences between an isolated network (firewall and port forwarding), a shared one with security groups, and an advanced zone's VPC, for [reachability](#mapping-to-cloudstack-resources).
@@ -314,26 +352,26 @@ The first reading of the documentation is in [search/cloudstack](../search/cloud
 
 ## Definition of done
 
-- A **parity** test, as that of the [journey](spec-journey.md#parity): the same decisions made in the page (against a fake service) and written by hand give the same configuration, the same validation document and the same scripts; a configuration downloaded from the page and one loaded into it are byte for byte the same.
-- Tests of the **service** with the real CLI and fake components: each call gives exactly the CLI's document (no field added, no field dropped); no root needed; a changed document of the CLI reaches the caller unchanged.
+- A **parity** test, as that of the [journey](spec-journey.md#parity): the same decisions made in the page (against the core built for WebAssembly) and written by hand with the CLI give the same configuration, the same validation document and the same scripts; a configuration downloaded from the page and one loaded into it are byte for byte the same.
+- Tests of the **core**: the same inputs give **the same documents** from the native build and the WebAssembly build (golden files, byte for byte); the CLI's `--json` is the core's output; the core opens no file, no connection and reads no clock (a test that runs it with none available); the snapshot of the catalog is rebuilt at each release and a test fails when it differs from the `describe` of the scripts; the size of the WebAssembly module is tracked.
 - Tests of the **creation**, against a CloudStack API simulator or a mock: the plan lists exactly what is created and nothing that exists; it starts nothing before confirmation; the engine VMs are deployed first; a re-run after a failure at each step creates only what is missing; a failure removes nothing; an untagged resource is never listed for destruction nor touched; the user-data is the generated script and above the limit the creation is refused before any call; no secret in the user-data, the tags or the requests.
 - Tests of the **status document** (proxy, `EASY_CS_AI_ROOT` mode): fields, counts from a sample access log per model, no content of requests, a refresh by the timer with no daemon, the monitoring key accepted on the status path only and refused on a model path, the API key refused on the status path, the document absent for a VM with no proxy.
-- Tests of the **collection**: a self-signed certificate verified against the recorded one and refused when it changes; the states of a VM for each case of the [table](#states-of-a-vm); the use classes (`in use`, `idle`, `never used`) at their thresholds; no polling when no page is open; a failed read shown as such.
-- An **integration test** on a CloudStack (or its simulator): a topology of an engine VM and a web VM created from the page, scripts run at first boot, the links (a model shown in the chat interface of the other VM) done by hand following the checklist, then the page showing `Ready`, the links `done` and the models as `in use` after a request, and `never used` before it.
-- The section **meets the conventions of `apache/cloudstack`**: it builds with the UI, passes its checks and tests, has its translations and its documentation, and is merged upstream; the work done in this repository is limited to the capabilities, the service and the proxy.
+- Tests of the **reading of the VMs**, from a browser (an automated one against fake VMs): the states of a VM for each case of the [table](#states-of-a-vm); a VM that cannot be reached is shown as such with the reason, and one whose certificate is not trusted shows the instruction; only the status path answers the UI's origin; the use classes (`in use`, `idle`, `never used`) at their thresholds; no polling when no page is open; a failed read shown as such.
+- An **integration test** on a CloudStack (or its simulator): a topology of an engine VM and a web VM created from the page, scripts run at first boot, the links done by hand following the checklist, then the page showing `Ready`, the links `done` and the models as `in use` after a request, and `never used` before it.
+- The section **meets the conventions of `apache/cloudstack`**: it builds with the UI, passes its checks and tests, has its translations and its documentation, and is merged upstream; the work done in this repository is limited to the core, the CLI, the scripts and the proxy.
 - `docs/` and the README in step with the page's real behaviour.
 
 ## Open questions
 
-- **Where the capabilities run**: in the browser, on a service, or embedded in CloudStack ([extensions framework](../search/cloudstack/architecture.md#3a-the-extensions-framework-exists-new) or a [backend plugin](../search/cloudstack/architecture.md#3b-a-backend-plugin-in-cloudstack-would-be-contributed)). It decides what the user has to install, how the page authenticates, and from where the VMs are read. The first experiments are listed in [the research](../search/cloudstack/architecture.md#what-to-try-in-this-order).
-- **Authentication of the page to the service** (if there is one). The service must accept only authenticated users of the CloudStack of the account. The page has the user's session, but the service is another origin: either the service checks the session (or a signature of the user's keys) against the management server on each call, or CloudStack gives the page a short-lived token. The first needs the service to reach the management server and the session to be sent cross-origin; the second needs something CloudStack does not offer today. Not specified, and the first thing to settle with the community.
-- **The acceptance of an external service by the CloudStack community** ([contributing](#contributing-to-cloudstack)), and the alternatives if it is refused.
-- **Where the service runs and who owns it.** A component of the management server host, a VM of the cloud, or one per account. It decides who holds the monitoring keys and how they are protected.
-- **Where the configuration is saved** ([where a topology lives](#where-a-topology-lives)): depends on what CloudStack offers.
-- **The monitoring key** is a **second secret per proxy**, a change to the [contract](spec-script-contract.md#secrets) (`show-key` gains a name, or a second action) and to the proxy's [state and options](spec-state-format.md). An alternative that avoids a second key: the status document readable without a key but **only from the address of the service**, which a firewall rule of the topology allows; it trades the key for a network rule and is weaker if the network is shared.
+- **The core's language and scope.** The core is Rust, compiled for Linux and WebAssembly ([the core](#the-core-webassembly)); this reopens [decision: scripting language](decision-scripting-language.md#revisit-when) for that part. To settle: the exact scope of the first step (the validation), how the catalog snapshot is produced and kept in step with the `describe` of the scripts, and the plan to migrate without rewriting the install scripts.
+- **`llmfit` as a library for WebAssembly.** Whether it is published or can be used as a library, whether it builds for `wasm32` with no hardware detection, the size of its model data, and the licence terms for bundling it. The sizing depends on it; the other capabilities do not. **First thing to try** (see [the research](../search/cloudstack/architecture.md#what-to-try-in-this-order)).
+- **The acceptance of a WebAssembly module in the CloudStack UI** ([contributing](#contributing-to-cloudstack)): built in another repository, consumed as a package, with its own build chain.
+- **Where the configuration is saved** ([where a topology lives](#where-a-topology-lives)): the instance group and its annotation are proposed, not confirmed.
+- **The monitoring key.** Three ways, none settled: **(a)** generated on the VM like the API key and pasted by the user into the page, which must then keep it somewhere per user (the browser) and breaks as soon as a second administrator opens the topology; **(b)** **drawn by the page and put in the user-data of the VM** (proposed), which the page reads back with the user's rights, so nothing is pasted or kept, at the price of an **exception to the rule that no secret travels through the user-data** and to the rule that [a literal secret is never in the configuration](spec-config.md#secrets) (a secret option that is a literal, for this key only); **(c)** **no key**, the document readable by whoever reaches the VM's HTTPS port, restricted to the UI's origin for browsers only, which leaks counts of requests to anyone on the network. The key of (b) reads status only, which is why the exception is proposed.
+- **The origin option of the proxy.** The name and shape of the option that gives the UI's origin to the status path (and its CORS and private-network answers) in the nginx component, and what happens when the UI is reached by several addresses.
 - **A path outside the proxy** for the status of a VM whose proxy is down: the VM can then only be `Unreachable`, with the CloudStack side. Is a guest-agent route worth the dependence on the hypervisor?
 - **Metrics from the proxy's log** count requests, not tokens or GPU load. Whether the engines can report more (tokens per second, GPU use) in a way common to every engine, without breaking the rule that an engine is not modified, is open; vLLM and Ollama have their own metrics, and a type-specific action of the [contract](spec-script-contract.md#type-specific-actions) would be the way.
 - **Sending alerts** (CloudStack events, mail, a webhook).
-- **A credentials file** ([contract, Secrets](spec-script-contract.md#secrets)) for the API key and the monitoring key: it would let a tool in the cloud fetch them without the logs, but it is a secret in a file at a known place, readable by whoever reaches the VM; it must still be settled with the page, and the page does not depend on it (the user pastes the keys).
+- **A credentials file** ([contract, Secrets](spec-script-contract.md#secrets)) for the API key: it would let a tool in the cloud fetch it without the logs, but it is a secret in a file at a known place, readable by whoever reaches the VM; the page does not depend on it (the user pastes the key to finish a link).
 - **Roles in the page.** Whether a read-only user (watching the topologies, not creating) is a CloudStack role distinct from the one that creates, and how the page reads it.
 - **Cost display.** Showing the cost of a VM from the offering, if the cloud publishes it, is outside what the capabilities give; the page would read CloudStack, never compute it.
