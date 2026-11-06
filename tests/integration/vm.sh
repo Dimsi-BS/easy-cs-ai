@@ -7,7 +7,7 @@
 # create    downloads the Ubuntu cloud image (checked against Ubuntu's SHA256SUMS), makes a NAT
 #           network of its own and the VM, and waits until it answers over SSH
 # run       builds the package from this working tree, generates the VM script from a
-#           configuration (easy-cs-ai generate), runs it as root in the VM, prints its log;
+#           configuration (easy-cs-ai script), runs it as root in the VM, prints its log;
 #           for a configuration that names several VMs, --vm says which script this VM runs
 # ssh       a shell on the VM as the user `tester` (commands as arguments, or on stdin)
 # destroy   removes the VM, its disk and its network (a network shared through ECSAI_VM_NETWORK
@@ -251,7 +251,7 @@ cmd_run() {
     mkdir -p "$dist"
     bash "$ROOT/package/build.sh" --output "$dist" >/dev/null
     gw="$(gateway)"
-    EASY_CS_AI_CLI_VERSION="$version" bash "$ROOT/vm_script/generate.sh" --config "$config" --package-format tarball \
+    EASY_CS_AI_CLI_VERSION="$version" bash "$ROOT/vm_script/script.sh" "$config" --package-format tarball \
         --package-url "http://$gw:$HTTP_PORT/easy-cs-ai-$version.tar.gz" --package-file "$dist/easy-cs-ai-$version.tar.gz" \
         --package-version "$version" --output "$script" >&2
     if jq -e 'any(.components[]?; has("vm"))' "$config" >/dev/null; then

@@ -13,7 +13,9 @@ bats_require_minimum_version 1.5.0
 SHA=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 setup() {
-    GEN="${BATS_TEST_DIRNAME}/../../vm_script/generate.sh"
+    GEN="${BATS_TEST_DIRNAME}/../../vm_script/config.sh"
+    SCRIPT="${BATS_TEST_DIRNAME}/../../vm_script/script.sh"
+    OUTFILE=""
     CLI="${BATS_TEST_DIRNAME}/../../package/bin/easy-cs-ai"
     REAL="${BATS_TEST_DIRNAME}/../../install_scripts"
     export EASY_CS_AI_HOME="$BATS_TEST_TMPDIR/home"
@@ -40,7 +42,7 @@ jq -n '{name: "$2", type: "$1", component_version: "9.9", requires: $3, platform
 FAKE
 }
 
-gen() { run --separate-stderr bash "$GEN" "$@"; }
+gen() { run --separate-stderr bash "$SCRIPT" "$@"; }
 # _join_lines <answers…>: one line per answer; unlike "$(printf …)", a trailing empty answer is
 # kept (command substitution would strip it, dropping a default taken at the end of the session).
 _join_lines() {
@@ -53,7 +55,30 @@ ask() {
     _join_lines "$@"
     ANSWERS="$REPLY_LINES"
     export ANSWERS
+    # the last question of the session is the file to write (default ./easy-cs-ai.json), and the
+    # confirmation of an overwrite when the file exists already
+    if [[ -n "$OUTFILE" ]]; then
+        ANSWERS+="$OUTFILE"$'\n'
+        [[ ! -e "$OUTFILE" ]] || ANSWERS+=$'y\n'
+    fi
+    export ANSWERS
     run --separate-stderr bash -c 'bash "$0" "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
+}
+
+# ask_script <answers…>: the session writes a configuration (session.json), then `script` makes the
+# scripts from it, with GEN_ARGS as its options. Two commands since the split of generate: the
+# session writes no script. A session that writes nothing (cancelled) stops here, status 0.
+ask_script() {
+    local script_args=("${GEN_ARGS[@]}") session_err
+    GEN_ARGS=()
+    OUTFILE=session.json
+    ask "$@"
+    [ "$status" -eq 0 ] || return 0
+    [ -e session.json ] || return 0
+    session_err="$stderr"
+    gen session.json "${script_args[@]}"
+    stderr="$session_err$stderr"
+    OUTFILE=""
 }
 embedded() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1" | sed '1d;$d'; }
 
@@ -90,7 +115,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 # --- the question of another VM, and the three roles ---------------------------------------------
 
 @test "the question of another VM is asked after the first pass, n (default) keeps one VM" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "${VM1_ANSWERS[@]}" ""
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"Add another VM? (y/n) [n]:"* ]]
@@ -101,14 +126,14 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 
 @test "the question is not asked when nothing can be split" {
     rm "$EASY_CS_AI_HOME/chat-interface/chat.sh"
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "" "" "" "" "" m1 y
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"Add another VM?"* ]]
 }
 
 @test "y names the first VM and builds a second, asking its role and its name, for any number of VMs" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "${TWO_VM_SESSION[@]}"
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"Name of the VM [vm-1]:"* ]]
@@ -123,7 +148,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 }
 
 @test "three VMs: the question and the role are asked again after each pass" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     # engine, then a second engine-role VM "eng2" (its own proxy and engine, no model), then a web
     # VM linked to both (the default of the links question)
     ask "${VM1_ANSWERS[@]}" y engine \
@@ -137,7 +162,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 }
 
 @test "role engine or web must select the component that defines it: none is refused and asked again" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "${VM1_ANSWERS[@]}" y engine \
         engine "" "" none "" "" "" "" "" y \
         y \
@@ -149,7 +174,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 }
 
 @test "role custom: every type one at a time, Add a <type>?, nothing required, restarts if empty" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     # the second VM, custom: decline every type (nothing yet, the walk restarts), then decline
     # proxy and engine again but accept chat-interface (which pulls proxy in as a dependency)
     ask "${VM1_ANSWERS[@]}" y engine \
@@ -162,7 +187,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 }
 
 @test "role custom: y then the choice of the component, rank 1 preselected" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "${VM1_ANSWERS[@]}" y engine \
         custom "" y "" n y "" "" "" y \
         n "" y
@@ -171,7 +196,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 }
 
 @test "models in every pass that has an engine, each with its vm and engine; m offered only there" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     # VM2 (engine role, named eng2): proxy, engine, tls, server-name, port, a model, confirm
     ask "${VM1_ANSWERS[@]}" y engine \
         engine eng2 "" "" "" "" "" m2 y \
@@ -183,7 +208,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 }
 
 @test "m is offered at the summary of an engine-role pass and not at a web-role one" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     # VM2 (engine role): proxy, engine, tls, server-name, port, no model, m (redo models), no
     # model again, confirm. VM3 (web role): proxy, chat, tls, server-name, m (invalid), confirm
     ask "${VM1_ANSWERS[@]}" y engine \
@@ -198,14 +223,14 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 
 @test "cancelling after a pass writes nothing" {
     GEN_ARGS=("${PKG[@]}" --output vm.sh)
-    ask "${VM1_ANSWERS[@]}" y engine web "" "" "" "" "" n
+    ask_script "${VM1_ANSWERS[@]}" y engine web "" "" "" "" "" n
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"cancelled, nothing written"* ]]
     [ -z "$(ls vm*.sh 2>/dev/null)" ]
 }
 
 @test "the engine role proposes a proxy even with no model: refusing goes back to the components" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "${VM1_ANSWERS[@]}" y engine \
         engine "" none "" "" "" n "" "" "" "" "" "" y \
         n
@@ -214,7 +239,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 }
 
 @test "no proxy is proposed for a protected engine, not even on an engine-role pass" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "${VM1_ANSWERS[@]}" y engine \
         engine "" none prot "" y \
         n
@@ -223,7 +248,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 }
 
 @test "each pass is sized from its own components: a web-role pass has no model and no share of the engine's" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "${VM1_ANSWERS[@]/m1/}" y engine \
         web "" "" "" "" "" y \
         n "" y
@@ -235,7 +260,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 
 @test "a session of two VMs writes one script per VM, named from --output, each with its slice and its header" {
     GEN_ARGS=("${PKG[@]}" --output vm.sh)
-    ask "${TWO_VM_SESSION[@]}"
+    ask_script "${TWO_VM_SESSION[@]}"
     [ "$status" -eq 0 ]
     [ -x vm-engine.sh ] && [ -x vm-web.sh ]
     [ ! -e vm.sh ]
@@ -253,7 +278,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 
 @test "without --output the scripts are ./easy-cs-ai-vm-engine.sh and ./easy-cs-ai-vm-web.sh" {
     GEN_ARGS=("${PKG[@]}")
-    ask "${TWO_VM_SESSION[@]}"
+    ask_script "${TWO_VM_SESSION[@]}"
     [ "$status" -eq 0 ]
     [ -x easy-cs-ai-vm-engine.sh ] && [ -x easy-cs-ai-vm-web.sh ]
 }
@@ -261,24 +286,24 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 @test "--dry-run writes nothing and prints every script, --output with no extension appends the VM" {
     GEN_ARGS=("${PKG[@]}" --output out/vm --dry-run)
     mkdir out
-    ask "${TWO_VM_SESSION[@]}"
+    ask_script "${TWO_VM_SESSION[@]}"
     [ "$status" -eq 0 ]
     [ -z "$(ls out)" ]
     [[ "$stderr" == *"would write out/vm-engine"*"would write out/vm-web"* ]]
     GEN_ARGS=("${PKG[@]}" --output out/vm)
-    ask "${TWO_VM_SESSION[@]}"
+    ask_script "${TWO_VM_SESSION[@]}"
     [ -x out/vm-engine ] && [ -x out/vm-web ]
 }
 
 @test "one script that cannot be written keeps none" {
     GEN_ARGS=("${PKG[@]}" --output nodir/vm.sh)
-    ask "${TWO_VM_SESSION[@]}"
+    ask_script "${TWO_VM_SESSION[@]}"
     [ "$status" -eq 1 ]
     [ ! -e nodir ] && [ -z "$(ls vm*.sh 2>/dev/null)" ]
 }
 
-@test "--config-only of a several-VM stack writes one file, with the vm fields and links" {
-    GEN_ARGS=(--config-only --output only.json)
+@test "the session of a several-VM stack writes one file, with the vm fields and links" {
+    GEN_ARGS=(); OUTFILE=only.json
     ask "${TWO_VM_SESSION[@]}"
     [ -s only.json ]
     [ "$(jq -r '[.components[].vm] | unique | join(",")' only.json)" = "engine,web" ]
@@ -288,7 +313,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 # --- the links question ---------------------------------------------------------------------------
 
 @test "the links question: refused for an unknown VM, the web VM itself, a VM with no engine, a protected engine" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "${VM1_ANSWERS[@]}" y engine \
         web "" "" "" "" "" y \
         n ghost web engine y
@@ -299,7 +324,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 }
 
 @test "the links default is the other VMs with an engine, or none when the web VM has one of its own" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "${VM1_ANSWERS[@]}" y engine \
         custom "" y "" n y "" "" "" y \
         n "" y
@@ -309,7 +334,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 # --- the proposal of a proxy for a linked engine VM with none ------------------------------------
 
 @test "a linked engine VM with no proxy: the error blocks, nothing is written" {
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     # engine (named "engine"), then chatvm (a chat interface, custom role), then bare (an engine
     # with no proxy, custom role); chatvm is explicitly linked to the unreachable "bare"
     ask "${VM1_ANSWERS[@]}" y engine \
@@ -323,13 +348,13 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 
 # --- a file with vm ----------------------------------------------------------------------------
 
-@test "--config on a file with vm gives the scripts of the session and the same configuration" {
+@test "script on a file with vm gives the scripts of the session and the same configuration" {
     two_vm_file f.json
-    gen --config f.json "${PKG[@]}" --output file.sh
+    gen f.json "${PKG[@]}" --output file.sh
     [ "$status" -eq 0 ]
     file_err="$stderr"
     GEN_ARGS=("${PKG[@]}" --output ses.sh)
-    ask "${TWO_VM_SESSION[@]}"
+    ask_script "${TWO_VM_SESSION[@]}"
     [ "$status" -eq 0 ]
     diff <(embedded file-engine.sh | jq -S .) <(embedded ses-engine.sh | jq -S .)
     diff <(embedded file-web.sh | jq -S .) <(embedded ses-web.sh | jq -S .)
@@ -338,16 +363,16 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
     [[ "$file_err" == *"VM engine"*"VM web"* ]]
 }
 
-@test "--config --json: script is null, scripts has one entry per VM, next_steps the instructions" {
+@test "script --json: script is null, scripts has one entry per VM, next_steps the instructions" {
     two_vm_file f.json
-    gen --config f.json --json "${PKG[@]}" --output j.sh
+    gen f.json --json "${PKG[@]}" --output j.sh
     [ "$status" -eq 0 ]
     [ "$(jq -c '[.ok, .script, (.scripts | map(.vm)), (.scripts | map(.path)), (.scripts | map(.written))]' <<<"$output")" = '[true,null,["engine","web"],["j-engine.sh","j-web.sh"],[true,true]]' ]
     [ "$(jq '.next_steps | length' <<<"$output")" -eq 4 ]
     [ "$(jq -r '.plan.vms | map(.vm) | join(",")' <<<"$output")" = "engine,web" ]
     [ "$(jq -c '.plan.links' <<<"$output")" = '[{"web_vm":"web","engine_vm":"engine"}]' ]
     jq 'del(.components[0].vm)' f.json >bad.json
-    gen --config bad.json --json "${PKG[@]}" --output k.sh
+    gen bad.json --json "${PKG[@]}" --output k.sh
     [ "$status" -eq 2 ]
     [ "$(jq -c '[.ok, .script, .scripts, .next_steps]' <<<"$output")" = '[false,null,[],[]]' ]
     [ ! -e k-engine.sh ]
@@ -356,7 +381,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 @test "a model on an engine VM with no proxy is refused before any script is written" {
     two_vm_file f.json
     jq 'del(.components[0])' f.json >np.json
-    gen --config np.json "${PKG[@]}" --output n.sh
+    gen np.json "${PKG[@]}" --output n.sh
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"needs a proxy"* ]]
     [ -z "$(ls n*.sh 2>/dev/null)" ]
@@ -367,7 +392,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
 @test "two VMs, an engine behind a proxy with a model: the four steps of the administrator, models filled in" {
     two_vm_file f.json
     jq '.models += [{"name": "m2", "force": true, "vm": "engine"}]' f.json >g.json
-    gen --config g.json "${PKG[@]}" --output s.sh
+    gen g.json "${PKG[@]}" --output s.sh
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"What is left to do once the VMs are up:"* ]]
     [[ "$stderr" == *"1. Run each script as root on its VM, the engine VM first."* ]]
@@ -378,7 +403,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
     [[ "$stderr" == *"add-endpoint engine-m1"*"--model m1 --api-key-file <file>"*"add-endpoint engine-m2"*"--model m2 --api-key-file <file>"* ]]
     [[ "$stderr" == *"sudo easy-cs-ai install proxy prox <the options it was installed with>"* ]]
     [[ "$stderr" == *"Until step 4 is done, the model list of the chat interface stays empty."* ]]
-    gen --config g.json --json "${PKG[@]}" --output s.sh
+    gen g.json --json "${PKG[@]}" --output s.sh
     [ "$(jq '.next_steps | length' <<<"$output")" -eq 4 ]
     [[ "$(jq -r '.next_steps | join(" ")' <<<"$output")" != *"s-engine.sh"* ]]
     [ "$(jq -r '.next_steps[0]' <<<"$output")" = "Run each script as root on its VM, the engine VM first." ]
@@ -390,7 +415,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
     run --separate-stderr bash "$CLI" config validate f.json --target fresh --json
     [ "$status" -eq 0 ]
     doc="$output"
-    gen --config f.json --json "${PKG[@]}" --output t.sh
+    gen f.json --json "${PKG[@]}" --output t.sh
     [ "$(jq -c '.next_steps' <<<"$output")" = "$(jq -c '.next_steps' <<<"$doc")" ]
     run --separate-stderr bash "$CLI" config validate f.json --target fresh
     [[ "$stderr" == *"What is left to do once the VMs are up:"* ]]
@@ -430,7 +455,7 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y engine web "" "${VM2_ANSWERS[@]}" n "" y)
     cat >one.json <<'JSON'
 { "schema_version": 1, "components": [ { "type": "engine", "name": "eng" } ] }
 JSON
-    gen --config one.json --json "${PKG[@]}" --output one.sh
+    gen one.json --json "${PKG[@]}" --output one.sh
     [ "$(jq 'has("next_steps")' <<<"$output")" = "false" ]
     [ "$(jq -r '.script.path' <<<"$output")" = "one.sh" ]
     [[ "$stderr" != *"What is left to do"* ]]
@@ -462,7 +487,7 @@ JSON
     [ "$(jq -c '[.warnings[] | select(.code == "engine_address_unknown")] | length' <<<"$output")" = 0 ]
     run --separate-stderr bash "$CLI" config validate u.json --target fresh --vm engine --json
     [ "$(jq -c '[.errors[] | select(.code == "engine_unreachable")] | length' <<<"$output")" = 0 ]
-    gen --config u.json "${PKG[@]}" --output u.sh
+    gen u.json "${PKG[@]}" --output u.sh
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"The engine listens on the loopback"* ]]
     [ -z "$(ls u*.sh 2>/dev/null)" ]
@@ -470,7 +495,7 @@ JSON
 
 @test "models_not_checked is judged per VM and shown once, in the summary of the VM that holds the model" {
     two_vm_file f.json
-    gen --config f.json "${PKG[@]}" --output m.sh
+    gen f.json "${PKG[@]}" --output m.sh
     [ "$(grep -c 'models not checked for fit on the VM' <<<"$stderr")" -eq 1 ]
     run --separate-stderr bash "$CLI" config validate f.json --target fresh --json
     [ "$(jq -c '[.warnings[] | select(.code == "models_not_checked") | .vm]' <<<"$output")" = '["engine"]' ]
@@ -551,7 +576,7 @@ FAKE
 
 @test "each pass is sized from its own components, and the cores given for the engine VM stay with it" {
     make_llmfit
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     # VM1 (plain, named "engine"): llmfit, proxy, engine, no chat-interface, hardware first, no
     # spec, no model. VM2 (engine role, "engine-2"): same, but 16 GB RAM, no GPU and 4 cores.
     # VM3 (web role): proxy and chat-interface, linked to both engine VMs (the default)
@@ -571,7 +596,7 @@ FAKE
 
 @test "in the m order the engine role asks for its models as <model>@<engine>, with its own components and no chat interface" {
     make_llmfit
-    GEN_ARGS=(--config-only --output cfg.json)
+    GEN_ARGS=(); OUTFILE=cfg.json
     ask "" "" "" none "" "" "" m "m1, m2" y \
         y engine \
         web "" "" "" "" "" y \
@@ -587,7 +612,7 @@ FAKE
     cat >one.json <<'JSON'
 { "schema_version": 1, "components": [ { "type": "proxy", "name": "prox", "vm": "a" }, { "type": "engine", "name": "eng", "vm": "a" } ] }
 JSON
-    gen --config one.json --json "${PKG[@]}" --output o.sh
+    gen one.json --json "${PKG[@]}" --output o.sh
     [ "$status" -eq 0 ]
     [ "$(jq -c '[.script, (.scripts | map(.vm)), (.scripts | map(.path)), .next_steps]' <<<"$output")" = '[null,["a"],["o-a.sh"],[]]' ]
     grep -q '^# VM: a (1 of 1)$' o-a.sh
@@ -605,11 +630,11 @@ JSON
 { "schema_version": 1, "components": [ { "type": "proxy", "name": "prox", "vm": "a" }, { "type": "engine", "name": "eng", "vm": "a" } ] }
 JSON
     jq 'del(.components[].vm)' one.json >none.json
-    gen --config none.json "${PKG[@]}" --output n.sh
+    gen none.json "${PKG[@]}" --output n.sh
     [ "$status" -eq 0 ]
     [ -x n.sh ]
     [ -z "$(grep '^# VM:' n.sh)" ]
-    gen --config one.json "${PKG[@]}" --output o.sh
+    gen one.json "${PKG[@]}" --output o.sh
     diff <(embedded n.sh | jq -S .) <(embedded o-a.sh | jq -S .)
     diff <(grep -v '^# VM:\|^# easy-cs-ai VM' n.sh) <(grep -v '^# VM:\|^# easy-cs-ai VM' o-a.sh)
 }

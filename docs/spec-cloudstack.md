@@ -18,8 +18,8 @@ The page is **a third rendering of the [journey](spec-journey.md)**, after the i
 
 ## Principles
 
-1. **Same features as the project, no second logic.** Choosing components and options, dependencies, models checked and sized with llmfit, VMs and links, validation, warnings, the generated scripts and the next steps all come from the CLI capabilities (`catalog`, `config schema`, `config validate`, `provisioning llmfit plan`, `generate --config --json`), see [the service](#the-service). The page never recomputes a figure, a margin, a warning or a script. A change of a rule is a change of a capability, and improves the terminal and the page at once.
-2. **One file describes the topology.** What the page edits and saves is the configuration of [spec: config](spec-config.md), the same file `generate --config` and `apply` read. A topology made in the page can be downloaded and run from a terminal, and a file written elsewhere can be loaded in the page ([parity](#definition-of-done)).
+1. **Same features as the project, no second logic.** Choosing components and options, dependencies, models checked and sized with llmfit, VMs and links, validation, warnings, the generated scripts and the next steps all come from the CLI capabilities (`catalog`, `config schema`, `config validate`, `provisioning llmfit plan`, `script --json`), see [the service](#the-service). The page never recomputes a figure, a margin, a warning or a script. A change of a rule is a change of a capability, and improves the terminal and the page at once.
+2. **One file describes the topology.** What the page edits and saves is the configuration of [spec: config](spec-config.md), the same file `script` and `apply` read. A topology made in the page can be downloaded and run from a terminal, and a file written elsewhere can be loaded in the page ([parity](#definition-of-done)).
 3. **The user decides, CloudStack is the authority on resources.** Nothing is created, resized or deleted without the person having seen the list and confirmed ([rule 3 of the journey](spec-journey.md#rules)). What exists in CloudStack is read from CloudStack, never from a copy of the page.
 4. **Only what it created, and it marks it.** Every resource the page creates carries [tags](#tags); it lists, changes and deletes **only** tagged resources of the topology. A VM, a network or a volume that the user made by hand is never touched, even if it looks related.
 5. **No secret in what the page stores or sends.** The user-data of a VM is stored in the CloudStack database and readable from the VM, so no secret goes there ([contract](spec-script-contract.md#secrets)): the keys are generated on the VMs and stay there. What the page keeps is limited to the [monitoring key](#reading-the-vms).
@@ -77,7 +77,7 @@ The CLI is a program for a machine, not for a browser, and the capabilities are 
 | validate | `config validate <file> --target fresh --json` | idem, with `plan`, `warnings`, `next_steps` |
 | plan a VM | `provisioning llmfit plan` (with `--component` and `<model>@<engine>`) | [spec: model fit](spec-model-fit.md#declared-resources) |
 | suggest / check | `provisioning llmfit suggest`, `check`, with `--target-*` | idem |
-| generate | `generate --config <file> --json` | the scripts and `next_steps` |
+| generate | `script <file> --json` | the scripts and `next_steps` |
 | collect | reads the [status document](#the-status-document) of each VM | [below](#reading-the-vms) |
 
 - **The documents are passed through as they are.** The service adds no field, no rule and no text to them: a document that the CLI changes reaches the page changed. `guide.txt` is not involved (it is for a model that drives the CLI).
@@ -139,7 +139,7 @@ For every VM of the configuration, the page proposes, from the sizing and the Cl
 | Compute (vCPU, RAM, GPU) | The sizing of `plan` for the VM: RAM without GPU or GPU memory with one, whichever applies, the cores of the `h` order if given | The smallest **compute offering** that covers it, or a custom one when the offerings allow it; none large enough is said, not worked around |
 | Disk | The disk of `plan` (models plus system plus components) | The root disk size at deployment, or a data disk for the model store, per the offering rules of the cloud |
 | Image | Ubuntu 24.04 or Debian, the targets of the project | A **template** the account may use, which must support cloud-init user-data; the user chooses, the page only filters by its name and OS type |
-| Boot script | `generate --config` (one script per VM, with the `VM:` header) | The **user-data** of the VM, base64, verified against the limit |
+| Boot script | `script` (one script per VM, with the `VM:` header) | The **user-data** of the VM, base64, verified against the limit |
 | Network | One network for the topology | An existing network of the account, or, if the user asks, a new isolated network (the page proposes, never creates a network silently) |
 | Reachability | The ports the stack uses: 443 for each proxy (the engine VM's too: the web VM reaches it there), 8443 for the chat interface, 22 for SSH | Security-group rules or firewall and port-forwarding / static NAT rules, **depending on the kind of network**; and the rule that lets the `web_vm` of a link reach the `engine_vm` on the HTTPS port of its proxy ([next step 3](spec-multi-vm.md#next-steps)). The page lists each rule before creating it |
 | Access | | An existing **SSH key pair** chosen by the user (the page does not create credentials) |

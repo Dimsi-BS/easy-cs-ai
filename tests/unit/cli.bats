@@ -69,7 +69,7 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage: easy-cs-ai"* ]]
     # an AI agent with only the binary is sent to the guide first, then the tree of the commands
-    [[ "$output" == *"Usage: easy-cs-ai"*"AI agent or program: run \`easy-cs-ai guide\` first, it tells how to use this CLI."*"easy-cs-ai"*"status"*"guide "*"catalog "*"host "*"config"*"schema"*"validate"* ]]
+    [[ "$output" == *"Usage: easy-cs-ai"*"AI agent or program: run \`easy-cs-ai guide\` first, it tells how to use this CLI."*"easy-cs-ai"*"status"*"config"*"edit"*"validate"*"schema"*"script"*"guide "*"catalog "*"host "* ]]
     cli --version
     # the version, then the short commit hash when git (or the build stamp) gives one
     [[ "$output" =~ ^0\.1\.0-rc3(\ \([0-9a-f]{7,}\))?$ ]]
@@ -101,7 +101,9 @@ has() { [[ "$1" == *"$2"* ]]; }
     has "$tree" $'\n├── install '
     has "$tree" $'\n│   ├── <type> <name> [--default] [options]  '
     has "$tree" $'\n│   └── [<type>] --defaults '
-    has "$tree" $'\n│   └── validate <file|-> '
+    has "$tree" $'\n│   ├── edit [<file>] '
+    has "$tree" $'\n│   ├── validate <file|-> '
+    has "$tree" $'\n│   └── schema '
     # no run of dashes as a branch: the tree is not confused with the options
     if has "$tree" '|-- ' || has "$tree" '`-- '; then false; fi
 }
@@ -109,7 +111,7 @@ has() { [[ "$1" == *"$2"* ]]; }
 @test "every general command of the table is in the tree" {
     local c
     help_tree ascii
-    for c in status install uninstall add remove apply generate component exec guide catalog host config help version; do
+    for c in status install uninstall add remove apply script component exec guide catalog host config help version; do
         has "$output" $'\n'"+-  $c" || has "$output" $'\n'"\`-  $c" || { echo "missing: $c"; false; }
     done
 }

@@ -16,7 +16,7 @@ See also: [.github/workflows](../.github/workflows/README.md), which runs these 
 
 ## Integration tests on a VM
 
-[tests/integration](integration/README.md): `vm.sh` creates and drives a throw-away **Ubuntu 24.04** VM under libvirt/KVM, and `lifecycle.sh` runs the life of the default stack on it, as root, from the script produced by `easy-cs-ai generate`, with assertions:
+[tests/integration](integration/README.md): `vm.sh` creates and drives a throw-away **Ubuntu 24.04** VM under libvirt/KVM, and `lifecycle.sh` runs the life of the default stack on it, as root, from the script produced by `easy-cs-ai script`, with assertions:
 
 1. install on an empty machine: llmfit, nginx (self-signed), Ollama, LibreChat (Docker installed by the script from its apt repository) and a model, in one run; health, API protection (401 without the key), site, endpoint, login, a chat through the API;
 2. the same script again: nothing changes;

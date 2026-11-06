@@ -2,7 +2,7 @@
 # easy-cs-ai: dispatcher over the layer 1 install scripts, see docs/spec-cli.md.
 # Implemented: help, version, status, install, uninstall, add, remove (in
 # lib/cli-models.sh), apply (lib/cli-apply.sh), component (contract actions of a
-# component, and the lists), exec (native tool commands), generate (hands over to
+# component, and the lists), exec (native tool commands), config edit and script (hand over to
 # vm_script/).
 set -euo pipefail
 
@@ -111,7 +111,11 @@ print_tree() {
     tree_row 1 "$V" "$T" '<model> [--engine <n>]' 'one model'
     tree_row 1 "$V" "$L" '--all [--engine <n>]' 'every model'
     tree_row 0 '' "$T" 'apply <file|-> [--vm <n>] [--prune]' 'make the machine match a file'
-    tree_row 0 '' "$T" 'generate [--config-only] [--config <file>]' 'VM post-install script generator'
+    tree_row 0 '' "$T" 'config' 'the configuration: edit, check, format'
+    tree_row 1 "$V" "$T" 'edit [<file>]' 'create or edit a configuration (session)'
+    tree_row 1 "$V" "$T" 'validate <file|-> [--target] [--vm <n>]' 'check a file, show its plan'
+    tree_row 1 "$V" "$L" 'schema' 'the format, as a JSON Schema'
+    tree_row 0 '' "$T" 'script <file> [--output <path>] [package options]' 'VM post-install scripts from a file'
     tree_row 0 '' "$T" 'component' 'the types and their components'
     last_type="${TYPES[${#TYPES[@]} - 1]}"
     for t in "${TYPES[@]}"; do
@@ -137,9 +141,6 @@ print_tree() {
     tree_row 0 '' "$T" 'guide' 'how to use this CLI (AI agent, program)'
     tree_row 0 '' "$T" 'catalog' 'what can be installed'
     tree_row 0 '' "$T" 'host' 'this machine: CPU, memory, disk, GPU'
-    tree_row 0 '' "$T" 'config' 'the configuration format and checks'
-    tree_row 1 "$V" "$T" 'schema' 'the format, as a JSON Schema'
-    tree_row 1 "$V" "$L" 'validate <file|-> [--target] [--vm <n>]' 'check a file, show its plan'
     tree_row 0 '' "$T" 'help'
     tree_row 0 '' "$L" 'version'
 }
@@ -616,16 +617,17 @@ cmd_component() {
     run_script "$type" "$name" "$@"
 }
 
-# --- generate ---------------------------------------------------------------------
+# --- config edit and script ------------------------------------------------------
 
-# cmd_generate <args…>: hand over to the VM script generator, which reads the
-# same scripts tree. Streams and exit code are the generator's.
-cmd_generate() {
-    local dir generator=""
+# hand_over <program> <args…>: hand over to a program of the VM script generator, which reads the
+# same scripts tree. Streams and exit code are the program's.
+hand_over() {
+    local program="$1" dir generator=""
+    shift
     for dir in "$HOME_DIR/vm_script" "$HOME_DIR/../vm_script"; do
-        [[ -f "$dir/generate.sh" ]] && generator="$dir/generate.sh" && break
+        [[ -f "$dir/$program" ]] && generator="$dir/$program" && break
     done
-    [[ -n "$generator" ]] || fail "$EXIT_ERROR" "the generator is not installed (vm_script/generate.sh not found)"
+    [[ -n "$generator" ]] || fail "$EXIT_ERROR" "the generator is not installed (vm_script/$program not found)"
     export EASY_CS_AI_HOME="$HOME_DIR" EASY_CS_AI_CLI_VERSION="$CLI_VERSION"
     local flags=()
     ((DRY)) && flags+=(--dry-run)
@@ -667,7 +669,7 @@ main() {
     local command="$1" a rest=()
     shift
     case "$command" in
-    status | add | remove | apply | config | catalog | host | guide)
+    status | add | remove | apply | config | script | catalog | host | guide)
         # the general options are also accepted after these commands
         for a in "$@"; do
             case "$a" in
@@ -706,13 +708,22 @@ main() {
         if ((DRY)); then cmd_apply "$@"; else changing apply cmd_apply "$@"; fi
         ;;
     exec) cmd_exec "$@" ;;
-    generate) cmd_generate "$@" ;;
+    script) hand_over script.sh "$@" ;;
     catalog) cmd_catalog "$@" ;;
     host) cmd_host "$@" ;;
-    config) cmd_config "$@" ;;
+    config)
+        if [[ "${1:-}" == edit ]]; then
+            shift
+            hand_over config.sh "$@"
+        fi
+        cmd_config "$@"
+        ;;
     guide) cmd_guide "$@" ;;
     component) cmd_component "$@" ;;
     *)
+        if [[ "$command" == generate ]]; then
+            fail "$EXIT_USAGE" "unknown command 'generate': it is split in two commands" "to create or edit a configuration: easy-cs-ai config edit; to make the scripts from it: easy-cs-ai script <file>"
+        fi
         if is_type "$command"; then
             fail "$EXIT_USAGE" "unknown command '$command'" "the commands of a component go through component: easy-cs-ai component $command …"
         fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Helpers shared by the CLI (package/bin/easy-cs-ai) and the VM script
-# generator (vm_script/generate.sh). Sourced after common.sh; HOME_DIR is the
+# generator (vm_script/lib/generator.sh). Sourced after common.sh; HOME_DIR is the
 # root of the scripts tree.
 
 # Types in install order; uninstall --all goes the other way round.
