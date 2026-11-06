@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted, implemented (`install_scripts/lib/cli-ai.sh`, tested in `tests/unit/cli_ai.bats`). What concerns several VMs (`--vm`, `plan.vms`, `next_steps`, `scripts`, the `engine_unreachable` and `engine_address_unknown` warnings, the `vm` of the schema) is **implemented**, see [spec: several VMs](spec-multi-vm.md). **Proposed, not implemented**: the top-level `links` field (`config schema`, the `plan.links` of `config validate`, its five error codes), and the `next_steps` and the two warnings computed per link instead of for one layout of two VMs. So are, for a file of one VM as well: the `missing_requirement` of a model whose proxy or provisioning component is not in the file ([spec: config](spec-config.md#what-a-model-needs); `apply` keeps its exit 4 at the model step), and the `models_not_checked` warning of the validation.
+**Status:** accepted, implemented for the format of version 1 (`install_scripts/lib/cli-ai.sh`, tested in `tests/unit/cli_ai.bats`). **Format version 2 of the configuration is decided, not implemented** ([spec: config](spec-config.md#format)): the documents below are written for it (`plan.vms` always, models with their resolved engine and chat interface, no `links`, the codes of the new format), and what the implementation still does for version 1 (`plan.links`, the `vm` of the schema, the `link_*`, `unlinked_vm`, `engine_unreachable`, `missing_vm`, `engine_other_vm` and `chat_interface_other_vm` codes) goes away with it. The `next_steps` and the cross-VM warnings are computed per model; the `missing_requirement` of a model whose proxy or provisioning component is not in the file ([spec: config](spec-config.md#what-a-model-needs); `apply` keeps its exit 4 at the model step), and the `models_not_checked` warning of the validation, are proposed.
 
 ## Purpose
 
@@ -21,10 +21,10 @@ It builds on the [CLI spec](spec-cli.md), the [script contract](spec-script-cont
 | `catalog [--json]` | What can be installed: components, options, ranks, default models, platforms | no |
 | `host [--json]` | What this machine is: platform, CPU, memory, disk, GPU | no |
 | `config schema` | The configuration format, as a JSON Schema generated from the catalog | no |
-| `config validate <file\|-> [--target this\|fresh] [--vm <name>] [--json]` | Validate a configuration and show its plan, without side effect. A file that describes several VMs is validated one VM at a time, see [spec: several VMs](spec-multi-vm.md) | no |
+| `config validate <file\|-> [--target this\|fresh] [--vm <name>] [--json]` | Validate a configuration and show its plan, without side effect. The file is validated one VM at a time, see [spec: several VMs](spec-multi-vm.md) | no |
 | `guide` | The procedure of the [journey](spec-journey.md) as text, for a reader that is a model, see [rendering](spec-rendering.md#guide) | no |
 | `apply <file\|-> --dry-run --json` | The same document as `config validate --target this` | no |
-| `script <file> [--dry-run] --json` | Validation (target `fresh`), then the script: the document of `config validate` with a `script` entry (`path`, `bytes`, `written`, `package_version`, `package_format`), `null` when the file is not valid. For a file that names several VMs, `script` is `null` and `scripts` lists one such entry per VM (with its `vm`), and `next_steps` gives the [instructions](spec-multi-vm.md#next-steps) as an array of strings; for an invalid file, `scripts` and `next_steps` are `[]`; with no `vm` in the file the document is unchanged (for a file that names one VM only, see [spec: config](spec-config.md#several-vms)). `config` has no `--json` (a session is interactive, exit 2) | no |
+| `script <file> [--dry-run] --json` | Validation (target `fresh`), then the script: the document of `config validate` with a `script` entry (`path`, `bytes`, `written`, `package_version`, `package_format`), `null` when the file is not valid. `script` is `null` and `scripts` lists one such entry per VM (with its `vm`, one entry for a file of one VM), and `next_steps` gives the [instructions](spec-multi-vm.md#next-steps) as an array of strings (`[]` with one VM); for an invalid file, `scripts` and `next_steps` are `[]`. `config` has no `--json` (a session is interactive, exit 2) | no |
 
 `catalog`, `host`, `config` and `guide` join the reserved words of [spec: CLI](spec-cli.md#command-line).
 
@@ -80,11 +80,11 @@ Facts to choose components and models. Without `--json`, a few readable lines.
 
 Prints the JSON Schema (draft 2020-12) of the configuration, **generated at run time** from the shipped `describe`s, so it is true for this version of the package and needs no repository:
 
-- the structure of [spec: config](spec-config.md#format) (`schema_version`, `components`, `models`, the fields and their rules);
+- the structure of [spec: config](spec-config.md#format) (`schema_version` 2, `vms`, `models`, the fields and their rules);
+- for `component`, an `enum` of the values `<type>/<implementation>` of the shipped scripts (`engine/ollama`, `proxy/nginx`…), so that a program validates the notation without parsing it;
 - for each shipped component, its options: names, types and `values`/`default` as the schema's `enum`/`default`, the secret options as the `file` / `env` / `generate` object, and the option `description`s as the schema's `description`;
-- the optional `vm` of a component and of a model ([spec: config](spec-config.md#several-vms)), as a string of the shape given there;
-- the optional top-level `links` array, of `{ "web_vm", "engine_vm" }` objects ([spec: config](spec-config.md#links)), proposed;
-- the rules that cannot be expressed as a schema (one entry per component and per VM, `vm` on all components or none, at most one `default` per type and per VM, `requires`, the resolution of `engine` and `chat_interface`) as `description` text on the relevant node, and enforced by `config validate`.
+- the name of a VM and the `name` of a component, as strings of the shape given in [spec: config](spec-config.md#vms); the references of a model (`engines`, `chat_interfaces`: arrays of `{ "vm", "name" }`, [spec: config](spec-config.md#component-references));
+- the rules that cannot be expressed as a schema (unique names of VMs and of components in a VM, one component per implementation on a VM for now, at most one `default` per type and per VM, `requires`, at most one reference per array of a model for now, the resolution of the references) as `description` text on the relevant node, and enforced by `config validate`.
 
 The schema is a **help to write a file**, `config validate` is the judge: the schema may be less strict, never stricter.
 
@@ -99,9 +99,9 @@ The validation and the plan that `apply` runs before any side effect, as a comma
 - `--target this` (default) validates against this machine: a component already installed satisfies a requirement, exactly as `apply` does. `--target fresh` validates as for a new VM, ignoring what is installed (the generator's `EASY_CS_AI_ASSUME_EMPTY` mode, see [spec: VM script generator](spec-vm-generator.md#implementation-notes)): **this is the one for a fleet**.
 - `apply <file> --dry-run --json` prints the same document as `--target this`, so a program can use either.
 - Exit code: 0 when `ok`, 2 when there is an error.
-- **A file that names VMs** (one name or several, [spec: config](spec-config.md#several-vms)) is validated one slice at a time, each as for a fresh VM. `--vm <name>` validates that slice alone, and is required with `--target this` (which means "this machine", so one VM; exit 2 otherwise). A name no component has, and `--vm` on a file that names no VM, are exit 2 too, as for `apply`, with the VM names of the file in the message and no document. `plan` then becomes `{ "vms": [ { "vm": "engine", "components": […], "models": […], "prune": false } ], "links": [ { "web_vm": "web", "engine_vm": "engine" } ] }` (`links` is the array of the file, `[]` when it has none, proposed), each entry shaped like the `plan` of a one-VM file, in the order the VMs appear. Each model of `models` carries the `vm` and the `engine` it resolved to, the [place of the model](spec-config.md#where-a-model-goes), so a program reads where each model goes without redoing the resolution. Errors and warnings keep the paths of the file as written, and carry the `vm` they are about. The document also gains `next_steps`, an array of strings: what the administrator still has to do by hand once the VMs are up, computed by the validation from the file (its `links` included) and the shipped `describe`s, with no script written, so it holds no script name ([spec: several VMs](spec-multi-vm.md#next-steps)). They are computed on the whole file: with `--vm`, which validates one slice alone, `next_steps` is `[]` and the `engine_unreachable` error (proposed: a warning today) and the `engine_address_unknown` warning, which need the other VMs and the links too, are not given. With no `links`, a file with several VMs has the error `unlinked_vm` for each VM, and `next_steps` is `[]`. With no `vm` in the file, the document is unchanged (one name only: [spec: config](spec-config.md#several-vms)). For a file with errors `next_steps` is `[]`, as `scripts` is for `script`: nothing is planned from a file that is not valid.
+- **A file is validated one slice at a time**, each as for a fresh VM ([spec: config](spec-config.md#slices)). `--vm <name>` validates that slice alone, and is required with `--target this` when the file has several VMs (which means "this machine", so one VM; exit 2 otherwise); with one VM it is not needed. A name no VM has is exit 2 too, as for `apply`, with the VM names of the file in the message and no document. `plan` is `{ "vms": [ { "vm": "gpu", "components": […], "models": […], "prune": false } ] }`, one entry per VM, each entry shaped like the plan of one machine, in the order of the file (one entry for a file of one VM). Each component of `components` carries its `component` and its `name` (the default one filled in), and each model of `models` carries the references **as resolved**, `engines` and `chat_interfaces` with the `vm` and the `name` of each component ([spec: config](spec-config.md#component-references)), so a program reads where each model goes and where it is shown without redoing the resolution. Errors and warnings keep the paths of the file as written, and carry the `vm` they are about. The document also gains `next_steps`, an array of strings: what the administrator still has to do by hand once the VMs are up, computed by the validation from the models whose chat interface is on another VM and the shipped `describe`s, with no script written, so it holds no script name ([spec: several VMs](spec-multi-vm.md#next-steps)). They are computed on the whole file: with `--vm`, which validates one slice alone, `next_steps` is `[]` and the `engine_address_unknown` warning, which needs the other VMs, is not given. A file whose models are all shown on the VM of their engine has `next_steps` `[]`. For a file with errors `next_steps` is `[]`, as `scripts` is for `script`: nothing is planned from a file that is not valid.
 
-Without `--json`, the problems and the plan in human form (the lines `apply --dry-run` prints today); for a file that names several VMs, the [next steps](spec-multi-vm.md#next-steps) follow the plan, as that section renders them. With `--json`:
+Without `--json`, the problems and the plan in human form (the lines `apply --dry-run` prints today); the [next steps](spec-multi-vm.md#next-steps) follow the plan, as that section renders them. With `--json`:
 
 ```json
 {
@@ -109,33 +109,42 @@ Without `--json`, the problems and the plan in human form (the lines `apply --dr
   "ok": false,
   "target": "fresh",
   "errors": [
-    { "path": "$.components[2].options.port", "code": "wrong_type", "message": "an integer is expected" }
+    { "path": "$.vms[0].components[2].options.port", "vm": "gpu", "code": "wrong_type", "message": "an integer is expected" }
   ],
   "warnings": [
     {
-      "path": "$.components[3]",
-      "component": { "type": "chat-interface", "name": "librechat" },
+      "path": "$.vms[1].components[1]",
+      "vm": "web",
+      "component": { "component": "chat-interface/librechat", "name": "librechat" },
       "option": "allow-registration",
       "value": "true",
       "message": "Registration is open: the first account becomes the administrator…"
     }
   ],
   "plan": {
-    "components": [
-      { "order": 1, "type": "provisioning", "name": "llmfit", "options": {}, "default": false }
-    ],
-    "models": [
-      { "name": "llama3.2:3b", "engine": "ollama", "chat_interface": "librechat", "force": false }
-    ],
-    "prune": false
+    "vms": [
+      {
+        "vm": "gpu",
+        "components": [
+          { "order": 1, "component": "provisioning/llmfit", "name": "llmfit", "options": {}, "default": false }
+        ],
+        "models": [
+          { "name": "llama3.2:3b",
+            "engines": [ { "vm": "gpu", "name": "ollama" } ],
+            "chat_interfaces": [ { "vm": "web", "name": "librechat" } ],
+            "force": false }
+        ],
+        "prune": false
+      }
+    ]
   }
 }
 ```
 
 - `errors` lists **every** problem at once, each with its JSON `path` (the same paths as today), a stable `code` and the `message` (the text the human form prints). `plan` is `null` when there is an error: nothing is planned from a file that is not valid.
-- `warnings` are the `warn` entries of `describe` whose condition holds for the **effective** value (a default included), as in the summary of a session, so that they can be shown to the user before anything is applied. They do not change the exit code. A warning may also come from the validation itself, and then carries a `code` (`engine_address_unknown`, see [spec: several VMs](spec-multi-vm.md#validation), and `models_not_checked`, see [spec: model fit](spec-model-fit.md#llmfit-is-optional), which is built by the session's summary today and moves here, proposed) in place of `option` and `value`; for a file that names several VMs it carries the `vm` too.
-- `plan.components` is in install order, with the options as written in the file, a secret shown as its source; when the target is `this`, each entry also says whether it is already installed (`"installed": true | false`, absent for `fresh`); whether an installed one is left alone or reconfigured is the script's own [idempotence](spec-script-contract.md#idempotence), which the CLI does not compare. The order is the install order of `apply`: a component comes after the ones it requires, otherwise in the order of the file. `plan.models` has the names already resolved (`engine`, `chat_interface`).
-- **Codes** (closed list, a new one is not a bump of `schema_version`): `not_json`, `wrong_type`, `unknown_key`, `unknown_type`, `unknown_component`, `unknown_option`, `secret_literal`, `secret_source`, `unsupported_schema_version`, `duplicate_component`, `several_defaults`, `unresolved_engine`, `unresolved_chat_interface`, `ambiguous_engine`, `ambiguous_chat_interface`, `missing_requirement` (also, proposed, for a model whose proxy or provisioning component is not in the file, at the path of the model, see [spec: config](spec-config.md#what-a-model-needs)), `unsupported_platform`, `invalid_value` (an option outside `values`, not an integer…), `circular_requirement`, and for a file that names VMs (one name or several) `engine_unreachable` (proposed, an error: a linked engine VM with no proxy and no model, see [spec: several VMs](spec-multi-vm.md#validation)), `missing_vm`, `chat_interface_other_vm`, `engine_other_vm` and `duplicate_model` (and, for `links`, proposed, `link_to_self`, `link_without_chat_interface`, `link_without_engine`, `duplicate_link`, `link_protected_engine`, `link_cycle` and `unlinked_vm`, and for the validation of several VMs `duplicate_server_name`), plus `unknown_vm`, which a file that names **no** VM raises too when a model carries a `vm`. The implementation attaches a code to each message of the validation program; the human text does not change.
+- `warnings` are the `warn` entries of `describe` whose condition holds for the **effective** value (a default included), as in the summary of a session, so that they can be shown to the user before anything is applied. They do not change the exit code. A warning may also come from the validation itself, and then carries a `code` (`engine_address_unknown`, see [spec: several VMs](spec-multi-vm.md#validation), and `models_not_checked`, see [spec: model fit](spec-model-fit.md#llmfit-is-optional), which is built by the session's summary today and moves here, proposed) in place of `option` and `value`; it carries the `vm` too.
+- `plan.components` is in install order, with the options as written in the file, a secret shown as its source; when the target is `this`, each entry also says whether it is already installed (`"installed": true | false`, absent for `fresh`); whether an installed one is left alone or reconfigured is the script's own [idempotence](spec-script-contract.md#idempotence), which the CLI does not compare. The order is the install order of `apply`: a component comes after the ones it requires, otherwise in the order of the file. `plan.vms[].models` has the references already resolved (`engines`, `chat_interfaces`), the models of an entry being those whose engine is on that VM.
+- **Codes** (closed list, a new one is not a bump of `schema_version`): `not_json`, `wrong_type`, `unknown_key`, `unknown_type`, `unknown_component`, `unknown_option`, `secret_literal`, `secret_source`, `unsupported_schema_version` (also for a file of version 1, whose format is no longer read, [spec: config](spec-config.md#compatibility)), `duplicate_vm`, `empty_vm`, `duplicate_name`, `duplicate_component`, `several_defaults`, `unknown_vm`, `unresolved_engine`, `unresolved_chat_interface`, `ambiguous_engine`, `ambiguous_chat_interface`, `unsupported_count` (an array of a model with more references than the validation accepts for now), `duplicate_model`, `missing_requirement` (also, proposed, for a model whose proxy or provisioning component is not in the file, at the path of the model, see [spec: config](spec-config.md#what-a-model-needs)), `unsupported_platform`, `invalid_value` (an option outside `values`, not an integer…), `circular_requirement`, and for the validation of several VMs `duplicate_server_name`. The implementation attaches a code to each message of the validation program; the human text does not change.
 - `unsupported_platform` compares the `platforms` of the component with `ID` and `ID_LIKE` of `/etc/os-release`, only for `--target this`, and not in test mode (`EASY_CS_AI_ROOT`), as the scripts' own platform check. `EASY_CS_AI_HOST_IDS` (space separated) replaces the detection, for the tests.
 - With `apply`, a requirement that nothing satisfies keeps its exit code 4 (see [spec: config](spec-config.md#semantics-converge)): `apply --dry-run --json` prints the same document and exits 4 when `missing_requirement` is the only kind of error, 2 otherwise. `config validate` and `script` exit 2 for it (for a model whose proxy or provisioning component is missing, proposed: until then they accept such a file).
 - Not covered, as today: a `file` secret whose path is checked at run time only.
@@ -197,7 +206,7 @@ A program that needs a secret known in advance (rare) asks the user and uses `en
 - A schema check: a configuration accepted by `config validate` is accepted by `config schema`'s schema, and vice versa for every error code except those the schema cannot express.
 - Every shipped `describe` validates against the typed-option rules.
 - Integration test on a VM: the [journey](spec-journey.md) run end to end by a script that plays a program (catalog, host, validate, apply with `--json`, status).
-- `bats` tests of the `vm` field in `config schema` and `config validate` (the errors and codes of [spec: config](spec-config.md#several-vms), `--vm`, `plan.vms`, the `engine_address_unknown` warning and the `engine_unreachable` error (a warning until the links are implemented), neither of them with `--vm`, the `missing_requirement` of a model, `next_steps` (`[]` for an invalid file, printed after the plan without `--json`), `--vm` with an unknown name, the `models_not_checked` warning per slice) and of the `scripts` and `next_steps` of `script --json`, as listed in [spec: several VMs](spec-multi-vm.md#definition-of-done).
+- `bats` tests of the format of version 2 in `config schema` (the `enum` of `component`, the references) and `config validate` (the errors and codes of [spec: config](spec-config.md#format), `--vm`, `plan.vms` with the resolved references, the `engine_address_unknown` warning, not given with `--vm`, the `missing_requirement` of a model, `next_steps` (`[]` for an invalid file or when every model is shown on its engine's VM, printed after the plan without `--json`), `--vm` with an unknown name, the `models_not_checked` warning per slice) and of the `scripts` and `next_steps` of `script --json`, as listed in [spec: several VMs](spec-multi-vm.md#definition-of-done).
 - `shellcheck` clean; the `--help` of each command and `guide` consistent with this spec.
 
 ## Open questions
