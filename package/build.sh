@@ -36,6 +36,9 @@ stage="$output/stage"
 rm -rf "$stage"
 mkdir -p "$stage/bin" "$stage/lib/easy-cs-ai"
 install -m 0755 "$root/package/bin/easy-cs-ai" "$stage/bin/easy-cs-ai"
+# Stamp the short commit hash, so the installed CLI reports it (no git there).
+commit="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || true)"
+sed -i "s/^readonly CLI_COMMIT=.*/readonly CLI_COMMIT=$commit/" "$stage/bin/easy-cs-ai"
 # The short name, a link: the CLI resolves it (readlink -f) to find its tree.
 ln -s easy-cs-ai "$stage/bin/ecsai"
 
