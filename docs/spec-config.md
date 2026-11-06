@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). The `vm` field, [Several VMs](#several-vms), the [place of a model](#where-a-model-goes) and [What a model needs](#what-a-model-needs) are **implemented in the validation**: `config validate` (with `--vm`), `config schema`, and `apply` (with `--vm`), tested in `tests/unit/config_vm.bats`; a file with no `vm` behaves as described everywhere else. What is **not implemented yet** is what depends on the generator and the other scripts of [spec: several VMs](spec-multi-vm.md): the VM question and one script per VM, `script` (the former `generate --config`) of a file with `vm`, the `next_steps` and the cross-VM warnings of the validation document, and the `models_not_checked` warning moved to the validation. What a model needs also concerns a one-VM file: one that `apply` would stop at the model step is refused by `config validate` and `script` instead (`apply` keeps its exit 4). **Proposed, not implemented**: the top-level [`links`](#links) field, which says which VM reaches the engine of which other VM, and its errors; the rest of the several-VM work is in [spec: several VMs](spec-multi-vm.md).
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). **Format version 2 is decided and not implemented**: the file is a list of `vms` that hold their components (`component: <type>/<implementation>`, an optional free `name`), an `engine` component holds its `models` (each an instance of a model), a top-level `links` array says which model is shown in which chat interface (two [references](#references), **always complete**: `vm_ref`, `component_ref`, `model_ref`), there is no flat file and no top-level `models`, and `schema_version` is 2. The validation, `config schema`, `apply`, the slices and the tests still implement version 1 (the `vm` field, `links` made of pairs of VMs, the root `models` with `engine` and `chat_interface`, see `tests/unit/config_vm.bats`), and are to be rewritten. Everything below describes version 2; [What a model needs](#what-a-model-needs) is implemented as it is.
 
 ## Purpose
 
@@ -11,7 +11,7 @@ One declarative **configuration file** describes a deployment: which components,
 - `easy-cs-ai apply <file>` (layer 2) interprets it and makes the machine match it;
 - the [generator](spec-vm-generator.md) writes it at the end of an interactive session (`config edit`, which also opens it again to edit it), and `script <file>` reads it back to generate the scripts without prompting (regeneration, tests). The two commands share nothing but this file.
 
-For the VM post-install layer, the generated script embeds the configuration (the slice of its VM when the file names several, see [Several VMs](#several-vms)) and hands it to `apply`, so the configuration travels **inside the generated script**: no external input file (see [spec: VM script generator](spec-vm-generator.md#generated-script)). The package itself is downloaded from a pinned source, not embedded, see [decision: VM script generator](decision-vm-generator.md).
+For the VM post-install layer, the generated script embeds the configuration (the [slice](#slices) of its VM) and hands it to `apply`, so the configuration travels **inside the generated script**: no external input file (see [spec: VM script generator](spec-vm-generator.md#generated-script)). The package itself is downloaded from a pinned source, not embedded, see [decision: VM script generator](decision-vm-generator.md).
 
 `apply` builds on the [script contract](spec-script-contract.md) and the [CLI spec](spec-cli.md); it adds no capability the CLI does not have, it lets one file drive `install` and `add`.
 
@@ -19,33 +19,85 @@ For the VM post-install layer, the generated script embeds the configuration (th
 
 JSON, like every other structured file of the project: `jq` is already a dependency (see [scripting language](decision-scripting-language.md)), whereas YAML would need `yq`.
 
+The file is a **list of VMs**, each holding its components, an `engine` component holding the **models** installed on it, and a list of **links** at the end saying in which chat interface each model is shown (the inventory first, then the wiring). There is no other form: a file always has a `vms` array, even for a single machine (a stack is mostly several VMs in practice, and one form means one rule everywhere: in the session, in the editor, in the validation and in the slices). The `name` of a VM is only needed to be referenced, so it is optional when the file has **one** VM and no link, and required when it has several VMs or a link designates it ([`vms`](#vms)); the session, which does not know the number of VMs in advance, **always asks and writes it**. The file is read with `schema_version` 2.
+
+**Names and references.** A `name` is always the free name of the object that contains it (a VM, a component, an instance of a model), chosen by the person and needed only to make **references** to it: without a reference it is optional. A reference is an object whose fields are called `<object>_ref` (`vm_ref`, `component_ref`, `model_ref`) and always hold the `name` of the object they designate (a VM, a component, an instance of a model), see [References](#references).
+
 ```json
 {
-  "schema_version": 1,
-  "components": [
-    { "type": "provisioning", "name": "llmfit" },
-    { "type": "proxy", "name": "nginx", "options": { "server-name": "ai.example.org" } },
-    { "type": "engine", "name": "ollama", "default": true, "options": { "port": 11434 } },
-    { "type": "chat-interface", "name": "librechat", "default": true }
+  "schema_version": 2,
+  "vms": [
+    {
+      "name": "gpu",
+      "components": [
+        { "component": "provisioning/llmfit" },
+        { "component": "proxy/nginx", "options": { "server-name": "gpu.example.org" } },
+        { "component": "engine/ollama", "name": "ollama", "default": true, "options": { "port": 11434 },
+          "models": [
+            { "model": "llama3.2:3b", "name": "llama3.2:3b" },
+            { "model": "qwen2.5:7b", "force": true }
+          ] }
+      ]
+    },
+    {
+      "name": "web",
+      "components": [
+        { "component": "proxy/nginx", "options": { "server-name": "ai.example.org" } },
+        { "component": "chat-interface/librechat", "name": "librechat", "options": { "allow-registration": false } }
+      ]
+    }
   ],
-  "models": [
-    { "name": "llama3.2:3b", "engine": "ollama", "chat_interface": "librechat" }
+  "links": [
+    { "model": { "vm_ref": "gpu", "component_ref": "ollama", "model_ref": "llama3.2:3b" },
+      "chat_interface": { "vm_ref": "web", "component_ref": "librechat" } }
   ]
 }
 ```
+
+`qwen2.5:7b` has no link: it is installed on `gpu` and used through its API.
+
+A single machine is a file with one VM, and its links are written like any other, **complete**. The session asks, model by model, in which chat interface it is shown (see [spec: several VMs](spec-multi-vm.md#creating)), and never links the two without the person's answer; it writes the name of the VM (it asked for it) and the `name` of the engine and of the chat interface that the link designates (the implementation, written with no question):
+
+```json
+{
+  "schema_version": 2,
+  "vms": [ { "name": "vm-1", "components": [
+    { "component": "provisioning/llmfit" }, { "component": "proxy/nginx" },
+    { "component": "engine/ollama", "name": "ollama", "models": [ { "model": "llama3.2:3b", "name": "llama3.2:3b" } ] },
+    { "component": "chat-interface/librechat", "name": "librechat" } ] } ],
+  "links": [ { "model": { "vm_ref": "vm-1", "component_ref": "ollama", "model_ref": "llama3.2:3b" },
+               "chat_interface": { "vm_ref": "vm-1", "component_ref": "librechat" } } ]
+}
+```
+
+A link is the only place where the format designates one object from another, and it is **always explicit**: there is no resolution by default, whatever the number of VMs (see [References](#references)). The name of a lone VM is optional, like any name that nothing designates: a file with one VM and no name has no link (a link needs the `vm_ref` of its VM, which must then be a name).
+
+**The format is ahead of the implementation.** It allows several engines or several chat interfaces on a VM, a free `name` for a component, several links for one model, and `options` on a model. The validation accepts, **for now**, one component per implementation on a VM (`duplicate_component`) and at most one link per model (`unsupported_count`), because the layer 1 scripts keep one state per component (see [open questions](#open-questions)); lifting those limits changes the validation, not the format. Several components of one type on a VM (an engine `engine/ollama` and an engine `engine/vllm`, once vLLM ships) is the first case to open.
+
+### `vms`
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `name` | with several VMs | The name of the VM: a string of lowercase letters, digits and dashes, starting with a letter (`gpu`, `web`, `vm-1`). Another type is `wrong_type`, another form `invalid_value`. Unique in the file: a second VM with the same name is `duplicate_vm`. **Optional when the file has one VM and no link** (a name is only needed to be designated: with one VM, the scripts and `--vm` have only one to choose from); a VM that a link designates must have it (`unknown_vm` otherwise), and with several VMs a VM without a name is `missing_vm_name`, at the path of that VM. The session always writes it |
+| `components` | yes | The components installed on that VM, see below. At least one: a VM with none is `empty_vm` |
+
+- The order of the VMs carries no meaning for the installation; it is the order of the summaries, of the scripts and of the next steps (the order of the file).
+- A lone VM that has no name takes none: `apply` needs no `--vm`, `script` writes the file exactly at the path of `--output` (no `-<vm>` in the name, no `VM:` line in the header), and the editor asks the name of that VM when a second one is added or a link is written (it becomes required, [spec: several VMs](spec-multi-vm.md#editing)).
+- Each VM is a machine of its own: what another VM holds is not on it. A requirement (`requires`) is satisfied by a component **of the same VM**.
 
 ### `components`
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `type` | yes | One of the contract types (`engine`, `chat-interface`, `proxy`, `provisioning`) |
-| `name` | yes | Component name, as shipped (`<type>/<name>.sh`) |
-| `default` | no | Make it the default of its type, forwarded as `--default` (see [state format](spec-state-format.md#defaults)) |
+| `component` | yes | What the component is: `<type>/<implementation>`, the type being one of the contract types (`engine`, `chat-interface`, `proxy`, `provisioning`) and the implementation a shipped one (`<type>/<implementation>.sh`): `engine/ollama`, `proxy/nginx`. The same notation as the path of the script and as `--component` of `provisioning plan`. An unknown type is `unknown_type`, an implementation that is not shipped `unknown_component` |
+| `name` | no | How the component is called **in its VM**, free, chosen by the person, and needed only to be designated by a `component_ref` of a [link](#links) (see [References](#references)). Same shape as the name of a VM. Left out: the component is **unnamed**, it has no default (the implementation is not its name) and cannot be the engine or the chat interface of a link; `plan` and `config validate` show the implementation as its label. Unique in the VM when written (`duplicate_name`). The session writes the `name` of every component a link designates, the implementation (`librechat`), with no question |
+| `default` | no | Make it the default of its type, forwarded as `--default` (see [state format](spec-state-format.md#defaults)): it concerns the state of the machine only and **never decides what a reference designates**. At most one per type **on a VM** (`several_defaults`) |
 | `options` | no | Options of the script, keyed by option name **without** `--` (the `describe.options[].name`). Values are strings, numbers or booleans |
-| `vm` | no | The VM this component belongs to, when the file describes several, see [Several VMs](#several-vms). Absent on every component of a one-VM file |
+| `models` | no | **Engines only**: the models installed on this engine, see [`models`](#models). On a component that is not of type `engine`: `models_on_non_engine` |
 
-- An option left out takes the script's built-in default, as on the command line.
-- At most one entry per component (per VM, see [Several VMs](#several-vms)). Several of one type are allowed (e.g. two engines); `default` is set on at most one per type (and per VM).
+- An option left out takes the script's built-in default, as on the command line, **unless the component declares it required**: an option whose `required_when` ([script contract](spec-script-contract.md#describe)) holds for the other options of the entry (nginx's `tls-cert` with `tls: provided`, `tls-accept-terms` and `server-name` with `tls: letsencrypt`) and that is left out is the error `missing_option`, at the path of the entry's `options`, naming the option and the condition. An option with no `required_when` is optional. An option whose `relevant_when` does not hold is **not an error** when written (the validation accepts it, as the scripts do), it is only not asked by the session.
+- `config schema` lists the values of `component` from the shipped scripts, so that a program validates the notation without parsing it.
+- **One component per implementation on a VM, for now**: the same `component` twice on one VM is `duplicate_component`, whatever their `name`s (the state of layer 1 has one entry per component, see [open questions](#open-questions)). `proxy/nginx` is listed once **on each VM** that has a proxy, with its own options (server name, certificate).
 - Order in the file carries no meaning: the install order comes from `requires`.
 
 ### Secrets
@@ -62,79 +114,76 @@ Whether a literal secret may appear in the file is an [open question](#open-ques
 
 ### `models`
 
+A model is described **in the engine component that installs it**: `models` is an optional array of the entry of a component of type `engine`, and there is no `models` at the root of the file. Each entry is **one instance of a model** on that engine:
+
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `name` | yes | Model name, as the engine knows it |
-| `engine` | no | Engine name, listed in `components` or already installed. Default: the only engine in `components`, else the one with `default: true`, else a validation error. With several VMs, see [Where a model goes](#where-a-model-goes) |
-| `vm` | no | The VM the model is installed on: with `engine`, its **place**, see [Where a model goes](#where-a-model-goes). Absent in a one-VM file |
-| `chat_interface` | no | Chat interface name (listed in `components` or already installed), or `null` for none. Default: like `engine`, and none if the file lists no chat interface. With several VMs, the chat interface of the engine's VM, else none ([Several VMs](#several-vms)) |
+| `model` | yes | The AI model, as the engine knows it (`llama3.2:3b`). Not a free name: it is the identity of the model. Unique in the engine (`duplicate_model`) |
+| `name` | no | The free name of this instance in its engine, **needed to be the target of a link** (a [`model_ref`](#references) holds it; an instance with no `name` cannot be linked) and optional otherwise. Unique in the engine when written (`duplicate_name`). Its form is **freer than that of a VM or of a component**, since its usual value is the name of the model (`llama3.2:3b`, `qwen2.5:7b`, `library/llama3`): any non-empty string with no control character (another type is `wrong_type`, an empty or control-character one `invalid_value`). **The session fills it in by itself**, with the value of `model`, for every instance it writes and a link designates, and asks nothing: while an engine holds one instance per `model` (`duplicate_model`), the name of the model names the instance without ambiguity. It is also what will tell apart two instances of the same `model` with different `options` (vLLM) once `duplicate_model` is lifted |
 | `force` | no | `true` skips the llmfit fit check, as `add --force` does |
+| `options` | no | The options of this instance: those that the `describe` of the engine declares for its action `add-model`, in `action_options["add-model"]` ([script contract](spec-script-contract.md#describe)), the same form as the `options` of a component and the same checks (`type`, `values`, `required_when`, `sources`). `apply` passes each one to `add-model` as `--<name> <value>`, as it does for `install`. An option that a field of the instance already carries (`force`) is not repeated here. It is for an engine that runs **one process per model** (`per_model`, vLLM), whose instances have their own parameters; an engine that declares none (Ollama) refuses any (`unknown_option`) |
 
-### Several VMs
+A model holds **no pointer to a chat interface**: where it is shown is written apart, in [`links`](#links). An unknown key, `chat_interfaces` included, is `unknown_key`.
 
-A component may carry `vm`, the name of the VM it belongs to, so that one file describes a deployment spread over several machines (see [spec: several VMs](spec-multi-vm.md)). A file with no `vm` is a one-VM file and behaves exactly as described everywhere else in this spec.
+**Why the model is in the engine.** An instance of a model lives where it is installed, so the engine that holds it is its container: there is no engine to resolve, nothing to point to the wrong component, the model travels with its component (and so with its VM) when a file is cut into [slices](#slices), and the file has the shape of the state of an engine, whose `models` array it mirrors ([state format](spec-state-format.md)). The same model on two engines is two instances, hence two entries, one in each engine; the same `model` twice in **one** engine is `duplicate_model`. Error paths are those of the file as written: `$.vms[i].components[j].models[k]`.
 
-- **A file that names VMs** is a file where components carry `vm`, **whatever the number of distinct names**. One name (`"vm": "a"` on every component) is valid and takes the general path, not the one-VM one: the file is cut into one slice, `apply` needs `--vm a`, `script` writes `…-a.sh` with the header line `VM: a (1 of 1)`, and `script --json` has `script` `null` and `scripts` with one entry. The [next steps](spec-multi-vm.md#next-steps) need at least two distinct names (`next_steps` is `[]` with one). Dropping the `vm` fields gives the one-VM file, which is the way to get today's script.
-
-- **Shape**: a string of lowercase letters, digits and dashes, starting with a letter (`engine`, `web`). Another type is `wrong_type`, another form `invalid_value`.
-- **All or none**: when one component has `vm`, every component must, otherwise the first one without it is the error `missing_vm`.
-- **One entry per component and per VM**: `nginx` may be listed once on each VM with its own options (server name, certificate), the same component twice on one VM is `duplicate_component`, and `default` is set on at most one component of a type **on a VM** (`several_defaults`).
-- **Slices**: the file is cut by `vm`, in the order each VM first appears. A slice is an ordinary one-VM configuration (the components of that VM, without `vm`, and the models of its engines), and is validated **exactly as a one-VM file**: order from `requires`, a requirement satisfied by a component of the same VM only (what another VM has is not on this machine), options, secrets. Errors and warnings keep the paths of the file as written, and name the `vm` they are about.
-- **Models** have a place, see [Where a model goes](#where-a-model-goes). A model is linked only to a chat interface **of its own VM** (the default of `chat_interface` is the one of that VM, and none when it has none); an explicit `chat_interface` that exists only on another VM is the error `chat_interface_other_vm`: a link between two machines is not a model's field: it is a [link](#links) of the file, finished by hand, see [spec: several VMs](spec-multi-vm.md#next-steps).
-- **What a VM receives**: `script` embeds the slice in the script of its VM (see [spec: VM script generator](spec-vm-generator.md#generated-script)), with no `vm`, so `apply` on the VM reads a plain one-VM file and knows nothing of the others.
-- **`apply` on a file with `vm`** is refused (exit 2, listing the VM names) unless `--vm <name>` selects a slice, which is then applied as a one-VM file. `--vm` on a file with no `vm`, or with an unknown name, is exit 2. Pruning, `--dry-run` and the plan concern that slice only.
-
-#### Where a model goes
-
-A model is installed on **one engine of one VM**. That pair, the **place** of the model, is what the file attaches a model to: `vm` and `engine` of the entry. An engine component is identified by its name within its VM (the same component twice on one VM is refused), so the pair names exactly one component, and the same engine on two VMs is two places.
-
-A file whose components have no `vm` is a one-VM file: the model resolves as in the table above, and a `vm` on a model is the error `unknown_vm` (the file names no VM). In a file that names VMs (one name or several, see [Several VMs](#several-vms)), `vm` and `engine` resolve as follows, and the first row that applies decides:
-
-| `vm` | `engine` | Place |
-| --- | --- | --- |
-| given | given | The engine of that name on that VM. Not on it, but on another VM: `engine_other_vm`. Nowhere: `unresolved_engine` |
-| given | absent | The engine of that VM: the only one, else the one with `default: true` on that VM, else `ambiguous_engine`. None on it: `unresolved_engine` |
-| absent | given | The VM that has an engine of that name: exactly one, else `ambiguous_engine` (the message asks for `vm`). None: `unresolved_engine` |
-| absent | absent | The only engine of the file, else `ambiguous_engine` naming the candidates as `<vm>/<engine>` |
-
-- **`default` and the place.** In a one-VM file, a model with no `engine` goes to the only engine, else to the one with `default: true`. In a file that names VMs, even one name, a `default` is the default **of its VM** (`several_defaults` is per VM), so it decides only in the row where `vm` is given and `engine` is absent. With neither field, the row does not look at `default`: two engines in the file are `ambiguous_engine` even if one is a default, since "the default" has no meaning across VMs. The session and a program that follow the journey write both fields, so this only concerns a file written by hand. It also means that a file with one name (`"vm": "a"` everywhere) and two engines, one of them a `default`, is `ambiguous_engine` for a model with neither field, where the same file without its `vm` fields resolves to the default: the `vm` fields switch to the rules of this section.
-- A `vm` that no component has is `unknown_vm`, with the VM names of the file in the message.
-- The same model may go on several places (the same name on two engine VMs is two entries). The same name twice on the **same place** is `duplicate_model`, in a file that names VMs only (one name included): a one-VM file, with no `vm`, is validated as it is today.
-- The resolved place goes into the plan of `config validate` (each model carries its `vm` and `engine` as resolved, see [spec: capabilities](spec-capabilities.md#config-validate)), and into the slice: a model goes to the slice of its VM, **without `vm` and with `engine` filled in** when it was absent, so that the slice resolves the model exactly as written, whatever the other VMs hold.
-- A file written by hand may leave `vm` and `engine` out where the table gives one answer; what the session and a program that follow the [journey](spec-journey.md#4-models) write is said there.
-- The place decides everything that follows: the VM where the model is pulled and [sized](spec-model-fit.md#declared-resources), the engine that serves it, the proxy of its VM that fronts it, and the [next steps](spec-multi-vm.md#next-steps) that read its URL.
-
-#### Compatibility of the `vm` field
-
-`schema_version` stays 1: `vm` (and [`links`](#links)) are optional fields and a one-VM file is unchanged. The validation is **strict**, an unknown key is refused (unlike the state and `describe`, whose readers ignore what they do not know), so a CLI older than this field refuses a file that uses it with `unknown_key` at `$.components[<n>].vm`, `$.models[<n>].vm` or `$.links`, exit 2, and not with `unsupported_schema_version`. That refusal is the right one, since ignoring `vm` would install the components of every VM on one machine; only its wording is less clear than a version error. The VMs themselves are not concerned: a generated script pins its package version and embeds a slice without `vm`, which any version reads, including an older `--package-version`. A bump to 2 when `vm` is present would give the clearer message; see [open questions](#open-questions).
+The **place** of a model is the engine component that holds it, on its VM: it decides everything that follows: the VM where the model is pulled and [sized](spec-model-fit.md#declared-resources), the engine that serves it, the proxy of its VM that fronts it, and the [next steps](spec-multi-vm.md#next-steps) that read its URL. `config validate` still exposes **a flat list** of the models in its plan, each with the `model`, and the VM and the component of its engine as resolved (see [spec: capabilities](spec-capabilities.md#config-validate)): it is an output document, not the file.
 
 ### `links`
 
-An optional top-level array, in a file that names VMs, saying which VM **reaches** the engine of which other VM (see [spec: several VMs](spec-multi-vm.md)):
+An optional top-level array, **the wiring**, written after the inventory (the VMs, their components, their models). Each entry says that **a model is shown in a chat interface**:
 
 ```json
-{
-  "components": [ { "vm": "engine", "type": "engine", "name": "ollama" }, { "vm": "web", "type": "chat-interface", "name": "librechat" } ],
-  "models": [ { "name": "llama3.2:3b", "vm": "engine", "engine": "ollama" } ],
-  "links": [ { "web_vm": "web", "engine_vm": "engine" } ]
-}
+"links": [
+  { "model": { "vm_ref": "gpu", "component_ref": "ollama", "model_ref": "llama3.2:3b" },
+    "chat_interface": { "vm_ref": "web", "component_ref": "librechat" } }
+]
 ```
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `web_vm` | yes | The VM whose **chat interface** lists the models. It is the *web side* of the link, whatever else that VM holds: it may have an engine of its own, and it needs no `web` role (a role is only a session aid, see [spec: several VMs](spec-multi-vm.md#roles)) |
-| `engine_vm` | yes | The VM whose **engine**, through its proxy, serves the models: all the models of that VM. It is the *engine side* of the link |
+| `model` | yes | A [reference](#references) to the instance of the model: `{ vm_ref, component_ref, model_ref }` (the VM, its engine, the `name` of the instance of the model), **the three fields required** |
+| `chat_interface` | yes | A reference to the chat interface that shows it: `{ vm_ref, component_ref }` (the VM, its chat interface), **both fields required** |
 
-The link reads "the chat interface of `web_vm` lists the models of `engine_vm`". The two names are the two sides of the link, not two kinds of VM: a VM may be the `web_vm` of one link and the `engine_vm` of another.
+A link is a relation between two objects that live in different places, so it is written **apart from both** and can be read from either end: the model holds no pointer to a chat interface, and a chat interface holds none to its models. A model with **no link** is installed and has none shown (an engine used through its API).
 
-- A link is **a statement for the administrator, not an installation**: it changes no slice (a slice has no `links` and no `vm`) and installs nothing. It feeds the [next steps](spec-multi-vm.md#next-steps) and the [warnings](spec-multi-vm.md#validation), so that they are computed for any layout. It is the only way to say that a VM reaches another: nothing is deduced from the layout, and a file that names several VMs and has no `links` has no link.
-- **Errors**, at the path of the link: `unknown_vm` (a name no component has; also raised, as for a model, when the file names no VM, so `links` is refused in a one-VM file), `link_to_self` (`web_vm` equals `engine_vm`: a VM links its own engine as `add` does), `link_without_chat_interface` (no chat interface on `web_vm`), `link_without_engine` (no engine on `engine_vm`) and `duplicate_link` (the same pair twice), `link_protected_engine` (`engine_vm` holds a `protected` engine: it enforces HTTPS and its key itself and `add` does not put it behind a proxy, so no documented way links it to a chat interface; to specify with the first `protected` engine, see [spec: several VMs](spec-multi-vm.md#open-questions)), `link_cycle` (the links, read as arrows from `web_vm` to `engine_vm`, form a cycle: A to B and B to A, or A to B, B to C and C to A; the error is at the path of the link that closes it and names the VMs of the cycle; a chain A to B to C is not a cycle) and `unlinked_vm` (in a file that names **two or more** VMs, a VM that is in no link, neither as `web_vm` nor as `engine_vm`, at the path of its first component). A configuration with several VMs describes machines that work together: a VM that is linked to none belongs to a configuration of its own, and a VM with no chat interface and no engine (a proxy alone, for instance) cannot be linked, so it is refused too. A file that names one VM only has no such rule. They join the closed list of [spec: capabilities](spec-capabilities.md#config-validate); adding them is not a bump of `schema_version`.
-- A link whose engine VM has no model is **valid** (the next steps say what is left to link, the VM may receive its models later). One whose engine VM has an engine that is not `protected` and **no proxy** is refused: `missing_requirement` when that VM holds a model ([what a model needs](#what-a-model-needs)), `engine_unreachable` when it holds none, see [spec: several VMs](spec-multi-vm.md#validation).
+- **The same VM** (the two ends on one VM) is wired by `add` as on a single machine. **Another VM** is the link between two machines, which installs nothing and is finished by hand once the VMs are up (see [spec: several VMs](spec-multi-vm.md#next-steps)); the warnings and the next steps are computed **per link** whose two VMs differ.
+- **Errors**, at the path of the link (`$.links[i]`, or the reference inside it): `missing_key` (a field of a reference that is not written: all are required), `unknown_vm` (a `vm_ref` that no VM has, a VM with no `name` included), `unresolved_engine` (the `component_ref` of a model names no engine of that VM), `unresolved_model` (the engine holds no instance whose `name` is that `model_ref`, an instance with no `name` written included), `unresolved_chat_interface` (the `component_ref` of a chat interface names none of that VM), `duplicate_link` (the same pair written twice), `unsupported_count` (a **second link of the same model**: the format allows several, the validation one for now) and `protected_engine_other_vm` (the model is in a `protected` engine and the chat interface on **another VM**: the link of two machines goes through the proxy of the engine's VM, which a `protected` engine does not have, and the contract does not yet say how such an engine publishes its URL and its key, see [spec: several VMs](spec-multi-vm.md#open-questions)).
+- A link to a VM that has no proxy in front of an engine that is not `protected` is the [`missing_requirement`](#what-a-model-needs) of the model, as before.
 - The resolved links go into the plan of `config validate` (`plan.links`, see [spec: capabilities](spec-capabilities.md#config-validate)).
+
+### References
+
+<a id="component-references"></a>A `name` designates the object that contains it; a **reference** designates an object from somewhere else. Its fields are called `<object>_ref` and **always hold the `name`** of the object they designate: a VM, a component, or an instance of a model (see [`models`](#models)). A `name` is for being designated and a `_ref` is for designating it: one vocabulary, no exception. The only references of the format are the two ends of a [link](#links), and they are **always complete**:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `vm_ref` | yes | The `name` of the VM that holds the component. A name no VM has, or a VM that has no `name`, is `unknown_vm`, with the VM names of the file in the message |
+| `component_ref` | yes | The `name` of the component on that VM (the engine in a reference to a model, the chat interface in a reference to a chat interface). A name that no component of that type has is `unresolved_engine` or `unresolved_chat_interface` (the message says so when the name exists with another type, or when the component has no `name` written) |
+| `model_ref` | in a reference to a model | The `name` of the instance of the model, looked for in the `models` of that engine; none is `unresolved_model` (the message says so when an instance has that `model` but no `name`). Not in a reference to a chat interface |
+
+A field that is not written is `missing_key`, at the path of the reference.
+
+**A reference designates by `name` and is resolved by no rule of choice.** Nothing is deduced from the layout: not the only VM of the file, not the only engine or chat interface of a VM, not `default` (the flag belongs to the state). The configuration is **expressive and explicit**: a link says which model, on which engine, of which VM, is shown in which chat interface, of which VM, and what is added to the file later (a component, a VM, a second chat interface) **never changes what a link designates**, and cannot make it ambiguous: there is no ambiguity to detect. The cost is a few repeated names in the simple case, which the session writes and nobody has to type; the benefit is that a file is read, written by a program or an AI and validated the same way for one VM and for twenty, with no special case.
+
+- **The principle of names** applies as it is: a `name` is free and optional, **needed only to be designated**. What a link designates must therefore have its `name` written: the VM, the engine and the chat interface and the instance of the model (its `name`, see [`models`](#models)). The session writes them (it asked the name of the VM, writes the implementation as the `name` of the engine and of the chat interface it links, with no question, and fills in the `name` of the instance with its `model`); a file written by hand or by a program writes them too, or the link is `unknown_vm`, `unresolved_engine`, `unresolved_model` or `unresolved_chat_interface`.
+- The resolved references (the VM and the `name`, or the implementation as label, of each component, and the `name` of the instance) go into the plan of `config validate`, as written (see [spec: capabilities](spec-capabilities.md#config-validate)).
+
+### Slices
+
+The file is cut by VM, in the order of the file. A **slice** is a file of the same format with **one** VM (named when the file names it, as written), its components and so the models they hold, and the links that concern that VM, and is validated **exactly as a file of one VM**: order from `requires`, a requirement satisfied by a component of the VM only, options, secrets. Errors and warnings keep the paths of the file as written, and name the VM they are about.
+
+- A model **travels with its engine component**, so it is in the slice of its engine's VM with nothing to resolve. A [link](#links) whose **two ends are on that same VM** is kept in the slice (the wiring of `add`, as on a single machine; the references are kept as written, complete); a link from a model of that VM to a chat interface of **another VM** is not in the slice: the other chat interface is not on this machine, and what the VM does must not depend on it. The link of two machines is finished by hand, see [spec: several VMs](spec-multi-vm.md#next-steps).
+- **What a VM receives**: `script` embeds the slice in the script of its VM (see [spec: VM script generator](spec-vm-generator.md#generated-script)), and `apply` on the VM reads it, so that it knows nothing of the other VMs. Being a file of one VM, it needs no `--vm`.
+- **`apply` on a file with several VMs** is refused (exit 2, listing the VM names) unless `--vm <name>` selects a slice, which is then applied as such. A file with one VM needs no `--vm`; `--vm` with an unknown name is exit 2. Pruning, `--dry-run` and the plan concern that slice only.
+
+### Compatibility
+
+`schema_version` is **2**. The format of version 1 (components with a flat `type` and `name`, a `vm` field, a top-level `links` made of pairs of VMs, the root `models` with the `engine` and `chat_interface` of a model) is **no longer read**: the project is in development and keeps no compatibility with it, so there is no converter. The `links` of version 2 is another array, one entry per model shown in a chat interface (see [`links`](#links)). A file with `schema_version` 1 is refused with `unsupported_schema_version` (exit 2) and a message that says the format changed and points to this section; a higher version is refused as before, never guessed. The validation stays **strict**: an unknown key is `unknown_key`. A generated script pins its package version and embeds a slice in the format of that version, so a script made for an older package keeps working with it.
 
 ### Validation
 
-`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, name or option, wrong value type, `schema_version` higher than supported, a secret given as a plain string, an unresolvable `engine` / `chat_interface` of a model. Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed. For a file that names VMs (one name or several), each slice is validated as a one-VM file, and the codes of [Several VMs](#several-vms), [Where a model goes](#where-a-model-goes) and [`links`](#links) join the list of [spec: capabilities](spec-capabilities.md#config-validate). A model whose proxy or provisioning component is not in the file is `missing_requirement` too, see [What a model needs](#what-a-model-needs).
+`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, component or option, wrong value type, `schema_version` other than 2, a missing option that the component requires (`missing_option`), a secret given as a plain string, a `models` on a component that is not an engine (`models_on_non_engine`), a VM with no name in a file of several (`missing_vm_name`), a link that designates nothing or is incomplete (`missing_key`, `unknown_vm`, `unresolved_engine`, `unresolved_model`, `unresolved_chat_interface`), a link written twice (`duplicate_link`), more than one link for a model (`unsupported_count`) and a link of a `protected` engine to another VM (`protected_engine_other_vm`). Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed. Each slice is validated as a file of one VM, and the codes of [`vms`](#vms), [`components`](#components), [`models`](#models), [`links`](#links), [References](#references) and [Slices](#slices) join the list of [spec: capabilities](spec-capabilities.md#config-validate). A model whose proxy or provisioning component is not in the file is `missing_requirement` too, see [What a model needs](#what-a-model-needs).
 
 #### What a model needs
 
@@ -142,13 +191,13 @@ The validation also checks, for each model, what [`add`](spec-cli.md#add) will n
 
 | The model needs | Unless | Error when absent |
 | --- | --- | --- |
-| A component of type `proxy`, to expose it | The engine is **protected** (it enforces HTTPS and an API key itself, see [`protected`](spec-script-contract.md#describe)) | `missing_requirement` at the path of the model, naming the proxy |
+| A component of type `proxy`, to expose it | The engine is **protected** (it enforces HTTPS and an API key itself, see [`protected`](spec-script-contract.md#describe)) | `missing_requirement` at the path of the model (`$.vms[i].components[j].models[k]`), naming the proxy |
 | A component of type `provisioning` (llmfit, today), to check that it fits | The model has `force: true` | `missing_requirement` at the path of the model, naming the component |
 
-- The component must be in the file (in the **slice** of the model's VM when the file names several VMs: a proxy on another VM does not expose this engine) or, with `--target this`, already installed. It is the rule of a `requires`, so the code is the same and `apply` keeps its exit 4 for it.
+- The component must be in the file (on the **VM of the engine that holds the model**: a proxy on another VM does not expose this engine) or, with `--target this`, already installed. It is the rule of a `requires`, so the code is the same and `apply` keeps its exit 4 for it.
 - It is the same decision as `add` makes, read from the file and from the `describe` of the engine: the validation never runs an action. An engine whose `describe` does not say it is protected is not.
-- A model with no chat interface is not concerned by the chat interface: only the proxy and a provisioning component are needed.
-- A VM with an engine and **no model** needs no proxy to validate unless a [link](#links) targets it (the engine may receive its models later), see the [`engine_unreachable` error](spec-multi-vm.md#validation).
+- A model with no [link](#links) is not concerned by the chat interface: only the proxy and a provisioning component are needed.
+- A VM with an engine and **no model** needs no proxy to validate (the engine may receive its models later): the proxy is required by a model, never by an engine alone.
 - **The session does not write the proxy error**: when models are named without a proxy on their VM it proposes one, and a refusal takes the models out in a one-VM session, or sends the pass of an `engine` role VM back to its components ([journey, step 4](spec-journey.md#4-models)). The error is for a file written by hand or by a program, and for a session whose package ships no proxy to propose, where the summary shows it.
 
 ## `apply`
@@ -157,7 +206,7 @@ The validation also checks, for each model, what [`add`](spec-cli.md#add) will n
 easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 ```
 
-`--vm <name>` selects one VM of a file that names several, see [Several VMs](#several-vms). `-` reads the configuration from stdin. Requires root (exit 4), except with `--dry-run`. The CLI never prompts, as for the other commands.
+`--vm <name>` selects one VM of a file that has several, see [Slices](#slices); with one VM it is not needed. `-` reads the configuration from stdin. Requires root (exit 4), except with `--dry-run`. The CLI never prompts, as for the other commands.
 
 ### Semantics: converge
 
@@ -169,10 +218,10 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 
 ### Steps
 
-1. **Read and validate** (no side effect). With `--vm`, the file is cut into its slices first and only the selected one goes on, as a one-VM file. `--dry-run` prints the plan after this step and exits 0.
+1. **Read and validate** (no side effect). With several VMs, the file is cut into its [slices](#slices) first and only the one selected by `--vm` goes on; a file with one VM is its own slice. `--dry-run` prints the plan after this step and exits 0.
 2. **Order** the components from `requires` (from `describe`, not hardcoded), the same computation as the default stack of [`install`](spec-cli.md#install).
 3. **Components**: for each, in that order, the CLI runs the equivalent of `install <type> <name>` with the options of the entry (and `--default` when set). Secrets are passed through their channel, never on the command line.
-4. **Models**: for each, the equivalent of [`add`](spec-cli.md#add) with the resolved `engine` and `chat_interface` (`--no-chat-interface` when `null`, `--force` when set), including the fit check, the wiring and its rollback.
+4. **Models**: for each, the equivalent of [`add`](spec-cli.md#add) with the engine that holds it and the chat interface of its [link](#links) in the slice (`--no-chat-interface` when the model has no link in the slice, `--force` when set), including the fit check, the wiring and its rollback. The free `name` of a component belongs to the file: `apply` resolves a reference to the component of the slice and gives `add` its **implementation** (`librechat`, `ollama`), which is what the state of layer 1 knows, since it keeps one entry per implementation. The JSON is ahead of the behaviour here: when layer 1 handles several instances of one component, `add` will receive the `name`.
 5. **Prune** (only with `--prune`): after everything else succeeded, in reverse order, `remove` for each installed model absent from the file (of the engines listed), then `uninstall` for each component absent from the file, without `--purge`.
 
 ### Failure and resume
@@ -206,16 +255,20 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 
 ## Definition of done
 
-- `bats` tests in `EASY_CS_AI_ROOT` mode with fake components: each validation error with its JSON path, order from `requires`, missing requirement, re-run is a no-op, changed options reconfigure, defaults, model resolution (single engine, `default`, ambiguous), `force`, stdin input, `--dry-run`, failure at each step and resume, `--prune` (and its absence), the secret forms.
+- `bats` tests in `EASY_CS_AI_ROOT` mode with fake components: each validation error with its JSON path, order from `requires`, missing requirement, re-run is a no-op, changed options reconfigure, defaults, a model in its engine, `force`, stdin input, `--dry-run`, failure at each step and resume, `--prune` (and its absence), the secret forms.
 - Integration test on a fresh VM: `apply` of a configuration, `status` healthy, second `apply` changes nothing, `apply --prune` with a reduced file.
-- `bats` tests of the `vm` field: `wrong_type` and `invalid_value` on its shape, `missing_vm`, the same component on two VMs accepted and twice on one VM refused, `several_defaults` per VM, a requirement satisfied by another VM refused, the four rows of [Where a model goes](#where-a-model-goes) (`vm` and `engine` given, `vm` only, `engine` only, neither) for the place they give (a `default` deciding for `vm` only, and ignored with neither field) and for `ambiguous_engine`, `engine_other_vm` and `unresolved_engine`, `unknown_vm` (also on a model of a one-VM file), the same model on two places accepted and on one place `duplicate_model`, the slice of a model (without `vm`, `engine` filled in when it was absent), a model's default chat interface (its VM's, else none) and `chat_interface_other_vm`, the slices (each without `vm`, models with their engine, order of first appearance, paths of the file as written), `apply` refused without `--vm`, `--vm` with an unknown name or on a file with no `vm`, `apply --vm` applying one slice, and a file with no `vm` unchanged.
-- `bats` tests of [`links`](#links): each error with its path (`unknown_vm`, also in a file that names no VM, `link_to_self`, `link_without_chat_interface`, `link_without_engine`, `duplicate_link`, `link_protected_engine`, `link_cycle` (two VMs pointing at each other, a cycle of three, and a chain that stays valid), `unlinked_vm`), a valid link whose engine VM has no model, a link to an engine VM with no proxy refused (`missing_requirement` with a model, `engine_unreachable` without), no slice carrying `links`, a file with no `links` having none (and, with several VMs, `unlinked_vm` for each VM), a file that names one VM only needing no link, and an older reader refusing `links` with `unknown_key`.
+- `bats` tests of the format of version 2: `wrong_type` and `invalid_value` on the name of a VM, `duplicate_vm`, `missing_vm_name` (a VM with no name among several, and accepted for a lone VM), `empty_vm`, `unknown_type` and `unknown_component` on `component`, `duplicate_name`, a component with no `name` (unnamed, no default name), `duplicate_component` (also with two different `name`s), `missing_option` for each `required_when` of the shipped components (and not raised when the condition does not hold), the same component on two VMs accepted, `several_defaults` per VM, a requirement satisfied by another VM refused, `schema_version` 1 refused with its message, and a flat file refused.
+- `bats` tests of the [models](#models): a model in an engine, `models_on_non_engine` on another type, `duplicate_model` (the same `model` twice in one engine) and the same model accepted in two engines, `model` required, the `name` of an instance (any non-empty string without control characters, `wrong_type` and `invalid_value`, `duplicate_name` in one engine), an instance with no `name` accepted but not linkable (`unresolved_model`), `options` of a model refused with `unknown_option`, a `chat_interfaces` on a model refused (`unknown_key`), `wrong_type` on `models` or on a model, `force`, error paths `$.vms[i].components[j].models[k]`.
+- `bats` tests of the [links](#links): a link in a file of one VM and of several VMs, each written complete; `missing_key` for each field of each reference left out (also in a file of one VM: nothing is evident), `unknown_vm` (also a VM that has no `name`), `unresolved_engine`, `unresolved_model` (a model the engine does not hold, a model of another engine), `unresolved_chat_interface` (also when the name exists with another type, and for a component that has no `name`), `duplicate_link`, `unsupported_count` on a second link of one model, `protected_engine_other_vm` (a `protected` engine, with a fake component, whose model is linked to a chat interface of another VM; accepted when it is linked to one of the same VM), a model with no link accepted, error paths `$.links[i]`.
+- `bats` tests of the [references](#references): a link designates by `name` (`vm_ref`, `component_ref`, `model_ref`, with `default` ignored), and nothing is resolved by default: a component added on another VM, a second chat interface added on the VM aimed at, or a VM added, change no link (the same file, validated before and after, gives the same plan).
+- `bats` tests of the [slices](#slices): each without the other VMs, models with their engine, a link whose two ends are on the VM kept (complete, as written) and a link to another VM dropped, order of the file, paths of the file as written, `apply` refused without `--vm` on several VMs, accepted without it on one, `--vm` with an unknown name, `apply --vm` applying one slice.
 - `bats` tests of [what a model needs](#what-a-model-needs): a model with no proxy in the file is `missing_requirement` at its path (target `fresh`), and accepted when the proxy is installed (`--target this`); a `protected` engine needs none; no provisioning component without `force` is `missing_requirement`, and accepted with `force`; with several VMs, a proxy or a provisioning component on another VM does not count, and an engine VM with no model and no proxy is valid; the exit code of `apply` is 4 when it is the only kind of error.
 - `shellcheck` clean.
 
 ## Open questions
 
 - **Literal secrets in the file.** Answer: forbidden, see [spec: machine interface](spec-capabilities.md#secrets). The file is embedded in the generated VM script, so a literal would sit in the script and, on CloudStack, in the user-data, which is not confidential (see [contract](spec-script-contract.md#secrets)). Options: forbid literals (only `file`, `env`, `generate`), or allow them with a `WARN`. Same question as in [spec: VM script generator](spec-vm-generator.md#open-questions), to be settled together.
-- **Several instances of one component** (e.g. two engines with different ports) are not expressible on one machine while the state has one entry per component. On different VMs they are, with `vm` ([Several VMs](#several-vms)).
-- **Format version for `vm`.** Whether to bump `schema_version` to 2 only when a file uses `vm`, see [compatibility](#compatibility-of-the-vm-field); to reconsider if configurations circulate across CLI versions.
+- **Closed: implicit references.** Settled by the rule of [References](#references): a link is always explicit, so there is nothing to resolve by default, no ambiguity and no `implicit_reference` warning. If the repetition of names in the simple case proves a burden in practice, an optional shorthand could be specified later, with its own stability rule; it is not needed now.
+- **Several links per model.** The format allows a model to be shown in several chat interfaces (one entry of `links` each); the validation accepts one link per model for now (`unsupported_count`). What the next steps and the sizing do with several (one `add-endpoint` per link) is specified with [spec: several VMs](spec-multi-vm.md#open-questions) when the limit is lifted.
+- **Several instances of one component on a VM** (e.g. two `engine/ollama` with different ports): the format allows them (a free `name`, [`components`](#components), designated by a `component_ref`), the validation refuses them (`duplicate_component`) because the state of layer 1 has one entry per component, one unit, one port, one Compose project. Lifting the limit is a change of layer 1 (state keyed by instance, units and volumes named by instance), then of the validation. Several components of **one type** with different implementations (`engine/ollama` and `engine/vllm`) need the same state change only for what they share, and are the first case to open.
 - **Schema evolution**: how a new `schema_version` is migrated, once a second version exists.
