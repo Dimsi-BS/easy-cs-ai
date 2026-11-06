@@ -69,7 +69,7 @@ installed() { [ -f "$STATE/components/$1.json" ]; }
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage: easy-cs-ai"* ]]
     # an AI agent with only the binary is sent to the guide first, then the tree of the commands
-    [[ "$output" == *"Usage: easy-cs-ai"*"AI agent or program: run \`easy-cs-ai guide\` first, it tells how to use this CLI."*"easy-cs-ai"*"status"*"guide "*"catalog "*"host "*"config"*"schema"*"validate"* ]]
+    [[ "$output" == *"Usage: easy-cs-ai"*"AI agent or program: run \`easy-cs-ai guide\` first, it tells how to use this CLI."*"easy-cs-ai"*"status"*"config"*"edit"*"validate"*"schema"*"script"*"guide "*"catalog "*"host "* ]]
     cli --version
     [ "$output" = "0.1.0-rc3" ]
 }
@@ -98,7 +98,9 @@ has() { [[ "$1" == *"$2"* ]]; }
     has "$tree" $'\n├── install '
     has "$tree" $'\n│   ├── <type> <name> [--default] [options]  '
     has "$tree" $'\n│   └── [<type>] --defaults '
-    has "$tree" $'\n│   └── validate <file|-> '
+    has "$tree" $'\n│   ├── edit [<file>] '
+    has "$tree" $'\n│   ├── validate <file|-> '
+    has "$tree" $'\n│   └── schema '
     # no run of dashes as a branch: the tree is not confused with the options
     if has "$tree" '|-- ' || has "$tree" '`-- '; then false; fi
 }

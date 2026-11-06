@@ -126,9 +126,6 @@ print_tree() {
     tree_row 0 '' "$T" 'guide' 'how to use this CLI (AI agent, program)'
     tree_row 0 '' "$T" 'catalog' 'what can be installed'
     tree_row 0 '' "$T" 'host' 'this machine: CPU, memory, disk, GPU'
-    tree_row 0 '' "$T" 'config' 'the configuration format and checks'
-    tree_row 1 "$V" "$T" 'schema' 'the format, as a JSON Schema'
-    tree_row 1 "$V" "$L" 'validate <file|-> [--target] [--vm <n>]' 'check a file, show its plan'
     tree_row 0 '' "$T" 'help'
     tree_row 0 '' "$L" 'version'
 }
