@@ -47,7 +47,7 @@ capability → document ─┬─ person:  text, tables, questions   (default)
 
 ### A question is a field
 
-The link between the two renderings is the configuration. **Each question fills one field; each field has a question.** The session builds the configuration answer by answer, a program writes it in one go, and both go through the same validation ([`config validate`](spec-capabilities.md#config-validate)). So that a person can always replay a session, `config edit` writes the file a session would have produced, `config edit <file>` opens it again, and `script <file>` turns a file into scripts with no prompt. The question of another VM fills the `vm` fields and the links question fills `links`; the **role** of a VM is the one answer with no field, an early opinion that only restricts the types a pass asks.
+The link between the two renderings is the configuration. **Each question fills one field; each field has a question.** The session builds the configuration answer by answer, a program writes it in one go, and both go through the same validation ([`config validate`](spec-capabilities.md#config-validate)). So that a person can always replay a session, `config edit` writes the file a session would have produced, `config edit <file>` opens it again, and `script <file>` turns a file into scripts with no prompt. The question of another VM adds an entry to `vms` and the question of where each model is shown fills `links`; the **role** of a VM is the one answer with no field, an early opinion that only restricts the types a pass asks.
 
 An answer that has no place in the configuration (the specs of the target VM at the models step) is an **early opinion**: it feeds a capability (`suggest`, `plan`) and is not stored.
 

@@ -19,7 +19,7 @@ For the VM post-install layer, the generated script embeds the configuration (th
 
 JSON, like every other structured file of the project: `jq` is already a dependency (see [scripting language](decision-scripting-language.md)), whereas YAML would need `yq`.
 
-The file is a **list of VMs**, each holding its components, an `engine` component holding the **models** installed on it, and a list of **links** at the end saying in which chat interface each model is shown (the inventory first, then the wiring). There is no other form: a file always has a `vms` array, even for a single machine (a stack is mostly several VMs in practice, and one form means one rule everywhere: in the session, in the editor, in the validation and in the slices). The `name` of a VM is only needed to be referenced, so it is optional when the file has **one** VM and required when it has several ([`vms`](#vms)); the session, which does not know the number of VMs in advance, **always asks and writes it**. The file is read with `schema_version` 2.
+The file is a **list of VMs**, each holding its components, an `engine` component holding the **models** installed on it, and a list of **links** at the end saying in which chat interface each model is shown (the inventory first, then the wiring). There is no other form: a file always has a `vms` array, even for a single machine (a stack is mostly several VMs in practice, and one form means one rule everywhere: in the session, in the editor, in the validation and in the slices). The `name` of a VM is only needed to be referenced, so it is optional when the file has **one** VM and no link, and required when it has several VMs or a link designates it ([`vms`](#vms)); the session, which does not know the number of VMs in advance, **always asks and writes it**. The file is read with `schema_version` 2.
 
 **Names and references.** A `name` is always the free name of the object that contains it (a VM, a component, an instance of a model), chosen by the person and needed only to make **references** to it: without a reference it is optional. A reference is an object whose fields are called `<object>_ref` (`vm_ref`, `component_ref`, `model_ref`) and always hold the `name` of the object they designate (a VM, a component, an instance of a model), see [References](#references).
 
@@ -32,7 +32,7 @@ The file is a **list of VMs**, each holding its components, an `engine` componen
       "components": [
         { "component": "provisioning/llmfit" },
         { "component": "proxy/nginx", "options": { "server-name": "gpu.example.org" } },
-        { "component": "engine/ollama", "default": true, "options": { "port": 11434 },
+        { "component": "engine/ollama", "name": "ollama", "default": true, "options": { "port": 11434 },
           "models": [
             { "model": "llama3.2:3b", "name": "llama3.2:3b" },
             { "model": "qwen2.5:7b", "force": true }
@@ -43,19 +43,20 @@ The file is a **list of VMs**, each holding its components, an `engine` componen
       "name": "web",
       "components": [
         { "component": "proxy/nginx", "options": { "server-name": "ai.example.org" } },
-        { "component": "chat-interface/librechat", "options": { "allow-registration": false } }
+        { "component": "chat-interface/librechat", "name": "librechat", "options": { "allow-registration": false } }
       ]
     }
   ],
   "links": [
-    { "model": { "vm_ref": "gpu", "model_ref": "llama3.2:3b" }, "chat_interface": { "vm_ref": "web" } }
+    { "model": { "vm_ref": "gpu", "component_ref": "ollama", "model_ref": "llama3.2:3b" },
+      "chat_interface": { "vm_ref": "web", "component_ref": "librechat" } }
   ]
 }
 ```
 
 `qwen2.5:7b` has no link: it is installed on `gpu` and used through its API.
 
-A single machine is a file with one VM, and its links are written like any other, **complete**. The session asks, model by model, in which chat interface it is shown (see [spec: several VMs](spec-multi-vm.md#creating)), and never links the two without the person's answer; it writes the name of the VM (it asked for it) and the `name` of the engine and of the chat interface that the link designates (proposing the implementation):
+A single machine is a file with one VM, and its links are written like any other, **complete**. The session asks, model by model, in which chat interface it is shown (see [spec: several VMs](spec-multi-vm.md#creating)), and never links the two without the person's answer; it writes the name of the VM (it asked for it) and the `name` of the engine and of the chat interface that the link designates (the implementation, written with no question):
 
 ```json
 {
@@ -89,7 +90,7 @@ A link is the only place where the format designates one object from another, an
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `component` | yes | What the component is: `<type>/<implementation>`, the type being one of the contract types (`engine`, `chat-interface`, `proxy`, `provisioning`) and the implementation a shipped one (`<type>/<implementation>.sh`): `engine/ollama`, `proxy/nginx`. The same notation as the path of the script and as `--component` of `provisioning plan`. An unknown type is `unknown_type`, an implementation that is not shipped `unknown_component` |
-| `name` | no | How the component is called **in its VM**, free, chosen by the person, and needed only to be designated by a `component_ref` of a [link](#links) (see [References](#references)). Same shape as the name of a VM. Left out: the component is **unnamed**, it has no default (the implementation is not its name) and cannot be the engine or the chat interface of a link; `plan` and `config validate` show the implementation as its label. Unique in the VM when written (`duplicate_name`). The session writes the `name` of every component a link designates, proposing the implementation (`librechat`) |
+| `name` | no | How the component is called **in its VM**, free, chosen by the person, and needed only to be designated by a `component_ref` of a [link](#links) (see [References](#references)). Same shape as the name of a VM. Left out: the component is **unnamed**, it has no default (the implementation is not its name) and cannot be the engine or the chat interface of a link; `plan` and `config validate` show the implementation as its label. Unique in the VM when written (`duplicate_name`). The session writes the `name` of every component a link designates, the implementation (`librechat`), with no question |
 | `default` | no | Make it the default of its type, forwarded as `--default` (see [state format](spec-state-format.md#defaults)): it concerns the state of the machine only and **never decides what a reference designates**. At most one per type **on a VM** (`several_defaults`) |
 | `options` | no | Options of the script, keyed by option name **without** `--` (the `describe.options[].name`). Values are strings, numbers or booleans |
 | `models` | no | **Engines only**: the models installed on this engine, see [`models`](#models). On a component that is not of type `engine`: `models_on_non_engine` |
@@ -134,7 +135,8 @@ An optional top-level array, **the wiring**, written after the inventory (the VM
 
 ```json
 "links": [
-  { "model": { "vm_ref": "gpu", "model_ref": "llama3.2:3b" }, "chat_interface": { "vm_ref": "web" } }
+  { "model": { "vm_ref": "gpu", "component_ref": "ollama", "model_ref": "llama3.2:3b" },
+    "chat_interface": { "vm_ref": "web", "component_ref": "librechat" } }
 ]
 ```
 
@@ -164,8 +166,8 @@ A field that is not written is `missing_key`, at the path of the reference.
 
 **A reference designates by `name` and is resolved by no rule of choice.** Nothing is deduced from the layout: not the only VM of the file, not the only engine or chat interface of a VM, not `default` (the flag belongs to the state). The configuration is **expressive and explicit**: a link says which model, on which engine, of which VM, is shown in which chat interface, of which VM, and what is added to the file later (a component, a VM, a second chat interface) **never changes what a link designates**, and cannot make it ambiguous: there is no ambiguity to detect. The cost is a few repeated names in the simple case, which the session writes and nobody has to type; the benefit is that a file is read, written by a program or an AI and validated the same way for one VM and for twenty, with no special case.
 
-- **The principle of names** applies as it is: a `name` is free and optional, **needed only to be designated**. What a link designates must therefore have its `name` written: the VM, the engine and the chat interface and the instance of the model (its `name`, see [`models`](#models)). The session writes them (it asked the name of the VM, proposes the implementation as the `name` of the engine and of the chat interface it links, and fills in the `name` of the instance with its `model`); a file written by hand or by a program writes them too, or the link is `unknown_vm`, `unresolved_engine`, `unresolved_model` or `unresolved_chat_interface`.
-- The resolved references (the VM and the `name`, or the implementation as label, of each component, and the `name` and the `model` of the instance) go into the plan of `config validate`, as written (see [spec: capabilities](spec-capabilities.md#config-validate)).
+- **The principle of names** applies as it is: a `name` is free and optional, **needed only to be designated**. What a link designates must therefore have its `name` written: the VM, the engine and the chat interface and the instance of the model (its `name`, see [`models`](#models)). The session writes them (it asked the name of the VM, writes the implementation as the `name` of the engine and of the chat interface it links, with no question, and fills in the `name` of the instance with its `model`); a file written by hand or by a program writes them too, or the link is `unknown_vm`, `unresolved_engine`, `unresolved_model` or `unresolved_chat_interface`.
+- The resolved references (the VM and the `name`, or the implementation as label, of each component, and the `name` of the instance) go into the plan of `config validate`, as written (see [spec: capabilities](spec-capabilities.md#config-validate)).
 
 ### Slices
 
