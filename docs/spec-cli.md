@@ -413,7 +413,7 @@ easy-cs-ai script <file> [--output <path>] [--package-url <url>] [--package-vers
 Generates the layer 3 scripts from a [configuration](spec-config.md): **one per VM** of the file (one for a file of one VM, see [spec: several VMs](spec-multi-vm.md)), each named `<output>-<vm>.<extension>` (a lone VM with no name: exactly `<output>`, no `VM:` line in the header). It **never prompts**: `<file>` is required and must be complete, the validation is the one of `config validate --target fresh` and an invalid file is exit 2. The summary is printed on stderr and not asked for confirmation. The [package source](spec-vm-generator.md#package-source) comes from its own options. There is no script for layer 1: the CLI chains components with `apply`.
 
 - Without `<file>`, `script` is a usage error (exit 2) whose message points to `easy-cs-ai config edit`, which creates the file.
-- The scripts are written together, all or nothing, and the next steps of a configuration whose models are shown in a chat interface of another VM are printed (see [spec: several VMs](spec-multi-vm.md#next-steps)).
+- The scripts are written together, all or nothing, and the next steps of a configuration whose links go to a chat interface of another VM are printed (see [spec: several VMs](spec-multi-vm.md#next-steps)).
 - `--json` prints the document of `config validate --target fresh --json` extended with the `script` entry (`scripts`, one entry per VM, and `next_steps`), see [spec: capabilities](spec-capabilities.md#commands).
 
 ## The former `generate`
