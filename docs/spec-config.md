@@ -52,7 +52,20 @@ The file is a **list of VMs**, each holding its components, and an `engine` comp
 }
 ```
 
-A single machine is a file with one VM; its models designate the chat interface of that VM in `chat_interfaces` when they are shown in it. The file says it **explicitly**: the session asks, model by model, in which chat interface it is shown (see [spec: several VMs](spec-multi-vm.md#creating)), and never links the two without the person's answer. The session writes the name of the VM (it asked for it) and the `name` of the chat interface it references:
+A single machine is a file with one VM; its models designate the chat interface of that VM in `chat_interfaces` when they are shown in it. The session asks, model by model, in which chat interface it is shown (see [spec: several VMs](spec-multi-vm.md#creating)), and never links the two without the person's answer. It writes the name of the VM (it asked for it) and the reference in its **shortest form that does not depend on what is added later** (see [References](#references)); for a chat interface of the model's own VM that is `{}`, and the longer form below is what a person or a program may also write:
+
+```json
+{
+  "schema_version": 2,
+  "vms": [ { "name": "vm-1", "components": [
+    { "component": "provisioning/llmfit" }, { "component": "proxy/nginx" },
+    { "component": "engine/ollama",
+      "models": [ { "model": "llama3.2:3b", "chat_interfaces": [ {} ] } ] },
+    { "component": "chat-interface/librechat" } ] } ]
+}
+```
+
+That is what a session writes: the VM has the name it was given, and the reference is the shortest form (`{}`, the only chat interface of the model's own VM, see the [locality rule](#references)). The same file written out in full, which is also valid and is what a program may prefer:
 
 ```json
 {
@@ -66,7 +79,7 @@ A single machine is a file with one VM; its models designate the chat interface 
 }
 ```
 
-A file written by hand or by a program may leave out what is evident: the name of a **lone** VM, and the parts of a reference that the [locality rule](#references) resolves (here the chat interface of the model's own VM, which is the only one: `{}` designates it):
+A file written by hand or by a program may also leave out the name of a **lone** VM:
 
 ```json
 {
@@ -154,7 +167,7 @@ The **place** of a model is the engine component that holds it, on its VM: it de
 | `{ "vm_ref": "v" }` | The only chat interface of the VM `v`. `vm_ref` **fixes the scope**: the walk does not go above that VM. Several: `ambiguous_chat_interface`; none: `unresolved_chat_interface` |
 | `{ "vm_ref": "v", "component_ref": "x" }` | The chat interface `x` of the VM `v`, exactly. None: `unresolved_chat_interface` |
 
-**The session never relies on it**: it writes complete references (`vm_ref` and `component_ref`, with the `name` of every chat interface it references), because the configuration it writes stays explicit ([journey, rule 3](spec-journey.md#rules)) and a reference that gives its names never changes meaning when another chat interface is added. The locality rule is for a file written by hand or by a program, where it saves the repetition of what the place already says; the lone VM with its one chat interface is `chat_interfaces: [ {} ]`. A reference resolved **outside the VM of the model** (level 2, or an explicit `vm_ref` to another VM) is the link of two machines.
+**The session may write implicit references**, so that the file it writes stays short and easy to read, like one written by hand or by an AI: the person's answer is what links the model, not the verbosity of the file ([journey, rule 3](spec-journey.md#rules)). It writes the **shortest form that never relies on the climb beyond the VM of the model** (the one case where adding something elsewhere would silently change the meaning): a chat interface of the model's own VM, the only one there, is `{}`; a chat interface of another VM is written with its `vm_ref` (and a `component_ref` only when that VM holds several chat interfaces); adding a candidate then makes the reference `ambiguous_chat_interface`, an error that is seen, never a link that moves. The lone VM with its one chat interface is `chat_interfaces: [ {} ]`. A reference resolved **outside the VM of the model** (level 2, or an explicit `vm_ref` to another VM) is the link of two machines.
 
 - A reference never reads `default`: the flag is the state's, not the file's way to designate.
 - A component that is **unnamed** can only be reached by a reference that leaves out `component_ref` and resolves to it by the locality rule (the only chat interface of its level). A `component_ref` always names a component that has that `name` written, so that adding a second chat interface to a VM never changes what an explicit reference designates: that is the stability the explicit name gives.
@@ -259,6 +272,6 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 ## Open questions
 
 - **Literal secrets in the file.** Answer: forbidden, see [spec: machine interface](spec-capabilities.md#secrets). The file is embedded in the generated VM script, so a literal would sit in the script and, on CloudStack, in the user-data, which is not confidential (see [contract](spec-script-contract.md#secrets)). Options: forbid literals (only `file`, `env`, `generate`), or allow them with a `WARN`. Same question as in [spec: VM script generator](spec-vm-generator.md#open-questions), to be settled together.
-- **Warning on an implicit reference that leaves the model's VM.** A reference resolved by the locality rule at the level of the file links two machines without the person having named the VM. Should the validation warn (a non-blocking `implicit_reference`)? Not decided: for now it is silent, and the session never writes such a reference.
+- **Warning on an implicit reference that leaves the model's VM.** A reference resolved by the locality rule at the level of the file links two machines without the person having named the VM. Should the validation warn (a non-blocking `implicit_reference`)? Not decided: for now it is silent, and the session never writes such a reference (it writes the `vm_ref`).
 - **Several instances of one component on a VM** (e.g. two `engine/ollama` with different ports): the format allows them (a free `name`, [`components`](#components), designated by a `component_ref`), the validation refuses them (`duplicate_component`) because the state of layer 1 has one entry per component, one unit, one port, one Compose project. Lifting the limit is a change of layer 1 (state keyed by instance, units and volumes named by instance), then of the validation. Several components of **one type** with different implementations (`engine/ollama` and `engine/vllm`) need the same state change only for what they share, and are the first case to open.
 - **Schema evolution**: how a new `schema_version` is migrated, once a second version exists.
