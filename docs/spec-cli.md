@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. **Implemented**: the split of the former `generate` into `config edit` (creates or edits a configuration) and `script` (generates the scripts from a configuration), see [`config edit`](#config-edit-the-session) and [`script`](#script). What concerns a configuration that names several VMs (`apply --vm`, one script per VM) is implemented, see [spec: several VMs](spec-multi-vm.md); a file with no `vm` behaves as described.
+**Status:** accepted. **Implemented**: the split of the former `generate` into `config edit` (creates or edits a configuration) and `script` (generates the scripts from a configuration), see [`config edit`](#config-edit-the-session) and [`script`](#script). What concerns a configuration that names several VMs (`apply --vm`, one script per VM) is implemented for the format of version 1, see [spec: several VMs](spec-multi-vm.md). **Format version 2** ([spec: config](spec-config.md#format): a file always has a `vms` array, even for one machine, and the name of a lone VM is optional) is decided, not implemented: `apply` needs `--vm` only when the file has several VMs, and `script` writes `<output>-<vm>.<extension>` for a VM that has a name (a session always names it), and exactly `<output>` for a lone VM that has none.
 
 ## Purpose
 
@@ -42,7 +42,7 @@ easy-cs-ai [global options] <command> [arguments…]
 | `add <model> [--engine <name>] [--chat-interface <name>]` | Add a model to an engine and wire it |
 | `remove <model> [--engine <name>]` | Unwire a model and remove it from its engine |
 | `remove --all [--engine <name>]` | Remove every model (of one engine, or of all) |
-| `apply <file\|-> [--vm <name>] [--prune]` | Make the machine match a configuration file (`--vm` selects one VM of a file that names several) |
+| `apply <file\|-> [--vm <name>] [--prune]` | Make the machine match a configuration file (`--vm` selects one VM of a file that has several; not needed with one) |
 | `config edit [<file>]` | The interactive session: **create** a configuration (no file) or **edit** one (`<file>`), and write the configuration file. It writes no script |
 | `script <file> [--output <path>] [package options…]` | Generate the parameterless VM post-install script from a configuration, one per VM when it names several. It never prompts |
 | `catalog`, `host`, `config validate`, `config schema`, `guide` | Read-only discovery and validation for a person as well as for a program or an AI agent, see [spec: capabilities](spec-capabilities.md) |
@@ -165,7 +165,7 @@ The CLI resolves names against the scripts actually shipped (`<libdir>/<type>/<n
 
 ## Implementation status
 
-Implemented: [the tree of commands](#the-tree-of-commands) in the help text and for the bare root command, with its ASCII fallback (`tree_unicode`, `print_tree` in the dispatcher), dispatch, `status`, `install` (dependencies, `--defaults`, default stack), `uninstall` (single, `--all`, wiring clean-up), component commands. `component` is implemented ([decision](decision-component-command.md)): a type as the first word is an unknown command, and the lists of `component` refuse `--json`. `exec` is implemented, and the actions are checked against the `describe` of the component (the CLI keeps no list of them; only `CHANGING_ACTIONS`, for root, remains). `add` and `remove` are implemented (in `lib/cli-models.sh`) and tested with fake components; they cannot succeed on a real machine before the proxy, llmfit and a chat interface exist (a missing one is the documented exit 4). The signal handling (SIGINT/SIGTERM, rollback, 130/143) is written but not covered by tests yet. `apply` is implemented (in `lib/cli-apply.sh`, see [spec: config](spec-config.md)) and tested with fake components. `generate` hands over to `vm_script/generate.sh` (`$HOME_DIR/vm_script`, else `../vm_script`), exporting `EASY_CS_AI_HOME` and `EASY_CS_AI_CLI_VERSION`, and forwarding `--dry-run` and `--verbose`.
+Implemented: [the tree of commands](#the-tree-of-commands) in the help text and for the bare root command, with its ASCII fallback (`tree_unicode`, `print_tree` in the dispatcher), dispatch, `status`, `install` (dependencies, `--defaults`, default stack), `uninstall` (single, `--all`, wiring clean-up), component commands. `component` is implemented ([decision](decision-component-command.md)): a type as the first word is an unknown command, and the lists of `component` refuse `--json`. `exec` is implemented, and the actions are checked against the `describe` of the component (the CLI keeps no list of them; only `CHANGING_ACTIONS`, for root, remains). `add` and `remove` are implemented (in `lib/cli-models.sh`) and tested with fake components; they cannot succeed on a real machine before the proxy, llmfit and a chat interface exist (a missing one is the documented exit 4). The signal handling (SIGINT/SIGTERM, rollback, 130/143) is written but not covered by tests yet. `apply` is implemented (in `lib/cli-apply.sh`, see [spec: config](spec-config.md)) and tested with fake components. `config edit` and `script` hand over to `vm_script/config.sh` and `vm_script/script.sh` (`$HOME_DIR/vm_script`, else `../vm_script`, which share `vm_script/lib/generator.sh`), exporting `EASY_CS_AI_HOME` and `EASY_CS_AI_CLI_VERSION`, and forwarding `--dry-run` and `--verbose`.
 
 ## `status`
 
@@ -389,7 +389,7 @@ The CLI uses the **script contract codes** with the same meaning, and passes the
 easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 ```
 
-`--vm <name>` applies one VM of a file that describes several (it is refused without it, see [spec: config](spec-config.md#several-vms)); a file for one machine does not use it. Reads a [configuration file](spec-config.md) and runs the equivalent of `install` for each listed component (in `requires` order), then `add` for each listed model, with the same rollback as `add`. It converges, installs nothing the file does not name, and removes nothing unless `--prune` is given. Exit codes are those of the steps it runs, see [spec: config](spec-config.md#apply) for the semantics, failure and resume.
+`--vm <name>` applies one VM of a file that has several (it is refused without it, see [spec: config](spec-config.md#slices)); a file with one VM, which is also what a generated script embeds, does not need it. Reads a [configuration file](spec-config.md) and runs the equivalent of `install` for each listed component (in `requires` order), then `add` for each listed model, with the same rollback as `add`. It converges, installs nothing the file does not name, and removes nothing unless `--prune` is given. Exit codes are those of the steps it runs, see [spec: config](spec-config.md#apply) for the semantics, failure and resume.
 
 ## `config edit` (the session)
 
@@ -410,11 +410,11 @@ Hands over to the session of the generator (see [spec: VM script generator](spec
 easy-cs-ai script <file> [--output <path>] [--package-url <url>] [--package-version <v>] [--package-format <f>] [--package-sha256 <hash> | --package-file <path>] [--dry-run] [--json]
 ```
 
-Generates the layer 3 scripts from a [configuration](spec-config.md): **one per VM** when it names several (see [spec: several VMs](spec-multi-vm.md)), one otherwise. It **never prompts**: `<file>` is required and must be complete, the validation is the one of `config validate --target fresh` and an invalid file is exit 2. The summary is printed on stderr and not asked for confirmation. The [package source](spec-vm-generator.md#package-source) comes from its own options. There is no script for layer 1: the CLI chains components with `apply`.
+Generates the layer 3 scripts from a [configuration](spec-config.md): **one per VM** of the file (one for a file of one VM, see [spec: several VMs](spec-multi-vm.md)), each named `<output>-<vm>.<extension>` (a lone VM with no name: exactly `<output>`, no `VM:` line in the header). It **never prompts**: `<file>` is required and must be complete, the validation is the one of `config validate --target fresh` and an invalid file is exit 2. The summary is printed on stderr and not asked for confirmation. The [package source](spec-vm-generator.md#package-source) comes from its own options. There is no script for layer 1: the CLI chains components with `apply`.
 
 - Without `<file>`, `script` is a usage error (exit 2) whose message points to `easy-cs-ai config edit`, which creates the file.
-- The scripts are written together, all or nothing, and the next steps of a configuration that names several VMs are printed (see [spec: several VMs](spec-multi-vm.md#next-steps)).
-- `--json` prints the document of `config validate --target fresh --json` extended with the `script` entry (`scripts` and `next_steps` for several VMs), see [spec: capabilities](spec-capabilities.md#commands).
+- The scripts are written together, all or nothing, and the next steps are printed (step 1 always, the steps of a link when one goes to a chat interface of another VM; see [spec: several VMs](spec-multi-vm.md#next-steps)).
+- `--json` prints the document of `config validate --target fresh --json` extended with the `script` entry (`scripts`, one entry per VM, and `next_steps`), see [spec: capabilities](spec-capabilities.md#commands).
 
 ## The former `generate`
 

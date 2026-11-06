@@ -8,7 +8,7 @@
 
 An administrator of an Apache CloudStack cloud wants a **local AI** (an inference engine, a chat interface, a reverse proxy, models) running on VMs of that cloud, with no tool to learn beyond the CloudStack UI. This spec adds **one page to the CloudStack UI** (a native section of that UI, contributed upstream) that does, from inside CloudStack, what the project does from a terminal:
 
-1. **Define** a topology of VMs (for instance a `web` VM and an `engine` VM) and what each one holds: the [configuration](spec-config.md), with its [`vm` fields and `links`](spec-multi-vm.md).
+1. **Define** a topology of VMs (for instance a `web` VM and an `engine` VM) and what each one holds: the [configuration](spec-config.md): its list of `vms` with their components (the models are held by their engine), and its `links`, which say in which chat interface each model is shown ([spec: several VMs](spec-multi-vm.md)).
 2. **Create** the CloudStack resources that topology needs (VMs, disk, network rules, key pair…), each VM provisioned at first boot by the [post-install script](spec-vm-generator.md) the generator produces for it.
 3. **Monitor**, specifically, what concerns the use of a local AI: are the engine and the chat interface up, which models are served, are they being used, is the VM big enough for them. The VMs and their disks are of course also listed in the usual pages of CloudStack: the page does not replace them, it adds the view that only this project can give.
 
@@ -31,7 +31,7 @@ The page is **a third rendering of the [journey](spec-journey.md)**, after the i
 
 | Needs | From | State |
 | --- | --- | --- |
-| Several VMs in one file, `links`, roles, one script per VM, next steps | [spec: several VMs](spec-multi-vm.md) | `vm` and scripts implemented, `links`, the editor and any number of VMs proposed |
+| Several VMs in one file (`vms`), the chat interface of each model, roles, one script per VM, next steps | [spec: several VMs](spec-multi-vm.md) and [spec: config](spec-config.md#format) | The format of version 2, the editor and any number of VMs: decided, not implemented. Version 1 (`vm` fields, `links`) is what the code reads today |
 | Sizing of each VM: vCPU, RAM, GPU, disk, "equivalent of a CloudStack compute offering" | [spec: model fit](spec-model-fit.md) (`plan`) | implemented |
 | User-data size (32 KB, the default `vm.userdata.max.length`) | [spec: VM generator](spec-vm-generator.md) | the generator already warns |
 | Capabilities as `--json` documents | [spec: capabilities](spec-capabilities.md) | implemented in bash and `jq`; **to be moved into the Rust core** ([the core](#the-core-webassembly)) |
@@ -120,18 +120,35 @@ What this implies, to settle with the CloudStack community **before** writing th
 - **The version it targets** is the main branch at the time, and a release later. A cloud on an older version does not have the page; the CLI works without it.
 - **The page stays thin** ([principle 1](#principles)): the less logic the section holds, the less there is to review, translate and maintain upstream, and the less it moves when a capability of this repository changes.
 
+## Contributing to CloudStack
+
+The page is built **in the repository of Apache CloudStack** and proposed there, so that it ships with the UI. This splits the work between two repositories:
+
+| Where | What lives there |
+| --- | --- |
+| **`apache/cloudstack`** (`ui/`) | The section: its routes and menu entry, the three screens, the calls to the CloudStack API, the calls to the service, the translations, the tests of the UI, and the documentation of the feature in the CloudStack docs |
+| **This repository** | The CLI and the capabilities the page shows, the **service** that exposes them over HTTP, the [status document](#the-status-document) of the proxy, the specs (this one included), and the tests of all of these |
+
+What this implies, to settle with the CloudStack community **before** writing the page:
+
+- **The community has to accept a section whose AI part depends on an external service** that is not part of CloudStack. The proposal is the one above: the section is shown only when the service is configured, and nothing else of CloudStack depends on it. If the community refuses an external dependency, the alternatives are a section limited to what CloudStack knows (resources and metrics, [without the AI side](#not-in-this-version)), the [extensions framework](../search/cloudstack/ui-extension.md#options) for actions on VMs, or the logic moved into CloudStack's Java server, which breaks [principle 1](#principles) and is not proposed.
+- **The process of the project is followed**, not invented here: a discussion and a proposal on its mailing list or issue tracker before a large change, a pull request against the main branch, the project's licence headers, and its release cycle (the section reaches a release when it is merged for it). Where those rules are written is in the project's contribution guide, to read first ([to verify](#to-verify-on-cloudstack)).
+- **The page is developed against a CloudStack that exists**: a development environment of the UI, pointed at a test management server, and a fork of the repository for the branch. Nothing here needs the project's own page to be installed on a production cloud before the merge.
+- **The version it targets** is the main branch at the time, and a release later. A cloud on an older version does not have the page; the service and the CLI work without it.
+- **The page stays thin** ([principle 1](#principles)): the less logic the section holds, the less there is to review, translate and maintain upstream, and the less it moves when a capability of this repository changes.
+
 ## Screen 1: topology
 
 A topology is edited as the [editor of spec: several VMs](spec-multi-vm.md#editing) does, with the same operations, as forms instead of a prompt:
 
 | Part of the page | What it is | Capability and rule it shows |
 | --- | --- | --- |
-| **VMs** | A list; *add a VM* with a name (shape of [spec: config](spec-config.md#several-vms)) and an optional role (`engine`, `web`, `custom`, only a shortcut), rename, remove (with what goes with it announced) | [roles](spec-multi-vm.md#roles), `vm` fields |
+| **VMs** | A list; *add a VM* with an optional role (`engine`, `web`, `custom`, only a shortcut) and then a name (shape of [spec: config](spec-config.md#vms)), the same order as the session, rename, remove (with what goes with it announced) | [roles](spec-multi-vm.md#roles), [`vms`](spec-config.md#vms) |
 | **Components of a VM** | One selector per type with the shipped components and their rank, the dependencies a choice drags in listed and accepted explicitly, the options as typed fields (a secret option offers its channels only, never a value) | `catalog`, `config schema`, [step 2 and 3 of the journey](spec-journey.md#2-components-and-dependencies) |
-| **Models of an engine** | Hardware first (the specs of the VM, a ranked list of models that fit) or models first (the VM they need), each model with its fit verdict and the warning when llmfit disagrees; the place of a model is its VM and engine | [spec: model fit](spec-model-fit.md#choosing-models-in-a-session) |
-| **Links** | For each VM that has a chat interface, the VMs whose engines it lists; the page draws them | [`links`](spec-config.md#links) |
+| **Models of an engine** | Hardware first (the specs of the VM, a ranked list of models that fit) or models first (the VM they need), each model with its fit verdict and the warning when llmfit disagrees; a model is edited inside its engine component, whose VM is its place | [spec: model fit](spec-model-fit.md#choosing-models-in-a-session) |
+| **Where the models are shown** | For each model, in the order of the file, the chat interface (of which VM) that shows it, written as an entry of `links`; the page draws a line from the engine VM to the chat interface it feeds, labelled `<model>` on `<engine VM>`, shown in `<chat-interface VM>` | [`links`](spec-config.md#links), [spec: several VMs](spec-multi-vm.md#creating) |
 | **Sizing of each VM** | The recommendation of `plan` for that VM, memory in two quantisations, the **estimated margin** shown as such with its sources, the models not covered, never a single total that looks measured | [estimated margin](spec-model-fit.md#estimated-margin) |
-| **Warnings and errors** | Those of `config validate`, each with its `vm` and path, and the fix proposed as the editor's `f` does; **nothing can be created while an error stands** | [validation](spec-multi-vm.md#validation) |
+| **Warnings and errors** | Those of `config validate`, each with its `vm_ref` and path, and the fix proposed as the editor's `f` does; **nothing can be created while an error stands** | [validation](spec-multi-vm.md#validation) |
 | **File** | *Download* and *import* of the configuration | [spec: config](spec-config.md) |
 
 Specifics of CloudStack at this screen, all asked as part of the same step, never decided silently:
@@ -151,9 +168,9 @@ For every VM of the configuration, the page proposes, from the sizing and the Cl
 | Image | Ubuntu 24.04 or Debian, the targets of the project | A **template** the account may use, which must support cloud-init user-data; the user chooses, the page only filters by its name and OS type |
 | Boot script | `script` (one script per VM, with the `VM:` header) | The **user-data** of the VM, base64, verified against the limit |
 | Network | One network for the topology | An existing network of the account, or, if the user asks, a new isolated network (the page proposes, never creates a network silently) |
-| Reachability | The ports the stack uses: 443 for each proxy (the engine VM's too: the web VM reaches it there), 8443 for the chat interface, 22 for SSH | Security-group rules or firewall and port-forwarding / static NAT rules, **depending on the kind of network**; and the rule that lets the `web_vm` of a link reach the `engine_vm` on the HTTPS port of its proxy ([next step 3](spec-multi-vm.md#next-steps)). The page lists each rule before creating it |
+| Reachability | The ports the stack uses: 443 for each proxy (the engine VM's too: the web VM reaches it there), 8443 for the chat interface, 22 for SSH | Security-group rules or firewall and port-forwarding / static NAT rules, **depending on the kind of network**; and the rule that lets the VM of the chat interface of a link (its `chat_interface.vm_ref`) reach the VM of the engine of its model (its `model.vm_ref`) on the HTTPS port of its proxy ([next step 3](spec-multi-vm.md#next-steps)). The page lists each rule before creating it |
 | Access | | An existing **SSH key pair** chosen by the user (the page does not create credentials) |
-| Order | `links` | The engine VMs are deployed first, as the [next steps](spec-multi-vm.md#next-steps) say |
+| Order | The `links` | The engine VMs (those whose models are linked to a chat interface of another VM) are deployed first, as the [next steps](spec-multi-vm.md#next-steps) say |
 
 A rule of the project is kept: a model's engine listens on the loopback and only its proxy is exposed, so **no rule ever opens the engine's own port** (11434 for Ollama).
 
@@ -173,7 +190,7 @@ Rules:
 - **Idempotent and resumable.** The page finds what already exists by the [tags](#tags) and creates only what is missing, so that a failure in the middle, a closed tab or a second click leaves nothing doubled: *create* again continues. It never creates a second VM for a name that already exists in the topology.
 - **The browser drives the creation, CloudStack runs it.** The order (engine VMs first) is kept by the page, and each step is a CloudStack job that goes on if the tab is closed. A closed tab leaves a topology **partly created, never wrong**: everything made is tagged, and opening the topology again shows what is missing and continues. Nothing else acts while no page is open.
 - **A failure stops at that step**, says which job failed with the CloudStack error as given, and **removes nothing on its own**: the user chooses *retry*, *continue without*, or *destroy what was created* (listing it first).
-- **The links are finished by hand once the VMs are up**, as today ([principle 3 of spec: several VMs](spec-multi-vm.md#principles)): the address of an engine VM and its API key do not exist when the scripts are generated, and no secret may travel through the user-data. The page shows the [next steps](spec-multi-vm.md#next-steps) of the validation, as written, **per link, with the real VM names, as a checklist**, and the [monitoring](#links-state) tells when each one is done. It does not run them: reaching inside a VM is beyond what the CloudStack API gives. A higher-level command that finishes a link is the [open question](spec-multi-vm.md#open-questions) of spec: several VMs, and would serve the page directly.
+- **The link between two VMs (a model shown in a chat interface of another VM) is finished by hand once the VMs are up**, as today ([principle 3 of spec: several VMs](spec-multi-vm.md#principles)): the address of an engine VM and its API key do not exist when the scripts are generated, and no secret may travel through the user-data. The page shows the [next steps](spec-multi-vm.md#next-steps) of the validation, as written, **per link to another VM, with the real VM names, as a checklist**, and the [monitoring](#links-state) tells when each one is done. It does not run them: reaching inside a VM is beyond what the CloudStack API gives. A higher-level command that finishes a link is the [open question](spec-multi-vm.md#open-questions) of spec: several VMs, and would serve the page directly.
 - **Editing after creation.** A script is a snapshot, so changing the configuration of a VM that exists is not changing the VM. The page offers, for an existing topology: add a VM (created like the others), and, for a change of a VM that exists, the **command to run on it** (`easy-cs-ai apply`, with the new slice) instead of silently recreating anything. It shows the drift between the file and what the VMs report ([states](#states-of-a-vm)). Replacing a VM is a destroy and a create, announced as such.
 - **Destroy** a topology lists the tagged resources, asks whether to expunge (CloudStack's own choice) and whether to delete the data disks, and deletes nothing untagged. It is never offered on a resource created by hand.
 
@@ -183,8 +200,8 @@ Every resource created by the page carries [CloudStack resource tags](#to-verify
 
 | Key | Value |
 | --- | --- |
-| `easy-cs-ai.topology` | The name of the topology (a string of the shape of a [VM name](spec-config.md#several-vms)) |
-| `easy-cs-ai.vm` | The name of the VM in the configuration, on the VM, its volumes and its rules |
+| `easy-cs-ai.topology` | The name of the topology (a string of the shape of a [VM name](spec-config.md#vms)) |
+| `easy-cs-ai.vm` | The name of the VM in the configuration, on the VM, its volumes and its rules. A VM of a topology always has a name: a lone VM left unnamed by a file (which the format allows) is named by the page when it imports the file (the session names its VMs, and a topology of several VMs needs them) |
 | `easy-cs-ai.version` | The version of the package the scripts pin |
 
 A resource without the topology tag is not part of it. Tag values are short and hold **no secret and no configuration**. A user may remove a tag by hand: that removes the resource from the topology, which is shown (the VM then appears as *not found* where it was expected), never guessed back.
@@ -231,7 +248,7 @@ CloudStack tells **what the hypervisor sees**. Only the VM knows whether the eng
 | Resources against the plan | vCPU, RAM, disk in use against what the VM has, and **against what `plan` recommended for its models**: the page flags a VM whose RAM or disk use approaches the limit; the figures are the CloudStack ones, the recommendation is the capability's, and the margin is described as an estimate | CloudStack and `plan` |
 | Certificate | The names it covers and its expiry (a self-signed certificate does not expire the same way as Let's Encrypt) | Status document |
 
-**Per model** (a table across the VMs, each model with its [place](spec-config.md#where-a-model-goes)):
+**Per model** (a table across the VMs, each model with its [place](spec-config.md#models)):
 
 | Column | Meaning |
 | --- | --- |
@@ -241,13 +258,13 @@ CloudStack tells **what the hypervisor sees**. Only the VM knows whether the eng
 | Requests | Count over 5 minutes, 1 hour, 24 hours |
 | Errors | Share of requests that were not answered successfully over the same windows |
 | Latency | Typical and slow (median and 95th) over the last hour, when the proxy records it |
-| Reached from | The chat-interface VMs whose [link](#links-state) lists it |
+| Shown in | The chat interfaces (and their VMs) of the `links` of the model, each with the state of its [link](#links-state) |
 
 "**Never used**" and "**idle for a long time**" are what lets an administrator see that a costly GPU VM serves nothing. The thresholds are options of the page with these defaults, not rules of the project.
 
 #### Links state
 
-Each [link](spec-config.md#links) of the configuration is shown as `web → engine` with one of: **to do** (the `web_vm` reports no endpoint for the models of the `engine_vm`: the [step 4](spec-multi-vm.md#next-steps) is not done), **done** (the endpoint is in place), **broken** (it is in place but the `engine_vm` is not reachable from the `web_vm`, or the model list is empty). Each *to do* carries its checklist from the [next steps](spec-multi-vm.md#next-steps). Until a link is done, the model list of the chat interface is empty, which the page says in plain words.
+A **link** is an entry of the `links` of the configuration ([spec: config](spec-config.md#links)): a model shown in a chat interface. The page shows the links whose chat interface is on **another VM** than the model's engine (the same VM is the wiring of `add`, which needs no checklist). Each link is shown with the same direction as the screen that writes it, from the engine to the chat interface, `<model>` on `<engine VM>`, shown in `<chat-interface VM>` (one line per link, grouped by pair of VMs), with one of: **to do** (the chat interface reports no endpoint for the model: the [step 4](spec-multi-vm.md#next-steps) is not done), **done** (the endpoint is in place), **broken** (it is in place but the VM of the model's engine, the `vm_ref` of the `model` of the link, is not reachable from the VM of the chat interface, the `vm_ref` of its `chat_interface`, or the model list is empty). Each *to do* carries its checklist from the [next steps](spec-multi-vm.md#next-steps). Until a link is done, the model list of the chat interface is empty, which the page says in plain words.
 
 #### States of a VM
 
@@ -277,7 +294,7 @@ Proposed, to add to the proxy component and its contract (**not implemented**): 
 
 | Field | Content |
 | --- | --- |
-| `vm`, `generated_at`, `package_version` | Who and when; `vm` is the name in the configuration when the slice carried it, else the host name |
+| `vm`, `generated_at`, `package_version` | Who and when; `vm` is the name of the VM in the slice it received (the slice is a file of one VM), else the host name |
 | `components[]` | What `easy-cs-ai status --json` gives: name, type, version, `running`, `healthy` |
 | `models[]` | Per model: name, engine, `served`, and the **use** of the model: requests and errors over 5 minutes, 1 hour and 24 hours, the date of the last request, latency (median, 95th). Counted from the **proxy's access log**, per model location, so that no engine is modified and every engine is covered alike |
 | `endpoints[]` | For a chat interface, the endpoints it lists (name, model, URL), no key: it is what says a [link is done](#links-state) |

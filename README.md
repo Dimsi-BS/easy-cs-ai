@@ -164,7 +164,7 @@ Specified, not implemented: see [docs/spec-cloudstack](docs/spec-cloudstack.md).
 
 1. **Define a topology**: the VMs, what each one holds (components, options, models checked and sized with llmfit) and which VM reaches which engine. It is the same [configuration file](docs/spec-config.md) and the same [journey](docs/spec-journey.md) as the CLI, so a topology can be downloaded and run from a terminal, and a file loaded into the page.
 2. **Create the resources**: after a list of what will be created, the VMs (each one provisioned at first boot by its generated [post-install script](docs/spec-vm-generator.md)), their disks, network rules and tags. Only resources the page tagged are ever changed or destroyed.
-3. **Monitor what matters for a local AI**: whether each VM, engine and chat interface is up, which models are served, whether they are being used (in use, idle, never used; requests, errors, latency), whether a link between VMs is still to do, and whether a VM is big enough for its models. The VMs themselves stay visible in the other CloudStack pages.
+3. **Monitor what matters for a local AI**: whether each VM, engine and chat interface is up, which models are served, whether they are being used (in use, idle, never used; requests, errors, latency), whether the link between VMs of a model is still to do, and whether a VM is big enough for its models. The VMs themselves stay visible in the other CloudStack pages.
 
 There is no server to install: the core of the logic is written once in Rust, built for Linux (the CLI) and for WebAssembly (the page), and what has to be stored (a group of VMs and its configuration) is stored in CloudStack. The VMs are read through a read-only status document that the reverse proxy publishes (a proposed addition).
 
@@ -191,5 +191,5 @@ Planned work, in dependency order:
 | VM post-install | Script generator (`config edit`, `script`) | Written, unit-tested |
 | Package / CLI   | `component` and `exec` commands  | Written, unit-tested with fake components (`component` replaces the types as commands of the root) |
 | VM post-install | Engine and web interfaces on several VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [several-VM scenario](tests/integration/README.md#the-scenario-of-several-vms-multi-vmsh) is written |
-| CloudStack      | Topology page (define, create, monitor) | Specified ([docs/spec-cloudstack](docs/spec-cloudstack.md)), not started; depends on the `links` and the editor of [several VMs](docs/spec-multi-vm.md) (proposed) |
+| CloudStack      | Topology page (define, create, monitor) | Specified ([docs/spec-cloudstack](docs/spec-cloudstack.md)), not started; depends on the models of the format of version 2 (a model names its engine and its chat interface) and the editor of [several VMs](docs/spec-multi-vm.md) (proposed) |
 | CloudStack      | Status document of the proxy (use of the models) | Specified, not started |
