@@ -105,7 +105,7 @@ Without `--json`, the problems and the plan in human form (the lines `apply --dr
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": false,
   "target": "fresh",
   "errors": [
@@ -147,6 +147,7 @@ Without `--json`, the problems and the plan in human form (the lines `apply --dr
 }
 ```
 
+- **`schema_version` 2.** The document of `config validate` (and so those of `script --json` and of `apply --dry-run --json`, which extend or reuse it) has **version 2**, because its form changed with the configuration format 2: `plan.vms[]` is always there and has `name`, the models of the plan carry no chat interface, `plan.links` is new, the errors and warnings carry `vm_ref` instead of `vm`, the resolved references have new fields. The other documents of this spec (`catalog`, `host`, `config schema`, the result of the changing commands) did not change form and **stay at version 1**: a reader checks the version of the document it reads, not a version of the CLI. The rule is that of [spec: state format](spec-state-format.md#versioning-and-evolution) (bump on a renamed or removed field, not on an added one).
 - `errors` lists **every** problem at once, each with its JSON `path` (the same paths as today), a stable `code` and the `message` (the text the human form prints). `plan` is `null` when there is an error: nothing is planned from a file that is not valid.
 - `warnings` are the `warn` entries of `describe` whose condition holds for the **effective** value (a default included), as in the summary of a session, so that they can be shown to the user before anything is applied. They do not change the exit code. A warning may also come from the validation itself, and then carries a `code` (`engine_address_unknown`, see [spec: several VMs](spec-multi-vm.md#validation), and `models_not_checked`, see [spec: model fit](spec-model-fit.md#llmfit-is-optional), which the validation builds and the session shows) in place of `option` and `value`; it carries the `vm_ref` too.
 - `plan.components` is in install order, with the options as written in the file, a secret shown as its source; when the target is `this`, each entry also says whether it is already installed (`"installed": true | false`, absent for `fresh`); whether an installed one is left alone or reconfigured is the script's own [idempotence](spec-script-contract.md#idempotence), which the CLI does not compare. The order is the install order of `apply`: a component comes after the ones it requires, otherwise in the order of the file. `plan.vms[].models` is **a flat list** of the models of the VM, taken from the `models` of its engines, each with its engine as resolved (`engine`, `{ "vm_ref", "component_ref", "component" }`; the links are in `plan.links`): it is an output document, the file holds each model inside its engine and the links apart.
