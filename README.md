@@ -160,7 +160,7 @@ A generator, run interactively by an administrator, produces the VM post-install
 
 ### Apache CloudStack integration
 
-Specified, not implemented: see [docs/spec-cloudstack](docs/spec-cloudstack.md). A new page in the CloudStack UI gives the features of the project from inside Apache CloudStack, for a local AI spread over several VMs (for instance a `web` VM and an `engine` VM):
+Specified, not implemented: see [docs/spec-cloudstack](docs/spec-cloudstack.md). A new section of the CloudStack UI, to be contributed to [apache/cloudstack](https://github.com/apache/cloudstack) (not an iframe plugin), gives the features of the project from inside Apache CloudStack, for a local AI spread over several VMs (for instance a `web` VM and an `engine` VM):
 
 1. **Define a topology**: the VMs, what each one holds (components, options, models checked and sized with llmfit) and which VM reaches which engine. It is the same [configuration file](docs/spec-config.md) and the same [journey](docs/spec-journey.md) as the CLI, so a topology can be downloaded and run from a terminal, and a file loaded into the page.
 2. **Create the resources**: after a list of what will be created, the VMs (each one provisioned at first boot by its generated [post-install script](docs/spec-vm-generator.md)), their disks, network rules and tags. Only resources the page tagged are ever changed or destroyed.

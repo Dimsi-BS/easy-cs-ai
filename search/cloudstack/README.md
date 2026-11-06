@@ -18,7 +18,7 @@ Research done on **2026-11-06**, from the CloudStack documentation (`latest`, wh
 
 | Premise of the spec | Found |
 | --- | --- |
-| A UI plugin mechanism may exist | **Yes, a simple one**: `plugins` in the UI's `config.json` shows an HTML page or any URL in an **iframe**, no rebuild. No postMessage, no session handed over; what the iframe can read of the user's session is unconfirmed. A real Vue page needs a build of the UI (a fork-like change) |
+| A UI plugin mechanism may exist | **Decision: not used.** The page is a native section contributed to `apache/cloudstack` (an iframe needs a web server to host the page). What exists: `plugins` in the UI's `config.json` shows an HTML page or any URL in an **iframe**, no rebuild. No postMessage, no session handed over; what the iframe can read of the user's session is unconfirmed. A real Vue page needs a build of the UI (a fork-like change) |
 | Tags to mark the resources | **Yes**, `createTags`, on VMs, volumes, networks, security groups, firewall and port-forwarding rules, public IPs, and more. Service offerings and NICs are not taggable. Key and value limits **not confirmed** |
 | The size limit of the user-data is 32 KB | **After base64**, so about **24 KB of script**, not 32. Over HTTP GET only a few KB pass: the page needs POST |
 | A stored user-data could hold the configuration | `registerUserData` exists (4.18), and **annotations** can be attached to a `USER_DATA`, a VM, an SSH key pair… Both are candidates; neither is tested |
