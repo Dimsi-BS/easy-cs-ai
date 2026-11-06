@@ -15,7 +15,9 @@ bats_require_minimum_version 1.5.0
 SHA=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 setup() {
-    GEN="${BATS_TEST_DIRNAME}/../../vm_script/generate.sh"
+    GEN="${BATS_TEST_DIRNAME}/../../vm_script/config.sh"
+    SCRIPT="${BATS_TEST_DIRNAME}/../../vm_script/script.sh"
+    LIBGEN="${BATS_TEST_DIRNAME}/../../vm_script/lib/generator.sh"
     CLI="${BATS_TEST_DIRNAME}/../../package/bin/easy-cs-ai"
     REAL="${BATS_TEST_DIRNAME}/../../install_scripts"
     PARITY="${BATS_TEST_DIRNAME}/parity"
@@ -107,6 +109,15 @@ summary_warnings() { grep -E '^    [^ ]+ --[a-z-]+=[^ ]*: ' <<<"$1" | sort -u ||
 
 # parity <catalog> <scenario> [<oracle>]: play tests/unit/parity/<catalog>/<scenario>.answers in
 # a session and compare it with the oracle, the .json of the same name unless another is given.
+# session_cfg <out>: `config edit` with the answers of stdin.txt, then the name of the file written
+# (and the confirmation when it exists already).
+session_cfg() {
+    { cat stdin.txt; echo "$1"; [[ ! -e "$1" ]] || echo y; } >stdin-cfg.txt
+    run --separate-stderr bash "$GEN" <stdin-cfg.txt
+    # a scenario padded with empty answers takes the default name of the question of the file
+    if [[ ! -e "$1" && -e easy-cs-ai.json ]]; then mv easy-cs-ai.json "$1"; fi
+}
+
 parity() {
     local dir="$PARITY/$1" scenario="$2" oracle plan session_err
     oracle="$dir/${3:-$2}.json"
@@ -120,7 +131,7 @@ parity() {
     plan="$output"
 
     # same configuration
-    run --separate-stderr bash "$GEN" --config-only --output session.json <stdin.txt
+    session_cfg session.json
     [ "$status" -eq 0 ]
     session_err="$stderr"
     diff -u <(canonical "$oracle") <(canonical session.json)
@@ -134,15 +145,17 @@ parity() {
     while IFS= read -r msg; do [[ "$session_err" == *"$msg"* ]]; done < <(jq -r '.warnings[] | select(.code != null and .vm == null) | .message' <<<"$plan")
 
     # same plan: the document of the generator on the oracle is the document of `config validate`
-    run --separate-stderr bash "$GEN" --config "$oracle" --json "${PKG[@]}" --output c.sh
+    run --separate-stderr bash "$SCRIPT" "$oracle" --json "${PKG[@]}" --output c.sh
     [ "$status" -eq 0 ]
     diff -u <(jq -S . <<<"$plan") <(jq -S 'del(.script)' <<<"$output")
 
     # same script: all of it but the date, and the configuration it embeds, which is compared
     # as a configuration (the order of the keys and the spelling of an option are not decisions)
-    run --separate-stderr bash "$GEN" "${PKG[@]}" --output session.sh <stdin.txt
+    session_cfg session.json
     [ "$status" -eq 0 ]
-    run --separate-stderr bash "$GEN" --config "$oracle" "${PKG[@]}" --output oracle.sh </dev/null
+    run --separate-stderr bash "$SCRIPT" session.json "${PKG[@]}" --output session.sh
+    [ "$status" -eq 0 ]
+    run --separate-stderr bash "$SCRIPT" "$oracle" "${PKG[@]}" --output oracle.sh </dev/null
     [ "$status" -eq 0 ]
     diff -u <(bare oracle.sh) <(bare session.sh)
     embedded oracle.sh >oracle-embedded.json
@@ -165,7 +178,7 @@ parity_vms() {
     plan="$output"
 
     # same configuration
-    run --separate-stderr bash "$GEN" --config-only --output session.json <stdin.txt
+    session_cfg session.json
     [ "$status" -eq 0 ]
     session_err="$stderr"
     diff -u <(canonical "$oracle") <(canonical session.json)
@@ -174,14 +187,16 @@ parity_vms() {
     [ "$(sed -n 's/^  models: //p' <<<"$session_err" | head -n 1)" = "$(jq -r '[.plan.vms[0].models[].name] | if length == 0 then "none" else join(", ") end' <<<"$plan")" ]
 
     # same plan
-    run --separate-stderr bash "$GEN" --config "$oracle" --json "${PKG[@]}" --output c.sh
+    run --separate-stderr bash "$SCRIPT" "$oracle" --json "${PKG[@]}" --output c.sh
     [ "$status" -eq 0 ]
     diff -u <(jq -S . <<<"$plan") <(jq -S 'del(.script, .scripts)' <<<"$output")
 
     # same scripts, one per VM
-    run --separate-stderr bash "$GEN" "${PKG[@]}" --output session.sh <stdin.txt
+    session_cfg session.json
     [ "$status" -eq 0 ]
-    run --separate-stderr bash "$GEN" --config "$oracle" "${PKG[@]}" --output oracle.sh </dev/null
+    run --separate-stderr bash "$SCRIPT" session.json "${PKG[@]}" --output session.sh
+    [ "$status" -eq 0 ]
+    run --separate-stderr bash "$SCRIPT" "$oracle" "${PKG[@]}" --output oracle.sh </dev/null
     [ "$status" -eq 0 ]
     for vm in $(jq -r '.plan.vms[].vm' <<<"$plan"); do
         diff -u <(bare "oracle-$vm.sh") <(bare "session-$vm.sh")
@@ -261,7 +276,7 @@ every_option_is_asked() {
         selection="$(jq -r --arg t "$type" --arg n "$name" '. as $c | $c.types[]
             | select(. as $x | $c.components | any(.type == $x)) | if . == $t then $n else "none" end' <<<"$catalog")"
         { printf '%s\n' "$selection"; printf '\n%.0s' {1..200}; } >stdin.txt
-        run --separate-stderr bash "$GEN" --config-only --output cfg.json <stdin.txt
+        session_cfg cfg.json
         [ "$status" -eq 0 ]
         [ -s cfg.json ]
         while IFS=$'\t' read -r opt secret; do
@@ -295,8 +310,10 @@ every_option_is_asked() {
     [[ "$(jq -r '.errors[0].message' <<<"$output")" == *proxy* ]]
     [ "$(jq -r '.plan' <<<"$output")" = null ]
     # the session proposes it, and what it writes is then valid
-    answers_of "$PARITY/fake/stack.answers" | sed '2,3s/.*/none/' >stdin.txt
-    run --separate-stderr bash "$GEN" --config-only --output session.json <stdin.txt
+    # no engine: the answers stop at the confirmation and the question of another VM, and the next one is
+    # the file written, which session_cfg adds
+    answers_of "$PARITY/fake/stack.answers" | sed '2,3s/.*/none/' | head -n 8 >stdin.txt
+    session_cfg session.json
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"chat requires proxy: add proxy prox?"* ]]
     run --separate-stderr bash "$CLI" config validate session.json --target fresh --json
@@ -315,7 +332,7 @@ every_option_is_asked() {
     done < <(grep -oE 'easy-cs-ai [a-z][a-z-]*' "$REAL/guide.txt" | cut -d' ' -f2 | sort -u)
     # `--option`: it appears in a script of the project
     while read -r flag; do
-        grep -rqF -e "$flag" "$CLI" "$REAL/lib" "$REAL/provisioning" "$GEN" || { echo "the guide names the option '$flag', which no script knows" >&2; false; }
+        grep -rqF -e "$flag" "$CLI" "$REAL/lib" "$REAL/provisioning" "$GEN" "$SCRIPT" "$LIBGEN" || { echo "the guide names the option '$flag', which no script knows" >&2; false; }
     done < <(grep -oE -- '--[a-z][a-z-]*' "$REAL/guide.txt" | sort -u)
 }
 

@@ -2,7 +2,7 @@
 
 This project is a toolbox that wraps the best open-source AI tools available out there.
 
-> **Status: early development.** Ollama, llmfit, nginx (self-signed certificate) and LibreChat install, run and uninstall on an Ubuntu 24.04 VM (see [tests](tests/README.md#integration-tests-on-a-vm)), through the CLI (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `generate`) and the VM script generator. vLLM and AnythingLLM are not integrated yet, Debian, a GPU, and the `provided` and Let's Encrypt certificates are untested, and the `.deb`/`.rpm` release workflow has not been run yet. See [Roadmap](#roadmap) for what's built vs. planned.
+> **Status: early development.** Ollama, llmfit, nginx (self-signed certificate) and LibreChat install, run and uninstall on an Ubuntu 24.04 VM (see [tests](tests/README.md#integration-tests-on-a-vm)), through the CLI (`status`, `install`, `uninstall`, `add`, `remove`, `apply`, `config edit`, `script`) and the VM script generator. vLLM and AnythingLLM are not integrated yet, Debian, a GPU, and the `provided` and Let's Encrypt certificates are untested, and the `.deb`/`.rpm` release workflow has not been run yet. See [Roadmap](#roadmap) for what's built vs. planned.
 
 Built on [Ollama](https://ollama.com), [LibreChat](https://www.librechat.ai), [llmfit](https://github.com/AlexsJones/llmfit) and [nginx](https://nginx.org), with [FerretDB](https://www.ferretdb.com) on [PostgreSQL](https://www.postgresql.org) for LibreChat's data, run by [Docker](https://www.docker.com). [jq](https://jqlang.org) is a dependency of the CLI; it is packaged with [nfpm](https://nfpm.goreleaser.com) and tested with [bats](https://github.com/bats-core/bats-core) and [ShellCheck](https://www.shellcheck.net). This project only wraps existing open-source tools, each installed from its own source and kept under its own licence; more are credited here as they are integrated.
 
@@ -55,7 +55,7 @@ curl -k -H "Authorization: Bearer $KEY" "https://$(hostname)/ollama-llama3.2-3b/
 
 **4. Remove everything**: `sudo easy-cs-ai uninstall --all` (add `--purge` to delete the data too: models, databases, accounts).
 
-For a fleet of VMs, `easy-cs-ai generate` asks a few questions and writes a post-install script that installs the package and the chosen stack on a new VM (`--config-only` writes the [configuration file](docs/spec-config.md) alone). **Specified, not implemented yet**: `generate` is to be split in two commands, `easy-cs-ai config edit` (creates or edits the configuration, interactive) and `easy-cs-ai script <file>` (generates the scripts from it, no prompt), see [spec: CLI](docs/spec-cli.md#the-former-generate). All commands are in [docs/cli-commands](docs/cli-commands.md).
+For a fleet of VMs, `easy-cs-ai config edit` asks a few questions and writes the [configuration file](docs/spec-config.md), and `easy-cs-ai script <file>` turns it into a post-install script that installs the package and the chosen stack on a new VM. All commands are in [docs/cli-commands](docs/cli-commands.md).
 
 An AI agent with a shell can drive all of this for you: `easy-cs-ai guide` tells it how, `easy-cs-ai catalog --json`, `host --json` and `config validate <file> --json` give it what it needs, and `--json` always means one JSON document on stdout for programs, the human output otherwise (see [the journey](docs/spec-journey.md) and [renderings](docs/spec-rendering.md)).
 
@@ -74,8 +74,8 @@ graph TD
     end
     subgraph L2["Layer 2: Package / CLI"]
         PKG["easy-cs-ai CLI\n(tarball / deb / rpm)"] --> IS
-        PKG --> Extra["Extra commands:\nstatus / install / add model / apply / generate"]
-        Extra -.generate.-> VM
+        PKG --> Extra["Extra commands:\nstatus / install / add model / apply / config edit / script"]
+        Extra -.script.-> VM
     end
     subgraph L1["Layer 1: Install Scripts"]
         IS["Install Scripts"]
@@ -149,7 +149,7 @@ Extra commands :
 - `exec`, the component's own program (`ollama`, `nginx`, `docker compose`…) run against the instance easy-cs-ai installed, with the variables and the Compose file of the installation (`exec engine ollama ps`): an expert command, outside the state and the journal
 - `add`, adding a new model in an inference engine, wrapping it with the reverse proxy if needed and adding it to the chat interface website
 - `apply`, interpreting a [configuration file](docs/spec-config.md) (components, options, models) to make the machine match it
-- `generate`, the interactive generator of the layer 3 (VM post-install) script; `generate --config-only` writes the configuration file only (to be split into `config edit` and `script`, see [spec: CLI](docs/spec-cli.md#the-former-generate))
+- `config edit`, the interactive session that creates or edits the configuration file; `script <file>`, which generates the layer 3 (VM post-install) scripts from it, with no prompt
 - `catalog`, `host`, `config schema`, `config validate` and `guide`, read-only commands that let an AI agent (or any program) discover what can be installed, what the machine is, what a configuration must look like and whether one is valid; with `--json`, one JSON document on stdout
 
 See [docs/cli-commands](docs/cli-commands.md) for the full command reference and [docs/decision-packaging](docs/decision-packaging.md) for the packaging choices.
@@ -181,10 +181,10 @@ Planned work, in dependency order:
 | Package / CLI   | `install` command                | Written, unit-tested |
 | Package / CLI   | `add` / `remove` model commands  | Written, unit-tested with fake components |
 | Package / CLI   | `apply` command                  | Written, unit-tested with fake components |
-| Package / CLI   | `generate` command               | Written (hands over to the generator) |
+| Package / CLI   | `config edit` and `script` commands | Written (hand over to the generator) |
 | Package / CLI   | `component` and `exec` commands  | Written, unit-tested with fake components (`component` replaces the types as commands of the root) |
 | VM post-install | Engine and web interfaces on several VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [several-VM scenario](tests/integration/README.md#the-scenario-of-several-vms-multi-vmsh) is written |
 | VM post-install | Post-install script              | Written (emitted by the generator), unit-tested |
-| VM post-install | Script generator (`generate`)    | Written, unit-tested |
+| VM post-install | Script generator (`config edit`, `script`) | Written, unit-tested |
 | Package / CLI   | `component` and `exec` commands  | Written, unit-tested with fake components (`component` replaces the types as commands of the root) |
 | VM post-install | Engine and web interfaces on several VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [several-VM scenario](tests/integration/README.md#the-scenario-of-several-vms-multi-vmsh) is written |

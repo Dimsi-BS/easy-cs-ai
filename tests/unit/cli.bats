@@ -106,7 +106,7 @@ has() { [[ "$1" == *"$2"* ]]; }
 @test "every general command of the table is in the tree" {
     local c
     help_tree ascii
-    for c in status install uninstall add remove apply generate component exec guide catalog host config help version; do
+    for c in status install uninstall add remove apply script component exec guide catalog host config help version; do
         has "$output" $'\n'"+-  $c" || has "$output" $'\n'"\`-  $c" || { echo "missing: $c"; false; }
     done
 }

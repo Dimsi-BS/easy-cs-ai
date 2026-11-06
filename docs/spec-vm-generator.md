@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). What concerns several VMs (one script per VM, the `VM:` header line, the next steps, the per-VM `--json` documents) is **implemented** (`vm_script/generate.sh`, `tests/unit/generate_vm.bats`), see [spec: several VMs](spec-multi-vm.md); one VM behaves as described. **Proposed, not implemented**: the generator as a **creator and editor of the configuration** (any number of VMs, roles, links, see [spec: several VMs](spec-multi-vm.md)), and its **split into two commands**, `config` (the session, which writes the configuration) and `script` (which generates the scripts from it, with no prompt). The code still has the single `generate` command: where this spec says `config` and `script`, read `generate --config-only` / `generate --edit` and `generate --config`.
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). What concerns several VMs (one script per VM, the `VM:` header line, the next steps, the per-VM `--json` documents) is **implemented** (`vm_script/lib/generator.sh`, `tests/unit/generator_vm.bats`), see [spec: several VMs](spec-multi-vm.md); one VM behaves as described. The split into two commands, `config edit` (the session, which writes the configuration) and `script` (which generates the scripts from it, with no prompt) is **implemented** (`vm_script/config.sh`, `vm_script/script.sh`, `vm_script/lib/generator.sh`; tests `config_edit.bats`, `generator.bats`, `generator_vm.bats`, `parity.bats`). **Proposed, not implemented**: the generator as a **creator and editor of the configuration** with any number of VMs, roles and links (see [spec: several VMs](spec-multi-vm.md)).
 
 ## Purpose
 

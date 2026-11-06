@@ -28,7 +28,7 @@ tests/integration/vm.sh create | start | stop | status | ssh [command] | run <co
 | `create` | downloads the Ubuntu 24.04 cloud image (checked against the published SHA256SUMS, cached), makes a NAT network of its own and the VM `ecsai-test` (4 vCPU, 6 GB, 40 GB), waits for SSH |
 | `start`, `stop`, `status` | power and address |
 | `ssh [command]` | a shell on the VM as `tester` (passwordless sudo); commands as arguments or on stdin |
-| `run <config> [--vm <name>]` | builds the package from **this working tree**, generates the VM script from the configuration with `easy-cs-ai generate`, serves the package to the VM over HTTP, runs the script as root, prints its log lines and exits with its exit code. A configuration that names several VMs gives one script per VM: `--vm` says which one this VM runs |
+| `run <config> [--vm <name>]` | builds the package from **this working tree**, generates the VM script from the configuration with `easy-cs-ai script`, serves the package to the VM over HTTP, runs the script as root, prints its log lines and exits with its exit code. A configuration that names several VMs gives one script per VM: `--vm` says which one this VM runs |
 | `destroy [--all \| --net]` | removes the VM, its disk and its network (a network shared through `ECSAI_VM_NETWORK` stays, unless `--net`); `--all` also removes the image cache |
 
 `run` removes the installed package in the VM first: the generated script skips the download when the pinned version is installed, and the code that runs must be the one you just edited. The components installed by an earlier run stay, so a second `run` is also a test of the re-run.

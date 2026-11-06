@@ -100,7 +100,7 @@ check "the checksum matches" bash -c "cd '$DIST' && sha256sum -c '$TARBALL.sha25
 
 mkdir "$WORK/x" && tar xzf "$DIST/$TARBALL" -C "$WORK/x"
 TREE="$WORK/x/easy-cs-ai-$VERSION"
-check "the tarball holds the CLI and the scripts tree" test -x "$TREE/bin/easy-cs-ai" -a -f "$TREE/lib/easy-cs-ai/vm_script/generate.sh" -a -f "$TREE/lib/easy-cs-ai/ranks.conf"
+check "the tarball holds the CLI and the scripts tree" test -x "$TREE/bin/easy-cs-ai" -a -f "$TREE/lib/easy-cs-ai/vm_script/script.sh" -a -f "$TREE/lib/easy-cs-ai/vm_script/config.sh" -a -f "$TREE/lib/easy-cs-ai/ranks.conf"
 check "no documentation is shipped" bash -c "! find '$TREE' -name '*.md' | grep -q ."
 check "no CRLF in the shipped files" bash -c "! grep -rlI \$'\\r' '$TREE' | grep -q ."
 expect "the extracted CLI reports the version" "$VERSION" "$("$TREE/bin/easy-cs-ai" --version 2>/dev/null)"
@@ -155,7 +155,7 @@ if "$PRE/package/build.sh" --output "$PRE/dist" >/dev/null 2>&1 && "$PRE/package
     fi
     echo '{"schema_version":1,"components":[{"type":"engine","name":"ollama"}]}' >"$PRE/config.json"
     for f in deb:easy-cs-ai_${PREV}_all.deb rpm:easy-cs-ai-$PREV-1.noarch.rpm; do
-        EASY_CS_AI_CLI_VERSION="$PREV" bash "$PRE/vm_script/generate.sh" --config "$PRE/config.json" --package-format "${f%%:*}" \
+        EASY_CS_AI_CLI_VERSION="$PREV" bash "$PRE/vm_script/script.sh" "$PRE/config.json" --package-format "${f%%:*}" \
             --package-version "$PREV" --package-file "$PRE/dist/${f#*:}" --output "$PRE/vm-${f%%:*}.sh" >/dev/null 2>&1
         check "the script generated for the ${f%%:*} downloads ${f#*:} from the release of the tag" \
             grep -q "releases/download/v$PREV/${f#*:}" "$PRE/vm-${f%%:*}.sh"
@@ -179,7 +179,7 @@ easy-cs-ai --version
 ecsai --version
 easy-cs-ai status
 echo '{"schema_version":1,"components":[{"type":"engine","name":"ollama","default":true}]}' >/tmp/config.json
-easy-cs-ai generate --config /tmp/config.json --package-file "/pkgs/$pkg" --package-format $format --output /tmp/vm.sh
+easy-cs-ai script /tmp/config.json --package-file "/pkgs/$pkg" --package-format $format --output /tmp/vm.sh
 bash -n /tmp/vm.sh
 grep -q "\$(sha256sum "/pkgs/$pkg" | cut -d' ' -f1)" /tmp/vm.sh
 test -f /usr/lib/easy-cs-ai/engine/ollama.sh

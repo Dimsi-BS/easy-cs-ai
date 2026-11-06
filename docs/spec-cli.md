@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. **Proposed, not implemented**: the split of the former `generate` into `config edit` (creates or edits a configuration) and `script` (generates the scripts from a configuration), see [`config edit`](#config-edit-the-session) and [`script`](#script). Until it lands, the code still has `generate`; what concerns a configuration that names several VMs (`apply --vm`, one script per VM) is **implemented** under that name, see [spec: several VMs](spec-multi-vm.md); a file with no `vm` behaves as described.
+**Status:** accepted. **Implemented**: the split of the former `generate` into `config edit` (creates or edits a configuration) and `script` (generates the scripts from a configuration), see [`config edit`](#config-edit-the-session) and [`script`](#script). What concerns a configuration that names several VMs (`apply --vm`, one script per VM) is implemented, see [spec: several VMs](spec-multi-vm.md); a file with no `vm` behaves as described.
 
 ## Purpose
 
