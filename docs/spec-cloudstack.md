@@ -2,11 +2,11 @@
 
 [← Back to docs](README.md)
 
-**Status:** proposed, specification only. Nothing of this is written: no page, no service, no change to the scripts. It builds on specs that are themselves partly proposed (the [`links` and the editor of several VMs](spec-multi-vm.md)); what it needs from them is listed in [what it relies on](#what-it-relies-on). Every statement about Apache CloudStack itself (its API, its UI plugin mechanism, its limits) comes from memory of the documentation and **is to be verified** against the version targeted, see [to verify](#to-verify-on-cloudstack).
+**Status:** proposed, specification only. Nothing of this is written: no page, no service, no change to the scripts. **Decision:** the page is a **native section of the CloudStack UI, contributed to `apache/cloudstack`**, not a plugin loaded in an iframe (that would need a web server of its own to host the page, see [search/cloudstack](../search/cloudstack/ui-extension.md)); see [contributing to CloudStack](#contributing-to-cloudstack). It builds on specs that are themselves partly proposed (the [`links` and the editor of several VMs](spec-multi-vm.md)); what it needs from them is listed in [what it relies on](#what-it-relies-on). Every statement about Apache CloudStack itself (its API, its UI plugin mechanism, its limits) comes from memory of the documentation and **is to be verified** against the version targeted, see [to verify](#to-verify-on-cloudstack).
 
 ## Purpose
 
-An administrator of an Apache CloudStack cloud wants a **local AI** (an inference engine, a chat interface, a reverse proxy, models) running on VMs of that cloud, with no tool to learn beyond the CloudStack UI. This spec adds **one page to the CloudStack UI** that does, from inside CloudStack, what the project does from a terminal:
+An administrator of an Apache CloudStack cloud wants a **local AI** (an inference engine, a chat interface, a reverse proxy, models) running on VMs of that cloud, with no tool to learn beyond the CloudStack UI. This spec adds **one page to the CloudStack UI** (a native section of that UI, contributed upstream) that does, from inside CloudStack, what the project does from a terminal:
 
 1. **Define** a topology of VMs (for instance a `web` VM and an `engine` VM) and what each one holds: the [configuration](spec-config.md), with its [`vm` fields and `links`](spec-multi-vm.md).
 2. **Create** the CloudStack resources that topology needs (VMs, disk, network rules, key pair…), each VM provisioned at first boot by the [post-install script](spec-vm-generator.md) the generator produces for it.
@@ -23,7 +23,8 @@ The page is **a third rendering of the [journey](spec-journey.md)**, after the i
 3. **The user decides, CloudStack is the authority on resources.** Nothing is created, resized or deleted without the person having seen the list and confirmed ([rule 3 of the journey](spec-journey.md#rules)). What exists in CloudStack is read from CloudStack, never from a copy of the page.
 4. **Only what it created, and it marks it.** Every resource the page creates carries [tags](#tags); it lists, changes and deletes **only** tagged resources of the topology. A VM, a network or a volume that the user made by hand is never touched, even if it looks related.
 5. **No secret in what the page stores or sends.** The user-data of a VM is stored in the CloudStack database and readable from the VM, so no secret goes there ([contract](spec-script-contract.md#secrets)): the keys are generated on the VMs and stay there. What the page keeps is limited to the [monitoring key](#reading-the-vms).
-6. **Nothing the CloudStack permissions do not allow.** The page acts with the CloudStack session of the user, through the CloudStack API: a user who cannot deploy a VM cannot do it here. It adds no privilege.
+6. **Nothing the CloudStack permissions do not allow.** The page acts with the session of the user, through the API layer the UI already uses for every other page: a user who cannot deploy a VM cannot do it here. It adds no privilege and no authentication of its own towards CloudStack.
+7. **Written the way CloudStack's UI is written.** The section follows the conventions of `ui/` of `apache/cloudstack` (its structure, components, translations, tests, licence), because it is meant to be merged there and kept by that community: nothing in it is specific to this repository except the capabilities it calls.
 
 ## What it relies on
 
@@ -40,8 +41,8 @@ The page is **a third rendering of the [journey](spec-journey.md)**, after the i
 
 ```mermaid
 graph LR
-    User["Administrator\n(browser)"] --> Page["Page in the CloudStack UI\n(topology, create, monitor)"]
-    Page -->|"CloudStack API\n(user's session)"| CS["Apache CloudStack\nmanagement server"]
+    User["Administrator\n(browser)"] --> Page["Section of the CloudStack UI\n(topology, create, monitor)"]
+    Page -->|"CloudStack API\n(session of the UI)"| CS["Apache CloudStack\nmanagement server"]
     Page -->|"HTTP\n(JSON documents)"| Svc["easy-cs-ai service\n(capabilities + collector)"]
     CS --> VM1["VM engine\nproxy + engine"]
     CS --> VM2["VM web\nproxy + chat interface"]
@@ -53,15 +54,19 @@ Three pieces, each with one job:
 
 | Piece | Job | Does not |
 | --- | --- | --- |
-| **The page** | The screens: edit, confirm, create, watch. Calls CloudStack for resources and the service for everything about the AI | Hold any rule of the project; reach a VM itself |
+| **The page** (a section of the CloudStack UI) | The screens: edit, confirm, create, watch. Calls CloudStack for resources and the service for everything about the AI | Hold any rule of the project; reach a VM itself |
 | **CloudStack** (its API) | Own the resources: offerings, templates, networks, VMs, volumes, tags, metrics, jobs | Know anything about models |
 | **The service** | Run the **capabilities of the CLI** (`--json`, no root, nothing installed on the machine it runs on) for the page, and **collect the status** of the VMs of a topology | Create resources, nor keep more than [what it needs](#what-the-service-keeps) |
 
 ### The page
 
-A page of the CloudStack UI (a section of its own, in the navigation, next to the compute pages), reached by the users who may use it (their CloudStack role). It is added to the UI as a plugin, not by modifying CloudStack, see [to verify](#to-verify-on-cloudstack): if the UI has no such mechanism in the version targeted, the page is a separate web application opened from CloudStack with the same CloudStack API and session, and nothing below changes. Its three screens are the [topology](#screen-1-topology), the [creation](#screen-2-creation) and the [monitoring](#screen-3-monitoring). The page has a list of the topologies of the account first (found by their [tags](#tags)), with *new topology*, *import a file* and, for each one, *open*, *download the file*, *destroy*.
+A **section of the CloudStack UI**, with its own entry in the navigation next to the compute pages, written in the UI's own framework and built with it, reached by the users whose CloudStack role allows it. It is not a plugin and not an iframe: it uses the session, the API calls, the components, the notifications and the translations of the UI, and looks like its other pages. It lives in `apache/cloudstack` (see [contributing](#contributing-to-cloudstack)), not in this repository. Its three screens are the [topology](#screen-1-topology), the [creation](#screen-2-creation) and the [monitoring](#screen-3-monitoring). The page has a list of the topologies of the account first (found by their [tags](#tags)), with *new topology*, *import a file* and, for each one, *open*, *download the file*, *destroy*.
+
+The section appears only when the cloud has a **service configured** (an entry of the UI configuration, name to settle with the CloudStack community): without it the page has nothing to call for the AI side and the menu entry is not shown. A cloud that does not use the project is unchanged.
 
 ### The service
+
+> **Not decided: where the capabilities run.** A separate service is one of four ways to give the page the capabilities of the CLI, and the one that costs the user a component to host. The others are to run them **in the browser**, or to **embed `easy-cs-ai` in CloudStack**, through its extensions framework or a backend plugin. They are compared in [search/cloudstack: architecture](../search/cloudstack/architecture.md), with the experiments that decide between them. Everything below (the calls, what the service keeps, the collection) describes **the capabilities and what they must give**, whoever runs them; only the words "service" and "HTTP" are specific to the external-server option, and the [reach of the VMs](../search/cloudstack/architecture.md#who-can-reach-the-vms) depends on where they run.
 
 The CLI is a program for a machine, not for a browser, and the capabilities are what the page needs: they already answer in JSON. The service is the **thinnest possible wrapper** of them over HTTP, so that the page can call them:
 
@@ -78,7 +83,7 @@ The CLI is a program for a machine, not for a browser, and the capabilities are 
 - **The documents are passed through as they are.** The service adds no field, no rule and no text to them: a document that the CLI changes reaches the page changed. `guide.txt` is not involved (it is for a model that drives the CLI).
 - **It runs the same package as the VMs.** Its version is the one the generated scripts pin (see [package source](spec-vm-generator.md#package-source)), so the page never proposes what a VM cannot install.
 - **It needs no root and changes no machine**, as the generator: capabilities that only read or compute. `provisioning llmfit` must be installed where it runs for sizing to work, otherwise the page says the recommendation is not available, as the session does (see [llmfit is optional](spec-model-fit.md#llmfit-is-optional)).
-- **Where it runs** is an operator's choice (the host of the management server, or any machine that the UI can reach and that can reach the VMs for the [collection](#reading-the-vms)). Authentication of the page to the service is the [first open question](#open-questions).
+- **Where it runs** is an operator's choice (the host of the management server, or any machine that the browser can reach and that can reach the VMs for the [collection](#reading-the-vms)); its address is the one setting of the UI configuration above. Since the page is hosted by CloudStack and the service is not, the browser calls a **second origin**: the cross-origin rules (and the authentication of the calls, see the [first open question](#open-questions)) are part of the design, not an afterthought.
 
 #### What the service keeps
 
@@ -87,6 +92,23 @@ As little as possible, and nothing that CloudStack already has:
 - **Nothing about the topology.** The configuration is passed with each call. See [where a topology lives](#where-a-topology-lives).
 - **The monitoring keys** of the topologies, needed to read the VMs (see [reading the VMs](#reading-the-vms)), and the certificate that each VM's proxy presents (public). Nothing else is persisted, in particular no history of the status.
 - Secrets are never in logs, as everywhere in the project.
+
+## Contributing to CloudStack
+
+The page is built **in the repository of Apache CloudStack** and proposed there, so that it ships with the UI. This splits the work between two repositories:
+
+| Where | What lives there |
+| --- | --- |
+| **`apache/cloudstack`** (`ui/`) | The section: its routes and menu entry, the three screens, the calls to the CloudStack API, the calls to the service, the translations, the tests of the UI, and the documentation of the feature in the CloudStack docs |
+| **This repository** | The CLI and the capabilities the page shows, the **service** that exposes them over HTTP, the [status document](#the-status-document) of the proxy, the specs (this one included), and the tests of all of these |
+
+What this implies, to settle with the CloudStack community **before** writing the page:
+
+- **The community has to accept a section whose AI part depends on an external service** that is not part of CloudStack. The proposal is the one above: the section is shown only when the service is configured, and nothing else of CloudStack depends on it. If the community refuses an external dependency, the alternatives are a section limited to what CloudStack knows (resources and metrics, [without the AI side](#not-in-this-version)), the [extensions framework](../search/cloudstack/ui-extension.md#options) for actions on VMs, or the logic moved into CloudStack's Java server, which breaks [principle 1](#principles) and is not proposed.
+- **The process of the project is followed**, not invented here: a discussion and a proposal on its mailing list or issue tracker before a large change, a pull request against the main branch, the project's licence headers, and its release cycle (the section reaches a release when it is merged for it). Where those rules are written is in the project's contribution guide, to read first ([to verify](#to-verify-on-cloudstack)).
+- **The page is developed against a CloudStack that exists**: a development environment of the UI, pointed at a test management server, and a fork of the repository for the branch. Nothing here needs the project's own page to be installed on a production cloud before the merge.
+- **The version it targets** is the main branch at the time, and a release later. A cloud on an older version does not have the page; the service and the CLI work without it.
+- **The page stays thin** ([principle 1](#principles)): the less logic the section holds, the less there is to review, translate and maintain upstream, and the less it moves when a capability of this repository changes.
 
 ## Screen 1: topology
 
@@ -279,9 +301,9 @@ Proposed, to add to the proxy component and its contract (**not implemented**): 
 
 ## To verify on CloudStack
 
-To check, on the version targeted, before implementing; each is a premise, none is relied on as fact:
+The first reading of the documentation is in [search/cloudstack](../search/cloudstack/README.md) (2026-11-06, read and not tried): it confirms that a UI `plugins` entry shows a page in an iframe, that tags and registered user-data exist, and that the user-data limit counts **after base64** (about 24 KB of script, not 32 KB). The points below remain to check on a real instance of the version targeted; each is a premise, none is relied on as fact:
 
-- The **UI plugin mechanism**: whether the CloudStack UI can load an external page as a plugin, with access to the session and the API (otherwise a separate application, see [the page](#the-page)).
+- **How a section is added to the UI and what the contribution requires**: the structure of `ui/` (sections, router, components, translations, tests), the version of its framework, the contribution guide and the proposal process of the project, whether a section may depend on an external service, and what the community expects for a feature of this size. [search/cloudstack](../search/cloudstack/ui-extension.md) found the way to add a section (`src/config/section`, `src/config/router.js`) in the UI guide only.
 - **Resource tags** on VMs, volumes, networks and rules, their key and value limits, and that a tag on a rule or a network exists as needed.
 - **Stored user-data / annotations** as a place for the configuration ([where a topology lives](#where-a-topology-lives)): availability, size limits, permissions.
 - The **user-data size limit** (`vm.userdata.max.length`, default 32 KB per the [generator spec](spec-vm-generator.md#implementation-notes)) and how to read it from the API.
@@ -298,11 +320,14 @@ To check, on the version targeted, before implementing; each is a premise, none 
 - Tests of the **status document** (proxy, `EASY_CS_AI_ROOT` mode): fields, counts from a sample access log per model, no content of requests, a refresh by the timer with no daemon, the monitoring key accepted on the status path only and refused on a model path, the API key refused on the status path, the document absent for a VM with no proxy.
 - Tests of the **collection**: a self-signed certificate verified against the recorded one and refused when it changes; the states of a VM for each case of the [table](#states-of-a-vm); the use classes (`in use`, `idle`, `never used`) at their thresholds; no polling when no page is open; a failed read shown as such.
 - An **integration test** on a CloudStack (or its simulator): a topology of an engine VM and a web VM created from the page, scripts run at first boot, the links done by hand following the checklist, then the page showing `Ready`, the links `done` and the models as `in use` after a request, and `never used` before it.
+- The section **meets the conventions of `apache/cloudstack`**: it builds with the UI, passes its checks and tests, has its translations and its documentation, and is merged upstream; the work done in this repository is limited to the capabilities, the service and the proxy.
 - `docs/` and the README in step with the page's real behaviour.
 
 ## Open questions
 
-- **Authentication of the page to the service.** The service must accept only authenticated users of the CloudStack of the account: by checking the user's CloudStack session against the management server on each call, or by a token the page obtains from CloudStack. Both depend on the [UI plugin mechanism](#to-verify-on-cloudstack). Not specified.
+- **Where the capabilities run**: in the browser, on a service, or embedded in CloudStack ([extensions framework](../search/cloudstack/architecture.md#3a-the-extensions-framework-exists-new) or a [backend plugin](../search/cloudstack/architecture.md#3b-a-backend-plugin-in-cloudstack-would-be-contributed)). It decides what the user has to install, how the page authenticates, and from where the VMs are read. The first experiments are listed in [the research](../search/cloudstack/architecture.md#what-to-try-in-this-order).
+- **Authentication of the page to the service** (if there is one). The service must accept only authenticated users of the CloudStack of the account. The page has the user's session, but the service is another origin: either the service checks the session (or a signature of the user's keys) against the management server on each call, or CloudStack gives the page a short-lived token. The first needs the service to reach the management server and the session to be sent cross-origin; the second needs something CloudStack does not offer today. Not specified, and the first thing to settle with the community.
+- **The acceptance of an external service by the CloudStack community** ([contributing](#contributing-to-cloudstack)), and the alternatives if it is refused.
 - **Where the service runs and who owns it.** A component of the management server host, a VM of the cloud, or one per account. It decides who holds the monitoring keys and how they are protected.
 - **Where the configuration is saved** ([where a topology lives](#where-a-topology-lives)): depends on what CloudStack offers.
 - **The monitoring key** is a **second secret per proxy**, a change to the [contract](spec-script-contract.md#secrets) (`show-key` gains a name, or a second action) and to the proxy's [state and options](spec-state-format.md). An alternative that avoids a second key: the status document readable without a key but **only from the address of the service**, which a firewall rule of the topology allows; it trades the key for a network rule and is weaker if the network is shared.
