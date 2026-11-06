@@ -279,7 +279,7 @@ Proposed, to add to the proxy component and its contract (**not implemented**): 
 
 ## To verify on CloudStack
 
-To check, on the version targeted, before implementing; each is a premise, none is relied on as fact:
+The first reading of the documentation is in [search/cloudstack](../search/cloudstack/README.md) (2026-11-06, read and not tried): it confirms that a UI `plugins` entry shows a page in an iframe, that tags and registered user-data exist, and that the user-data limit counts **after base64** (about 24 KB of script, not 32 KB). The points below remain to check on a real instance of the version targeted; each is a premise, none is relied on as fact:
 
 - The **UI plugin mechanism**: whether the CloudStack UI can load an external page as a plugin, with access to the session and the API (otherwise a separate application, see [the page](#the-page)).
 - **Resource tags** on VMs, volumes, networks and rules, their key and value limits, and that a tag on a rule or a network exists as needed.

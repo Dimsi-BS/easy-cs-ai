@@ -23,5 +23,6 @@ See also: [docs](../docs/README.md) for the design decisions made from these fin
 | [LobeChat](lobechat.md) | Chat UI (candidate) | LobeHub Community License | Not OSI open source |
 | [LM Studio](lm-studio.md) | Inference engine | Closed source | Excluded |
 | [Jan](jan.md) | Inference engine | Apache 2.0 | Desktop, single-user |
+| [Apache CloudStack](cloudstack/README.md) | Target cloud (integration research) | Apache 2.0 | UI `plugins` iframe pages, user-data limit after base64, tags, metrics; read, not tried |
 
 Remaining: AnythingLLM `update-env` on a running instance; nginx certificate strategy (design decision, not a finding).
