@@ -46,7 +46,7 @@ Steps 2 to 4 may be revisited from the summary of step 5 (`c`, `o`, `m` in the s
 What can be installed, and what the target is.
 
 - **Capability**: [`catalog`](spec-capabilities.md#catalog) (what is shipped, with ranks and default models) and [`host`](spec-capabilities.md#host) (what this machine is).
-- **Session**: reads the catalog itself and shows the components shipped, with the rank 1 pre-selected. It plans for another machine by default (what is installed here is ignored, `--target fresh`). The first VM is built as a one-VM stack; after each VM it asks whether to add another one, and for each VM after the first a role (optional) and a name, see [spec: several VMs](spec-multi-vm.md#creating); the answers are the `vm` of each component.
+- **Session**: reads the catalog itself and shows the components shipped, with the rank 1 pre-selected. It plans for another machine by default (what is installed here is ignored, `--target fresh`). Every VM, the first included, starts with a role (optional) and a name; after each VM it asks whether to add another one, see [spec: several VMs](spec-multi-vm.md#creating); the answers are the `vm` of each component.
 - **Program**: reads `catalog --json`, and `host --json` when the stack is for this machine. For another machine it asks the user: `host` says nothing about it. It also asks the user which VMs the stack is made of, and gives the `vm` of each component and the `links` when it is several: every VM is linked to another.
 
 ### 2. Components and dependencies
@@ -58,7 +58,7 @@ What can be installed, and what the target is.
 
 ### 3. Options
 
-- **Session**: for each selected component, asks its `describe.options` in the order of the script, with the default and the description, validating before moving on. An option left at its default is not written. A secret is asked as a [source](spec-config.md#secrets).
+- **Session**: for each selected component, asks its `describe.options` in the order of the script, with the default and the description, validating before moving on. An option left at its default is not written. A secret is asked as a [source](spec-config.md#secrets). **Only the options that matter for the choices already made are asked**: an option that declares `relevant_when` ([script contract](spec-script-contract.md#describe)) is skipped when the value of the option it names is not one of the listed ones (nginx's `--tls-cert` is asked with `--tls provided`, `--tls-email` and `--tls-accept-terms` with `--tls letsencrypt`, none of them with the default `self-signed`), which removes about half of the questions of a default nginx. A skipped option is not written, and a value already in the file for it (a file edited, written by hand) is kept untouched, as the editor keeps what it does not show. A program is not concerned: it writes the options it wants and the validation judges them.
 - **Program**: drafts `options` from `config schema` and the catalog. A secret is never a value: `file`, `env` or `generate`, otherwise `secret_literal`. A secret known in advance is the user's to provide, through `env` or `file`.
 
 ### 4. Models
