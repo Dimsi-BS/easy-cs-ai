@@ -59,7 +59,7 @@ Procedure
     ...) and get a yes before going further.
  7. Produce, as the user chose:
       - a VM post-install script:
-          easy-cs-ai generate --config FILE --output SCRIPT [--package-version V ...]
+          easy-cs-ai script FILE --output SCRIPT [--package-version V ...]
         the user reviews it and runs it on the VM;
         with several VMs it writes one script per VM ("scripts") and gives
         "next_steps" per link (config validate too): what the user does by

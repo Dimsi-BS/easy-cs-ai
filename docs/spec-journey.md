@@ -13,7 +13,7 @@ There are two ways to walk it, and neither is "the AI interface":
 | | Interactive session | Programmatic |
 | --- | --- | --- |
 | Who | A person at a terminal | A program, or an AI agent working for a person |
-| How | Questions and answers (`generate`) | Arguments, a configuration file, `--json` (`catalog`, `host`, `config validate`, `generate --config`, `apply`…) |
+| How | Questions and answers (`config edit`) | Arguments, a configuration file, `--json` (`catalog`, `host`, `config validate`, `script`, `apply`…) |
 | Text of the instructions | The questions themselves | `easy-cs-ai guide`, which prints [`install_scripts/guide.txt`](../install_scripts/guide.txt) |
 | Produces | A [configuration](spec-config.md), then the script | The same configuration, then the same script |
 
@@ -36,10 +36,10 @@ Both call the same [capabilities](spec-capabilities.md), validate with the same 
 | 3 | The options of each component | `config schema` | `components[].options` |
 | 4 | The order, the models, on which engine and chat interface, and which VMs reach which engines | `provisioning llmfit suggest`, `check`, `plan` | `models[]`, and `links[]` (only for several VMs) |
 | 5 | Whether the plan and its warnings are acceptable | `config validate` | — |
-| 6 | A script to run on a VM, or a change on this machine | `generate`, `apply` | — |
+| 6 | A script to run on a VM, or a change on this machine | `script`, `apply` | — |
 | 7 | — (reported to the user) | the result document, `status` | — |
 
-Steps 2 to 4 may be revisited from the summary of step 5 (`c`, `o`, `m` in the session; `m` is offered only in a pass that has an engine, see [spec: several VMs](spec-multi-vm.md#in-the-session)); the dependency check always follows the components. A configuration that exists can be walked again from its summary with the editor (`generate --edit`, see [spec: several VMs](spec-multi-vm.md#editing)); a program edits the file and validates it again.
+Steps 2 to 4 may be revisited from the summary of step 5 (`c`, `o`, `m` in the session; `m` is offered only in a pass that has an engine, see [spec: several VMs](spec-multi-vm.md#in-the-session)); the dependency check always follows the components. A configuration that exists can be walked again from its summary with the editor (`config edit <file>`, see [spec: several VMs](spec-multi-vm.md#editing)); a program edits the file and validates it again.
 
 ### 1. Discover
 
@@ -84,7 +84,7 @@ Asked when an engine is selected (with several VMs, in **every pass that selecte
 
 Two outcomes, the user picks:
 
-- **A script** for a new VM: `generate` (session, or `--config <file>` without one), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. A configuration can also be kept with `generate --config-only`, and opened again with `--edit`, which regenerates the scripts when it saves. With several VMs there is one script per VM, and after them the [next steps](spec-multi-vm.md#next-steps) that the user still has to do by hand.
+- **A script** for a new VM: `script <file>`, from the configuration that steps 1 to 5 produced (`config edit`, a session; or a file written by a program), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. The configuration is opened again with `config edit <file>`; saving it does not regenerate the scripts, `script` does. With several VMs there is one script per VM, and after them the [next steps](spec-multi-vm.md#next-steps) that the user still has to do by hand.
 - **A change on this machine**: `sudo easy-cs-ai apply <file>`. It changes the machine, so a program does it only with the explicit agreement of the user.
 
 ### 7. Report
@@ -114,13 +114,13 @@ A change request falls into one of three places, and only that one needs touchin
 A change that adds a question but no field, or a rule inside a step, breaks rules 2 and 4 and is a sign it belongs elsewhere.
 ### Parity
 
-The two ways must give the same result for the same decisions. The test that guarantees it: a scenario played in the session (answers scripted on stdin) and the same decisions written as a configuration file, then `generate --config`, must give the **same configuration**, the **same plan** (`config validate --target fresh --json`) and the **same script**. A change made on one side only fails it.
+The two ways must give the same result for the same decisions. The test that guarantees it: a scenario played in the session (answers scripted on stdin) and the same decisions written as a configuration file, then `script`, must give the **same configuration**, the **same plan** (`config validate --target fresh --json`) and the **same script**. A change made on one side only fails it.
 
 The decisions of a scenario are written **by hand**, as a program would write them from `catalog --json` and `config schema`, and not produced by the session, otherwise the test would compare the session with itself. Two things are compared as decisions rather than as bytes: an option written `9999` or `"9999"` (values are strings, numbers or booleans, see [spec: config](spec-config.md#format)), and the order of the keys of the configuration. The test also holds that what the session shows is what the plan says (components in order, models, the warnings of the options), that a session asks a question for every option of every shipped component, and that the guide names only commands and options that exist. See [`tests/unit/parity.bats`](../tests/unit/parity.bats) and [its scenarios](../tests/unit/parity/README.md).
 
 ## Implementation status
 
-- **Session**: `vm_script/generate.sh` and `vm_script/lib/questions.sh`, reached through `easy-cs-ai generate`.
+- **Session**: `vm_script/config.sh` and `vm_script/lib/questions.sh`, reached through `easy-cs-ai config edit`; the scripts of step 6 are `vm_script/script.sh`, reached through `easy-cs-ai script`.
 - **Programmatic**: `install_scripts/lib/cli-ai.sh` (`catalog`, `host`, `config`, `guide`, the result documents) and `install_scripts/lib/cli-apply.sh` (the validation shared with the session).
 - **Guide**: its text is the single file `install_scripts/guide.txt`, shipped in the package (next to `ranks.conf`) and printed as it is by `guide`. It is written by hand for the final reader, so a change to a step updates this spec, the session and `guide.txt` together. `tests/unit/cli_ai.bats` checks that it names the commands and the two orders of the models step, not that it follows this spec.
 - **Parity test**: `tests/unit/parity.bats`, with the scenarios in `tests/unit/parity/` (a fake catalog and the shipped scripts). It does not cover an agent: it holds that the configuration the guide leads to is the one the session produces.

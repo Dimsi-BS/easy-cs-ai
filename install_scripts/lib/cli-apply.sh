@@ -371,7 +371,7 @@ apply_validate() {
 
 # apply_validate_models_need <config> <desc>: print what a model needs and the
 # file does not give (a proxy, a provisioning component, see spec-config.md), exit
-# 2 when any. `generate --config` refuses such a file before writing a script,
+# 2 when any. `script` refuses such a file before writing a script,
 # where `apply` leaves it to the model step and its exit 4.
 apply_validate_models_need() {
     local problems line

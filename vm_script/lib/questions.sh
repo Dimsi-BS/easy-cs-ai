@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Question engine of the VM script generator: an interactive session that ends
-# with a configuration (docs/spec-config.md). Sourced by generate.sh. Prompts
+# with a configuration (docs/spec-config.md). Sourced by lib/generator.sh. Prompts
 # and the summary go to stderr, answers come from stdin. Nothing is chosen
 # silently: a component is in the result only if it was picked or a proposed
 # dependency was accepted.
@@ -488,7 +488,7 @@ print_summary() {
 
 # The session is the journey walked once, or once per VM for a stack of any size
 # (docs/spec-multi-vm.md#in-the-session): a pass is the five steps over the types of a VM.
-# shellcheck disable=SC2034  # read by generate.sh
+# shellcheck disable=SC2034  # read by config.sh and script.sh
 SESSION_CONFIG=""
 PASS_CONFIG=""
 PASS_DONE='[]'    # the passes already confirmed: [{vm, config}], the one-VM configuration of each
@@ -786,12 +786,12 @@ run_session() {
 }
 
 # ======================================================================================
-# The editor: generate --edit <file>, docs/spec-multi-vm.md#editing. Opens an existing
+# The editor: config edit <file>, docs/spec-multi-vm.md#editing. Opens an existing
 # configuration, shows the summary of the whole thing and a letter menu, and keeps applying
 # commands to EDIT_CONFIG until the person writes (y) or leaves (q, cancel, end of input).
 # ======================================================================================
 
-# shellcheck disable=SC2034  # read and written by generate.sh's run_editor
+# shellcheck disable=SC2034  # read and written by run_editor of lib/generator.sh
 EDIT_CONFIG=""     # the configuration as it stands, updated by each command
 EDIT_ERRORS='[]'   # the errors of the last summary, see _editor_summary
 EDIT_WARNINGS='[]' # the warnings of the last summary

@@ -2,7 +2,7 @@
 
 bats_require_minimum_version 1.5.0
 
-# The editor, `generate --edit <file>` (docs/spec-multi-vm.md#editing): opening an existing
+# The editor, `config edit <file>` (docs/spec-multi-vm.md#editing): opening an existing
 # configuration in the session, the summary of the whole thing, and the a/e/m/l/n/r/f/y/q
 # commands.
 #
@@ -12,7 +12,8 @@ bats_require_minimum_version 1.5.0
 SHA=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 setup() {
-    GEN="${BATS_TEST_DIRNAME}/../../vm_script/generate.sh"
+    GEN="${BATS_TEST_DIRNAME}/../../vm_script/config.sh"
+    SCRIPT="${BATS_TEST_DIRNAME}/../../vm_script/script.sh"
     REAL="${BATS_TEST_DIRNAME}/../../install_scripts"
     export EASY_CS_AI_HOME="$BATS_TEST_TMPDIR/home"
     export EASY_CS_AI_ROOT="$BATS_TEST_TMPDIR/root"
@@ -38,20 +39,23 @@ jq -n '{name: "$2", type: "$1", component_version: "9.9", requires: $3, platform
 FAKE
 }
 
-gen() { run --separate-stderr bash "$GEN" "$@"; }
+gen() { run --separate-stderr bash "$SCRIPT" "$@"; }
+# cfg <args…>: the session, `config edit` with arguments.
+cfg() { run --separate-stderr bash "$GEN" "$@"; }
 _join_lines() {
     local a
     REPLY_LINES=""
     for a in "$@"; do REPLY_LINES+="$a"$'\n'; done
 }
-# edit <file> <answers…>: open <file> in the editor with one answer per line on stdin.
+# edit <file> <answers…>: open <file> in the editor with one answer per line on stdin. When the
+# last answer is y (write), an empty one follows: the default of the question of the file written.
 edit() {
     local file="$1"
     shift
-    _join_lines "$@"
+    if [[ "${!#}" == y ]]; then _join_lines "$@" ""; else _join_lines "$@"; fi
     ANSWERS="$REPLY_LINES"
     export ANSWERS GEN_FILE="$file"
-    run --separate-stderr bash -c 'bash "$0" --edit "$GEN_FILE" "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
+    run --separate-stderr bash -c 'bash "$0" "$GEN_FILE" "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
 }
 embedded() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1" | sed '1d;$d'; }
 
@@ -73,18 +77,21 @@ JSON
 
 # --- usage -----------------------------------------------------------------------------------
 
-@test "--edit is exclusive with --config and --config-only" {
-    gen --edit f.json --config f.json
+@test "config edit: --json and an unknown option are exit 2, a second file too" {
+    cfg --json
     [ "$status" -eq 2 ]
-    gen --edit f.json --config-only
+    cfg --bogus
+    [ "$status" -eq 2 ]
+    two_vm_file f.json
+    cfg f.json g.json
     [ "$status" -eq 2 ]
 }
 
-@test "--edit on a missing file, or a file that is not JSON, is exit 2" {
-    gen --edit nope.json
+@test "config edit on a missing file, or a file that is not JSON, is exit 2" {
+    cfg nope.json
     [ "$status" -eq 2 ]
     echo 'not json' >bad.json
-    gen --edit bad.json
+    cfg bad.json
     [ "$status" -eq 2 ]
 }
 
@@ -92,7 +99,7 @@ JSON
 
 @test "opening a valid file shows its VMs, components, models and links" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json q
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"VM engine"* && "$stderr" == *"VM web"* ]]
@@ -107,7 +114,7 @@ JSON
     two_vm_file f.json
     jq 'del(.links)' f.json >f.json.tmp && mv f.json.tmp f.json
     before="$(cat f.json)"
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json q
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"1. \$.components"*"unlinked_vm"* ]]
@@ -118,7 +125,7 @@ JSON
 @test "y refuses while an error stands" {
     two_vm_file f.json
     jq 'del(.links)' f.json >f.json.tmp && mv f.json.tmp f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json y q
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"nothing is written while an error stands"* ]]
@@ -127,21 +134,69 @@ JSON
 
 # --- y: write, atomically, regenerating the scripts --------------------------------------------
 
-@test "y with no change writes the configuration back and regenerates the scripts" {
+@test "y with no change writes the configuration back, no script, and names the command for them" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json y
     [ "$status" -eq 0 ]
-    [ -x f-engine.sh ] && [ -x f-web.sh ]
+    [ -z "$(ls f-*.sh easy-cs-ai-vm*.sh 2>/dev/null)" ]
     [ "$(jq -S . f.json)" = "$(two_vm_file /dev/stdout | jq -S .)" ]
-    [[ "$stderr" == *"Two scripts written, one per VM:"* ]]
-    [[ "$stderr" == *"What is left to do once the VMs are up:"* ]]
+    [[ "$stderr" == *"File to write (overwritten, or created if it does not exist) [f.json]:"* ]]
+    [[ "$stderr" == *"configuration written to f.json"* ]]
+    [[ "$stderr" == *"to generate the scripts: easy-cs-ai script f.json"* ]]
+}
+
+@test "the file written: another name makes a copy and leaves the file opened as it was" {
+    two_vm_file f.json
+    before="$(cat f.json)"
+    GEN_ARGS=()
+    edit f.json "n engine" engine2 y copy.json
+    [ "$status" -eq 0 ]
+    [ "$(cat f.json)" = "$before" ]
+    [ "$(jq -r '[.components[].vm] | unique | sort | join(",")' copy.json)" = "engine2,web" ]
+}
+
+@test "the file written: an existing file other than the one opened is confirmed, n asks again" {
+    two_vm_file f.json
+    echo '{"keep":1}' >other.json
+    GEN_ARGS=()
+    edit f.json y other.json n new.json
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"other.json exists. Overwrite? (y/n) [n]:"* ]]
+    [ "$(cat other.json)" = '{"keep":1}' ]
+    [ -s new.json ]
+    edit f.json y other.json y
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.schema_version' other.json)" = 1 ]
+}
+
+@test "the file written: a directory, or a directory that does not exist, is refused and asked again" {
+    two_vm_file f.json
+    mkdir adir
+    GEN_ARGS=()
+    edit f.json y adir nodir/x.json ok.json
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"adir is a directory"* ]]
+    [[ "$stderr" == *"cannot write in nodir"* ]]
+    [ -s ok.json ]
+}
+
+@test "the end of input at the question of the file writes nothing" {
+    two_vm_file f.json
+    before="$(cat f.json)"
+    GEN_ARGS=()
+    run --separate-stderr bash -c 'printf "n engine
+engine2
+y
+" | bash "$0" f.json' "$GEN"
+    [ "$status" -eq 0 ]
+    [ "$(cat f.json)" = "$before" ]
 }
 
 @test "--dry-run writes nothing" {
     two_vm_file f.json
     before="$(cat f.json)"
-    GEN_ARGS=("${PKG[@]}" --output f.sh --dry-run)
+    GEN_ARGS=(--dry-run)
     edit f.json y
     [ "$status" -eq 0 ]
     [ "$(cat f.json)" = "$before" ]
@@ -154,18 +209,17 @@ JSON
 
 @test "n <vm> renames it: components, models and links follow" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json "n engine" engine2 y
     [ "$status" -eq 0 ]
     [ "$(jq -r '[.components[].vm] | unique | sort | join(",")' f.json)" = "engine2,web" ]
     [ "$(jq -r '.models[0].vm' f.json)" = engine2 ]
     [ "$(jq -c '.links' f.json)" = '[{"web_vm":"web","engine_vm":"engine2"}]' ]
-    [ -x f-engine2.sh ]
 }
 
 @test "n refuses a name of the wrong shape or already taken, and asks again" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json "n engine" Web web2 y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"is not lowercase letters"* ]]
@@ -180,65 +234,61 @@ JSON
 
 @test "r <vm> removes it with its components, its models and the links naming it" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     # k: keep the vm field down to one VM (see the dedicated tests below for the default, drop)
     edit f.json "r web" y k y
     [ "$status" -eq 0 ]
     [ "$(jq -r '[.components[].vm] | unique | join(",")' f.json)" = engine ]
     [ "$(jq -c '.links' f.json)" = '[]' ]
-    [ -x f-engine.sh ]
-    [ ! -e f-web.sh ]
 }
 
 @test "removing down to one VM asks to keep its vm field or drop it; default drops it" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json "r web" y "" y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"One VM is left: keep its vm field (k), or drop it, a one-VM file (d) [d]:"* ]]
     [ "$(jq 'any(.components[]; has("vm"))' f.json)" = false ]
     [ "$(jq 'has("links")' f.json)" = false ]
-    [ -x f.sh ]
-    [ ! -e f-engine.sh ]
 }
 
 @test "removing down to one VM, k keeps the vm field (one name, no links)" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json "r web" y k y
     [ "$status" -eq 0 ]
     [ "$(jq -r '.components[0].vm' f.json)" = engine ]
     [ "$(jq -c '.links' f.json)" = '[]' ]
-    [ -x f-engine.sh ]
 }
 
 @test "the last VM cannot be removed" {
     cat >one.json <<'JSON'
 { "schema_version": 1, "components": [ { "type": "engine", "name": "eng", "vm": "a" } ] }
 JSON
-    GEN_ARGS=("${PKG[@]}" --output one.sh)
+    GEN_ARGS=()
     edit one.json "r a" q
     [[ "$stderr" == *"the last VM cannot be removed"* ]]
     [ "$(jq -r '.components[0].vm' one.json)" = a ]
 }
 
-@test "stale scripts are listed, not deleted, after a rename" {
+@test "saving regenerates nothing: the scripts of an older configuration stay, and script lists the stale ones" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
-    gen --config f.json "${PKG[@]}" --output f.sh
-    [ -x f-engine.sh ]
+    gen f.json "${PKG[@]}" --output f.sh
+    GEN_ARGS=()
     edit f.json "n engine" engine2 y
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"f-engine.sh"* ]]
-    [ -e f-engine.sh ]
-    [ -x f-engine2.sh ]
+    [ -e f-engine.sh ] && [ ! -e f-engine2.sh ]
+    gen f.json "${PKG[@]}" --output f.sh
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"no longer produced by any VM"*"f-engine.sh"* ]]
+    [ -e f-engine.sh ] && [ -x f-engine2.sh ]
 }
 
 # --- l: redo the links ---------------------------------------------------------------------------
 
 @test "l redoes the links, the current ones as the default" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json l "" y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"[engine]:"* ]]
@@ -249,7 +299,7 @@ JSON
 
 @test "m <vm> redoes its models only, keeping its components" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json "m engine" "m1, m2" y y
     [ "$status" -eq 0 ]
     [ "$(jq -r '[.models[].name] | join(",")' f.json)" = "m1,m2" ]
@@ -260,7 +310,7 @@ JSON
 
 @test "e <vm> removing the engine announces its models; n leaves them (an error f then fixes)" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     before="$(cat f.json)"
     # VM engine: keep proxy, decline engine, decline chat-interface, its options, confirm
     edit f.json "e engine" "" "" n n "" "" y n q
@@ -272,7 +322,7 @@ JSON
 
 @test "e <vm> removing the engine, y removes its models too" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json "e engine" "" "" n n "" "" y y q
     [[ "$stderr" == *"removing the engine also removes 1 model(s) of VM engine"* ]]
     [[ "$stderr" != *"unresolved_engine"* ]]
@@ -280,7 +330,7 @@ JSON
 
 @test "e <vm> removing the chat interface announces the links that reach it; y removes them" {
     two_vm_file f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     # VM web: keep proxy, decline engine (not shipped there), decline chat-interface, options, confirm
     edit f.json "e web" "" "" "" n "" "" y y q
     [ "$status" -eq 0 ]
@@ -294,7 +344,7 @@ JSON
     cat >one.json <<'JSON'
 { "schema_version": 1, "components": [ { "type": "proxy", "name": "prox" }, { "type": "engine", "name": "eng" } ] }
 JSON
-    GEN_ARGS=("${PKG[@]}" --output one.sh)
+    GEN_ARGS=()
     # the existing machine named "engine", then a custom VM (default name "vm-1"): decline
     # proxy and engine, accept chat-interface, accept the proxy it needs, its options, confirm,
     # then its own links (default: engine), write
@@ -308,7 +358,7 @@ JSON
     two_vm_file f.json
     jq '.components += [{"type": "proxy", "name": "prox", "vm": "extra"}, {"type": "engine", "name": "eng", "vm": "extra"}, {"type": "chat-interface", "name": "chat", "vm": "extra"}]
       | .links += [{"web_vm": "extra", "engine_vm": "engine"}]' f.json >f.json.tmp && mv f.json.tmp f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json a web web2 "" "" "" "" y "engine extra" y
     [ "$status" -eq 0 ]
     [ "$(jq -r '[.components[] | select(.vm == "web2") | .type] | sort | join(",")' f.json)" = "chat-interface,proxy" ]
@@ -322,17 +372,16 @@ JSON
 @test "f on unlinked_vm offers to redo the links, and fixes both VMs in one pass" {
     two_vm_file f.json
     jq 'del(.links)' f.json >f.json.tmp && mv f.json.tmp f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json f l "" y
     [ "$status" -eq 0 ]
     [ "$(jq -c '.links' f.json)" = '[{"web_vm":"web","engine_vm":"engine"}]' ]
-    [ -x f-engine.sh ]
 }
 
 @test "f on an unknown key offers to remove it" {
     two_vm_file f.json
     jq '.ghost = 1' f.json >f.json.tmp && mv f.json.tmp f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json f y y
     [ "$status" -eq 0 ]
     [ "$(jq 'has("ghost")' f.json)" = false ]
@@ -341,7 +390,7 @@ JSON
 @test "f on wrong_type re-asks that one option directly" {
     two_vm_file f.json
     jq '.components[0].options = {"tls": {"bad": true}}' f.json >f.json.tmp && mv f.json.tmp f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json f lets-encrypt y
     [ "$status" -eq 0 ]
     [ "$(jq -r '.components[0].options.tls' f.json)" = "lets-encrypt" ]
@@ -350,7 +399,7 @@ JSON
 @test "f on duplicate_server_name re-asks the second VM's server-name directly" {
     two_vm_file f.json
     jq '.components[0].options["server-name"] = "same" | .components[2].options["server-name"] = "same"' f.json >f.json.tmp && mv f.json.tmp f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json f other y
     [ "$status" -eq 0 ]
     [ "$(jq -r '.components[0].options["server-name"]' f.json)" = "same" ]
@@ -361,7 +410,7 @@ JSON
     cat >one.json <<'JSON'
 { "schema_version": 1, "components": [ { "type": "engine", "name": "eng" } ], "models": [ { "name": "m1", "force": true } ] }
 JSON
-    GEN_ARGS=("${PKG[@]}" --output one.sh)
+    GEN_ARGS=()
     edit one.json f y "" "" "" y
     [ "$status" -eq 0 ]
     [ "$(jq -r '[.components[] | select(.type == "proxy") | .name] | join(",")' one.json)" = "prox" ]
@@ -370,7 +419,7 @@ JSON
 @test "f on unresolved_engine re-asks that model's place directly" {
     two_vm_file f.json
     jq '.models[0].engine = "ghost"' f.json >f.json.tmp && mv f.json.tmp f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json f "" eng y
     [ "$status" -eq 0 ]
     [ "$(jq -r '.models[0].engine' f.json)" = "eng" ]
@@ -380,7 +429,7 @@ JSON
 @test "f on link_to_self offers to redo the links" {
     two_vm_file f.json
     jq '.links += [{"web_vm":"web","engine_vm":"web"}]' f.json >f.json.tmp && mv f.json.tmp f.json
-    GEN_ARGS=("${PKG[@]}" --output f.sh)
+    GEN_ARGS=()
     edit f.json f l engine y
     [ "$status" -eq 0 ]
     [ "$(jq -c '.links' f.json)" = '[{"web_vm":"web","engine_vm":"engine"}]' ]

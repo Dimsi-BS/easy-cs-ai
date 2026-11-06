@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. **Proposed**: `generate --edit <file>` (which saves the configuration and regenerates its scripts), see [spec: several VMs](spec-multi-vm.md#editing). What concerns a configuration that names several VMs (`apply --vm`, one script per VM from `generate`) is **implemented**, see [spec: several VMs](spec-multi-vm.md); a file with no `vm` behaves as described.
+**Status:** accepted. **Implemented**: the split of the former `generate` into `config edit` (creates or edits a configuration) and `script` (generates the scripts from a configuration), see [`config edit`](#config-edit-the-session) and [`script`](#script). What concerns a configuration that names several VMs (`apply --vm`, one script per VM) is implemented, see [spec: several VMs](spec-multi-vm.md); a file with no `vm` behaves as described.
 
 ## Purpose
 
@@ -10,7 +10,7 @@ The `easy-cs-ai` CLI is the layer 2 entry point. It is a thin `git`-style dispat
 
 It builds on the [script contract](spec-script-contract.md) (actions, `describe`, exit codes) and the [state format](spec-state-format.md); it does not repeat them. [CLI commands](cli-commands.md) stays the short overview.
 
-Out of scope: the interface of the generator behind `generate`, see [spec: VM script generator](spec-vm-generator.md).
+Out of scope: the interface of the generator behind `config` and `script`, see [spec: VM script generator](spec-vm-generator.md).
 
 ## Installed layout
 
@@ -43,17 +43,18 @@ easy-cs-ai [global options] <command> [arguments…]
 | `remove <model> [--engine <name>]` | Unwire a model and remove it from its engine |
 | `remove --all [--engine <name>]` | Remove every model (of one engine, or of all) |
 | `apply <file\|-> [--vm <name>] [--prune]` | Make the machine match a configuration file (`--vm` selects one VM of a file that names several) |
-| `generate [--config-only \| --edit <file>] [parameters…]` | Produce the parameterless VM post-install script (one per VM when the configuration names several), or only its configuration file, or, with `--edit`, edit a configuration and regenerate its scripts |
-| `catalog`, `host`, `config schema`, `config validate`, `guide` | Read-only discovery and validation for a person as well as for a program or an AI agent, see [spec: capabilities](spec-capabilities.md) |
+| `config edit [<file>]` | The interactive session: **create** a configuration (no file) or **edit** one (`<file>`), and write the configuration file. It writes no script |
+| `script <file> [--output <path>] [package options…]` | Generate the parameterless VM post-install script from a configuration, one per VM when it names several. It never prompts |
+| `catalog`, `host`, `config validate`, `config schema`, `guide` | Read-only discovery and validation for a person as well as for a program or an AI agent, see [spec: capabilities](spec-capabilities.md) |
 | `exec <type> <name> <command> [arguments…]` | Run the component's own program (`ollama`, `nginx`…) aimed at the instance installed by easy-cs-ai (its address, its Compose file), the tool's arguments untouched, see [Native tool commands](#native-tool-commands) |
 | `component [<type>]` | List the component types and their components, or the components of one type, see [Dispatch](#dispatch) |
 | `component <type> <name> <action> [arguments…]` | Component command: an action of the contract, forwarded to the script |
 
 - `<type>` is one of `engine`, `chat-interface`, `proxy`, `provisioning` (the contract types). `install` accepts all four, since `proxy` and `provisioning` are required by other commands (see [Dependencies](#dependencies)). The types are values of the commands, never commands: see [the decision](decision-component-command.md).
-- **Global options**, accepted before the command: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`. After the command, `status`, `add`, `remove`, `apply`, `config`, `catalog`, `host` and `guide` accept the last three too; for `install` and `uninstall`, `--json` is the CLI's and `--dry-run` goes to the components, which print their own plan; after a component command or `generate` they are forwarded as they are, since the scripts and the generator accept the same ones; after `exec` they belong to the tool, so they go **before** `exec`.
-- **General commands and component commands are kept apart.** A component is always addressed by its type followed by its name (`engine ollama`), never by its name alone, and its own commands go through `component`. The first word of the command line is therefore always a general command (`status`, `install`, `uninstall`, `exec`, `component`, `add`, `remove`, `apply`, `generate`, `catalog`, `host`, `config`, `guide`, `help`, `version`): this set is the only reserved one. A component type is never the first word, so a new type (or a new component) takes no word of the root, and a new command cannot clash with a type or a component.
+- **Global options**, accepted before the command: `--help`, `--version`, `--verbose`, `--dry-run`, `--json`. After the command, `status`, `add`, `remove`, `apply`, `config`, `catalog`, `host` and `guide` accept the last three too; for `install` and `uninstall`, `--json` is the CLI's and `--dry-run` goes to the components, which print their own plan; after a component command they are forwarded as they are, since the scripts accept the same ones, and `script` accepts the last three itself (`--json`, `--dry-run`, `--verbose`; `config` takes `--dry-run` and `--verbose`, a session being interactive, `--json` is refused); after `exec` they belong to the tool, so they go **before** `exec`.
+- **General commands and component commands are kept apart.** A component is always addressed by its type followed by its name (`engine ollama`), never by its name alone, and its own commands go through `component`. The first word of the command line is therefore always a general command (`status`, `install`, `uninstall`, `exec`, `component`, `add`, `remove`, `apply`, `config`, `script`, `catalog`, `host`, `guide`, `help`, `version`): this set is the only reserved one. A component type is never the first word, so a new type (or a new component) takes no word of the root, and a new command cannot clash with a type or a component.
 - **The old form is gone.** `easy-cs-ai <type> <name> <action>` and `easy-cs-ai <type>` (without `component`) are no longer commands: the first word is an unknown command (exit 2), whose hint says `component` when it is a type (`unknown command 'engine'`, `try: easy-cs-ai component engine …`).
-- Like the scripts, the CLI **never prompts**. Unknown commands, unknown types, unknown component names and missing arguments are usage errors (exit 2) with a message listing the valid values.
+- Like the scripts, the CLI **never prompts**, with one exception: `config edit` (the session that creates or edits a configuration, see [`config edit`](#config-edit-the-session)); `script`, `config validate` and `config schema` never prompt. Unknown commands, unknown types, unknown component names and missing arguments are usage errors (exit 2) with a message listing the valid values.
 
 ### The tree of commands
 
@@ -86,8 +87,12 @@ easy-cs-ai
 │   ├── <model> [--engine <n>]                     one model
 │   └── --all [--engine <n>]                       every model
 ├── apply <file|-> [--vm <n>] [--prune]            make the machine match a file
-├── generate [--config-only] [--config <file>]     VM script generator, configuration editor
-│            [--edit <file>]
+├── config                                         the configuration: edit, check, format
+│   ├── edit [<file>]                              create or edit a configuration (session)
+│   ├── validate <file|-> [--target] [--vm <n>]    check a file, show its plan
+│   └── schema                                     the format, as a JSON Schema
+├── script <file> [--output <path>] [package options]
+│                                                  VM post-install scripts from a file
 ├── component                                      the types and their components
 │   ├── provisioning
 │   │   └── llmfit <action> [arguments]
@@ -101,9 +106,6 @@ easy-cs-ai
 ├── guide                                          how to use this CLI (AI agent, program)
 ├── catalog                                        what can be installed
 ├── host                                           this machine: CPU, memory, disk, GPU
-├── config                                         the configuration format and checks
-│   ├── schema                                     the format, as a JSON Schema
-│   └── validate <file|-> [--target] [--vm <n>]    check a file, show its plan
 ├── help
 └── version
 
@@ -389,9 +391,42 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 
 `--vm <name>` applies one VM of a file that describes several (it is refused without it, see [spec: config](spec-config.md#several-vms)); a file for one machine does not use it. Reads a [configuration file](spec-config.md) and runs the equivalent of `install` for each listed component (in `requires` order), then `add` for each listed model, with the same rollback as `add`. It converges, installs nothing the file does not name, and removes nothing unless `--prune` is given. Exit codes are those of the steps it runs, see [spec: config](spec-config.md#apply) for the semantics, failure and resume.
 
-## `generate`
+## `config edit` (the session)
 
-`generate [--config-only | --edit <file>] [parameters…]` hands over to the generator with the remaining arguments, forwarding its streams and exit code. The options and the questions come from `describe`; the rest is in [spec: VM script generator](spec-vm-generator.md). The generator is interactive unless given `--config <file>`, the one exception to the rule that the CLI never prompts: `generate` hands over to it without adding any prompt of its own. The generator produces the layer 3 scripts only (one per VM when the configuration names several, see [spec: several VMs](spec-multi-vm.md)): there is none for layer 1, the CLI chains components with `apply`.
+```text
+easy-cs-ai config edit [<file>] [--dry-run]
+```
+
+Hands over to the session of the generator (see [spec: VM script generator](spec-vm-generator.md)), forwarding its streams and exit code. Its job is the **configuration**: with no `<file>` it **creates** one, with `<file>` it **opens it and edits it** (the [editor](spec-multi-vm.md#editing)). It writes the [configuration file](spec-config.md) and nothing else: **no script**. When it has written the file it says which command turns it into scripts (`easy-cs-ai script <file>`). The options and the questions come from `describe`.
+
+- `config` has three subcommands, all written the same way: `edit`, `validate`, `schema`. `config` alone is a usage error (exit 2) that lists them.
+- `edit` is the only interactive command (see [Command line](#command-line)); `--json` is refused (exit 2), a session is interactive.
+- **No `--output`: the file is asked.** Before writing, the session asks the name of the file to write, with a default, see [the question of the file](spec-multi-vm.md#the-file-written). The default is the file being edited, or `./easy-cs-ai.json` for a creation; an answer that names a file that exists and is not the one being edited is confirmed first. The same question gives a copy (another name) and a creation anywhere, so no option is needed. With `--dry-run` nothing is asked and nothing is written.
+- A `<file>` that is missing, unreadable or not JSON is a usage error (exit 2) when it is **given**: creating is `config edit` with no file, so a mistyped name is never a creation (the name of a new file is asked at the end).
+
+## `script`
+
+```text
+easy-cs-ai script <file> [--output <path>] [--package-url <url>] [--package-version <v>] [--package-format <f>] [--package-sha256 <hash> | --package-file <path>] [--dry-run] [--json]
+```
+
+Generates the layer 3 scripts from a [configuration](spec-config.md): **one per VM** when it names several (see [spec: several VMs](spec-multi-vm.md)), one otherwise. It **never prompts**: `<file>` is required and must be complete, the validation is the one of `config validate --target fresh` and an invalid file is exit 2. The summary is printed on stderr and not asked for confirmation. The [package source](spec-vm-generator.md#package-source) comes from its own options. There is no script for layer 1: the CLI chains components with `apply`.
+
+- Without `<file>`, `script` is a usage error (exit 2) whose message points to `easy-cs-ai config edit`, which creates the file.
+- The scripts are written together, all or nothing, and the next steps of a configuration that names several VMs are printed (see [spec: several VMs](spec-multi-vm.md#next-steps)).
+- `--json` prints the document of `config validate --target fresh --json` extended with the `script` entry (`scripts` and `next_steps` for several VMs), see [spec: capabilities](spec-capabilities.md#commands).
+
+## The former `generate`
+
+`generate` is no longer a command. It did two jobs, a session that produces a configuration and the generation of scripts from it, and they have different users (a person, then a program or the same person later) and different rules (one prompts, the other must not). Each is a command now, and `generate` is an unknown command (exit 2) whose hint says `config` and `script`, like the hint for a type used as a command. The old options map as follows:
+
+| Before | Now |
+| --- | --- |
+| `generate` (session, then script) | `config edit`, then `script <file>` |
+| `generate --config-only` | `config edit` |
+| `generate --edit <file>` | `config edit <file>`, then `script <file>` (saving no longer regenerates the scripts) |
+| `generate --config <file>` | `script <file>` |
+| `generate --config <file> --json` | `script <file> --json` |
 
 ## Contract additions
 
