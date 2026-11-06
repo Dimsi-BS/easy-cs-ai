@@ -55,7 +55,7 @@ curl -k -H "Authorization: Bearer $KEY" "https://$(hostname)/ollama-llama3.2-3b/
 
 **4. Remove everything**: `sudo easy-cs-ai uninstall --all` (add `--purge` to delete the data too: models, databases, accounts).
 
-For a fleet of VMs, `easy-cs-ai generate` asks a few questions and writes a post-install script that installs the package and the chosen stack on a new VM (`--config-only` writes the [configuration file](docs/spec-config.md) alone). All commands are in [docs/cli-commands](docs/cli-commands.md).
+For a fleet of VMs, `easy-cs-ai generate` asks a few questions and writes a post-install script that installs the package and the chosen stack on a new VM (`--config-only` writes the [configuration file](docs/spec-config.md) alone). **Specified, not implemented yet**: `generate` is to be split in two commands, `easy-cs-ai config edit` (creates or edits the configuration, interactive) and `easy-cs-ai script <file>` (generates the scripts from it, no prompt), see [spec: CLI](docs/spec-cli.md#the-former-generate). All commands are in [docs/cli-commands](docs/cli-commands.md).
 
 An AI agent with a shell can drive all of this for you: `easy-cs-ai guide` tells it how, `easy-cs-ai catalog --json`, `host --json` and `config validate <file> --json` give it what it needs, and `--json` always means one JSON document on stdout for programs, the human output otherwise (see [the journey](docs/spec-journey.md) and [renderings](docs/spec-rendering.md)).
 
@@ -149,7 +149,7 @@ Extra commands :
 - `exec`, the component's own program (`ollama`, `nginx`, `docker compose`…) run against the instance easy-cs-ai installed, with the variables and the Compose file of the installation (`exec engine ollama ps`): an expert command, outside the state and the journal
 - `add`, adding a new model in an inference engine, wrapping it with the reverse proxy if needed and adding it to the chat interface website
 - `apply`, interpreting a [configuration file](docs/spec-config.md) (components, options, models) to make the machine match it
-- `generate`, the interactive generator of the layer 3 (VM post-install) script; `generate --config-only` writes the configuration file only
+- `generate`, the interactive generator of the layer 3 (VM post-install) script; `generate --config-only` writes the configuration file only (to be split into `config edit` and `script`, see [spec: CLI](docs/spec-cli.md#the-former-generate))
 - `catalog`, `host`, `config schema`, `config validate` and `guide`, read-only commands that let an AI agent (or any program) discover what can be installed, what the machine is, what a configuration must look like and whether one is valid; with `--json`, one JSON document on stdout
 
 See [docs/cli-commands](docs/cli-commands.md) for the full command reference and [docs/decision-packaging](docs/decision-packaging.md) for the packaging choices.
