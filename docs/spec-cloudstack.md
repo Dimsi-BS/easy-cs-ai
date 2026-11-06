@@ -89,6 +89,20 @@ The capabilities of the CLI are what the page needs, and they are **computations
 
 Nothing outside CloudStack, and nothing that CloudStack already has. The configuration of a topology and its group of VMs are stored **in CloudStack** ([where a topology lives](#where-a-topology-lives)); the monitoring key is [read back from the VM](#reading-the-vms), not kept.
 
+## Architectures considered
+
+Where the capabilities (validation, sizing, script generation…) run decides what the user has to install, how the page authenticates, and from where the VMs are read. Five were weighed; the reasoning and the sources are in [search/cloudstack: architecture](../search/cloudstack/architecture.md).
+
+| # | Architecture | Component for the user | One logic with the CLI | Main obstacle |
+| --- | --- | --- | --- | --- |
+| 1 | **Everything recoded in the browser** (JavaScript, `jq` in WebAssembly) | None | No: a second logic, or a port of the `jq` programs | Sizing (`llmfit`, Rust) cannot move to the browser |
+| 2 | **An API server** that runs the CLI | **A service** to host, update and protect | Yes | The extra component, and a second origin to authenticate |
+| 3a | **CloudStack extension** (the management server runs the CLI) | The CLI package on each management server, and the extension | Yes | Actions tied to a VM, a network or a VPC; a new mechanism that may change |
+| 3b | **A backend plugin** in CloudStack's Java server | The CLI package on each management server | Yes, if it runs the CLI | Java in the CloudStack repository for a bash toolbox; highest acceptance risk |
+| 4 | **A Rust core built for Linux and WebAssembly, in the browser** (**retained**) | None | **Yes: one source, built twice** | `llmfit` as a library for `wasm32` (to try), the rewrite of the core, a WebAssembly module accepted by the CloudStack community |
+
+Options 2, 3a and 3b stay as **fallbacks** if the experiments on option 4 fail (see [open questions](#open-questions)).
+
 ## Contributing to CloudStack
 
 The page is built **in the repository of Apache CloudStack** and proposed there, so that it ships with the UI. This splits the work between two repositories:

@@ -106,17 +106,17 @@ The computations of the project (catalog, schema, validation, sizing, script gen
 
 ## Comparison
 
-| | 1. In the browser | 2. API server | 3a. Extension | 3b. Backend plugin |
-| --- | --- | --- | --- | --- |
-| **Component to install** | None | **A service**, to host and protect | The CLI package **and** the extension on each management server | The CLI package on each management server, and a CloudStack release that has the plugin |
-| **Same logic as the CLI** | Only with `jq` in WebAssembly and **llmfit compiled** (unknown); else a second logic | Yes | Yes | Yes (if it runs the CLI) |
-| **Sizing with llmfit** | Blocked unless it builds for WebAssembly | Yes | Yes, with a long enough timeout | Yes |
-| **Authentication and rights** | The UI's session, nothing more | **To design** (second origin) | The extension's roles and the UI's session | Native (API ACL, jobs) |
-| **Monitoring vantage point** | The administrator's browser | The operator's choice | The management network | The management network |
-| **Change in CloudStack itself** | The UI section only | The UI section only | The UI section, calling `runCustomAction` | The UI section **and** Java code |
-| **Resource-less actions** | Not an issue | Not an issue | **Not documented**: the main doubt | Not an issue |
-| **Upstream acceptance risk** | Large assets and a second logic | An external dependency | Low for the extension itself (supported mechanism); the UI section as before | Highest |
-| **Maturity of what it relies on** | jq WebAssembly exists | Nothing new | A new mechanism, may change | CloudStack's plugin API |
+| | 1. In the browser | 2. API server | 3a. Extension | 3b. Backend plugin | **4. Rust core, WebAssembly (decided)** |
+| --- | --- | --- | --- | --- | --- |
+| **Component to install** | None | **A service**, to host and protect | The CLI package **and** the extension on each management server | The CLI package on each management server, and a CloudStack release that has the plugin | None |
+| **Same logic as the CLI** | Only with `jq` in WebAssembly and **llmfit compiled** (unknown); else a second logic | Yes | Yes | Yes (if it runs the CLI) | **Yes, one source built twice** |
+| **Sizing with llmfit** | Blocked unless it builds for WebAssembly | Yes | Yes, with a long enough timeout | Yes | Needs llmfit as a library for `wasm32` (to try) |
+| **Authentication and rights** | The UI's session, nothing more | **To design** (second origin) | The extension's roles and the UI's session | Native (API ACL, jobs) | The UI's session, nothing more |
+| **Monitoring vantage point** | The administrator's browser | The operator's choice | The management network | The management network | The administrator's browser |
+| **Change in CloudStack itself** | The UI section only | The UI section only | The UI section, calling `runCustomAction` | The UI section **and** Java code | The UI section only |
+| **Resource-less actions** | Not an issue | Not an issue | **Not documented**: the main doubt | Not an issue | Not an issue |
+| **Upstream acceptance risk** | Large assets and a second logic | An external dependency | Low for the extension itself (supported mechanism); the UI section as before | Highest | A WebAssembly module consumed as a package |
+| **Maturity of what it relies on** | jq WebAssembly exists | Nothing new | A new mechanism, may change | CloudStack's plugin API | WebAssembly is common; the Rust core is to write |
 
 ## Reading of the comparison
 
