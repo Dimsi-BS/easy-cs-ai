@@ -174,8 +174,8 @@ A component with a state file but a failing probe is shown as installed and not 
 ## Not stored
 
 - Secret values, and anything derivable by a probe (running, healthy, resource usage).
-- Cloud/VM provisioning information; that belongs to layer 3 and CloudStack, not designed yet.
-- Logs and metrics ("is the model being used?" is a CloudStack idea, out of scope here). The history of actions is not kept here either: the scripts write it to the system journal, see the [Action journal](spec-script-contract.md#action-journal) of the contract.
+- Cloud/VM provisioning information; that belongs to layer 3 and to the [CloudStack integration](spec-cloudstack.md), which tags the resources it creates in CloudStack and keeps nothing here.
+- Logs and metrics. "Is the model being used?" is answered by the [status document](spec-cloudstack.md#the-status-document) proposed for the proxy, computed from its access log and never stored in the state. The history of actions is not kept here either: the scripts write it to the system journal, see the [Action journal](spec-script-contract.md#action-journal) of the contract.
 
 ## Open questions
 
