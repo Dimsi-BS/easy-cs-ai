@@ -166,7 +166,7 @@ Specified, not implemented: see [docs/spec-cloudstack](docs/spec-cloudstack.md).
 2. **Create the resources**: after a list of what will be created, the VMs (each one provisioned at first boot by its generated [post-install script](docs/spec-vm-generator.md)), their disks, network rules and tags. Only resources the page tagged are ever changed or destroyed.
 3. **Monitor what matters for a local AI**: whether each VM, engine and chat interface is up, which models are served, whether they are being used (in use, idle, never used; requests, errors, latency), whether a link between VMs is still to do, and whether a VM is big enough for its models. The VMs themselves stay visible in the other CloudStack pages.
 
-The page adds no rule of its own: it shows the documents of the CLI capabilities through a thin service, and reads the VMs through a read-only status document that the reverse proxy publishes (a proposed addition).
+There is no server to install: the core of the logic is written once in Rust, built for Linux (the CLI) and for WebAssembly (the page), and what has to be stored (a group of VMs and its configuration) is stored in CloudStack. The VMs are read through a read-only status document that the reverse proxy publishes (a proposed addition).
 
 ## Roadmap
 

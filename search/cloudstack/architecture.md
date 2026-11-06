@@ -8,6 +8,8 @@
 2. **Call an API server**, hosted somewhere (the service of the [spec](../../docs/spec-cloudstack.md#the-service)): a component to install and to protect.
 3. **Embed `easy-cs-ai` in Apache CloudStack**: the management server runs it.
 
+> **Decision (2026-11-06):** no server of the project, and no tool to install on the management server. The core of the logic is written once, in Rust, and compiled both for Linux (the CLI) and to WebAssembly (the page): **option 4** below, which is option 1 with the llmfit and the language questions answered by a rewrite of the core. What CloudStack stores is the group of VMs and its configuration. See [spec: CloudStack](../../docs/spec-cloudstack.md#the-core-webassembly). The comparison below is kept as the reasoning; what option 4 leaves open is under [option 4](#option-4-a-rust-core-built-for-linux-and-webassembly-decided).
+
 Research of 2026-11-06, from the documentation and the `main` branch of `apache/cloudstack`; nothing was tried on an instance. What was not confirmed is listed at the end and in each row.
 
 ## What has to run, and what it needs
@@ -89,6 +91,19 @@ A new API command in the management server (`listLocalAi…`, `validateLocalAiCo
 - **Against**: Java code to write, review and keep in the CloudStack repository for a feature whose logic is bash; the community may refuse a core module that shells out to a toolbox, which is the same acceptance risk as for the external service, moved to the backend. The alternative, re-implementing the logic in Java, breaks [principle 1](../../docs/spec-cloudstack.md#principles).
 - **A path with SSH into the VMs** (reading `easy-cs-ai status --json` inside them) was considered and **not retained**: it needs a private key the management server does not hold (CloudStack key pairs are registered by public key).
 
+## Option 4: a Rust core, built for Linux and WebAssembly (decided)
+
+The computations of the project (catalog, schema, validation, sizing, script generation, next steps) are written **once, in Rust, as pure functions with no input or output**, then built **natively** (what the CLI calls, in place of the `jq` programs) and **for WebAssembly** (what the page runs). The catalog is a snapshot of the `describe` of the install scripts, given as an input. The install scripts and the orchestration (`apply`, `add`, `status`) stay in bash. Nothing runs on the management server and there is no service.
+
+- **What it settles**: the single logic (one source for both targets), the sizing blocker **if** llmfit can be used as a library for `wasm32`, the extra component (none), and the authentication towards a service (none to build: the page has the user's session). The `jq` WebAssembly route of option 1 is not needed, since the validation is rewritten in the core.
+- **What the store is**: CloudStack. The group of VMs (an instance group) and an annotation on it for the configuration, to confirm ([api-resources](api-resources.md#annotations)). `listInstanceGroups` and `createInstanceGroup` exist in the API references from 4.1; groups are labels with no effect on placement; the annotation entity type `INSTANCE_GROUP` is in the 4.20 reference. Not confirmed: that a group can be annotated and read by a user, the size limit of an annotation, and how a VM is deployed into a group.
+- **What it leaves open**
+  - **Monitoring from the browser.** The browser reaches a VM only if the user's network does; a self-signed certificate is refused until accepted for that VM; the VM's proxy must answer the UI's origin on the status path (and, from a private address, Chrome's [private-network preflight](https://developer.chrome.com/blog/private-network-access-preflight), the 2022 description of a rollout that has since changed). A VM the browser cannot reach shows only CloudStack's side. Nothing watches when no page is open.
+  - **The monitoring key.** Without a server to hold it, the proposal is that the page draws it and puts it in the user-data of the VM, from where it reads it back with the user's rights: an exception to "no secret in the user-data", justified because it only reads status.
+  - **`llmfit` as a library for `wasm32`**, and its size and licence terms for bundling (it is MIT, per its README).
+  - **The decision on the language**, which reopens [decision: scripting language](../../docs/decision-scripting-language.md#revisit-when) for the core, by steps; the cost of the rewrite (the validation in `jq`, the generation, the `bats` tests) and the drift between the catalog snapshot and the scripts.
+  - **Distribution into the UI**: a package built in this repository that the UI depends on, not a binary or a Rust toolchain in the CloudStack repository; the content security policy of the UI, the MIME type of `.wasm` and the size are to test.
+
 ## Comparison
 
 | | 1. In the browser | 2. API server | 3a. Extension | 3b. Backend plugin |
@@ -111,6 +126,14 @@ A new API command in the management server (`listLocalAi…`, `validateLocalAiCo
 - **2 stays as the fallback that works on any cloud**, since nothing here depends on CloudStack's internals; its cost is the one the user named.
 
 ## What to try, in this order
+
+**For the decided option 4**, no CloudStack is needed for the first two:
+
+- **A.** Does `llmfit` build as a library for `wasm32`, with the detection left out and the overrides only, and what is the size of the module with its model data?
+- **B.** A prototype of `config validate` in Rust, with the catalog snapshot as input, run against the cases of the current `bats` tests and compared with the `jq` output; then built for `wasm32` and called from a bare page.
+- **C.** On a test CloudStack: can an instance group be annotated and read back by a user, and how large may an annotation be; does the UI's content security policy let a WebAssembly module run, and with which MIME type; can a browser read a status document from a VM across origins (self-signed and trusted certificates, private addresses)?
+
+The experiments below are for the options that were **not** retained, in case option 4 fails at A or B.
 
 1. **Extension without a resource** (3a): register a user-defined extension with a trivial executable on a test CloudStack (4.22 or later); can a custom action be run with no VM, or tied to a network or an SSH key pair? Does `runCustomAction` return the standard output, and up to which size and timeout? Does it need a registration with a cluster?
 2. **An extension that only acts on ordinary VMs** (3a): does it leave their user-data, volumes and SSH keys alone?
