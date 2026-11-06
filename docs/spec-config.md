@@ -44,12 +44,12 @@ The file is a **list of VMs**, each holding its components, and a **list of mode
   "models": [
     {
       "name": "llama3.2:3b",
-      "engines": [ { "vm": "gpu" } ],
+      "engine": { "vm": "gpu" },
       "chat_interfaces": [ { "vm": "web" } ]
     },
     {
       "name": "qwen2.5:7b",
-      "engines": [ { "vm": "gpu", "name": "ollama" } ],
+      "engine": { "vm": "gpu", "name": "ollama" },
       "chat_interfaces": [],
       "force": true
     }
@@ -57,7 +57,7 @@ The file is a **list of VMs**, each holding its components, and a **list of mode
 }
 ```
 
-A single machine is a file with one VM; its models name that VM on both sides when they are shown in a chat interface of the same VM:
+A single machine is a file with one VM; its models name that VM on both sides when they are shown in a chat interface of the same VM. The file says it **explicitly**: the session asks for a confirmation before writing it (see [spec: several VMs](spec-multi-vm.md#creating)), it never links the two without the person's answer:
 
 ```json
 {
@@ -65,11 +65,11 @@ A single machine is a file with one VM; its models name that VM on both sides wh
   "vms": [ { "name": "vm-1", "components": [
     { "component": "provisioning/llmfit" }, { "component": "proxy/nginx" },
     { "component": "engine/ollama" }, { "component": "chat-interface/librechat" } ] } ],
-  "models": [ { "name": "llama3.2:3b", "engines": [ { "vm": "vm-1" } ], "chat_interfaces": [ { "vm": "vm-1" } ] } ]
+  "models": [ { "name": "llama3.2:3b", "engine": { "vm": "vm-1" }, "chat_interfaces": [ { "vm": "vm-1" } ] } ]
 }
 ```
 
-**The format is ahead of the implementation.** It allows several engines or several chat interfaces on a VM, a free `name` for a component, and several references in `engines` and `chat_interfaces`. The validation accepts, **for now**, one component per implementation on a VM (`duplicate_component`) and at most one reference per array (`unsupported_count`), because the layer 1 scripts keep one state per component (see [open questions](#open-questions)); lifting those limits changes the validation, not the format. Several components of one type on a VM (an engine `engine/ollama` and an engine `engine/vllm`, once vLLM ships) is the first case to open.
+**The format is ahead of the implementation.** It allows several engines or several chat interfaces on a VM, a free `name` for a component, and several references in `chat_interfaces`. The validation accepts, **for now**, one component per implementation on a VM (`duplicate_component`) and at most one reference in `chat_interfaces` (`unsupported_count`), because the layer 1 scripts keep one state per component (see [open questions](#open-questions)); lifting those limits changes the validation, not the format. Several components of one type on a VM (an engine `engine/ollama` and an engine `engine/vllm`, once vLLM ships) is the first case to open.
 
 ### `vms`
 
@@ -90,7 +90,7 @@ A single machine is a file with one VM; its models name that VM on both sides wh
 | `default` | no | Make it the default of its type, forwarded as `--default` (see [state format](spec-state-format.md#defaults)). At most one per type **on a VM** (`several_defaults`) |
 | `options` | no | Options of the script, keyed by option name **without** `--` (the `describe.options[].name`). Values are strings, numbers or booleans |
 
-- An option left out takes the script's built-in default, as on the command line.
+- An option left out takes the script's built-in default, as on the command line, **unless the component declares it required**: an option whose `required_when` ([script contract](spec-script-contract.md#describe)) holds for the other options of the entry (nginx's `tls-cert` with `tls: provided`, `tls-accept-terms` and `server-name` with `tls: letsencrypt`) and that is left out is the error `missing_option`, at the path of the entry's `options`, naming the option and the condition. An option with no `required_when` is optional. An option whose `relevant_when` does not hold is **not an error** when written (the validation accepts it, as the scripts do), it is only not asked by the session.
 - `config schema` lists the values of `component` from the shipped scripts, so that a program validates the notation without parsing it.
 - **One component per implementation on a VM, for now**: the same `component` twice on one VM is `duplicate_component`, whatever their `name`s (the state of layer 1 has one entry per component, see [open questions](#open-questions)). `proxy/nginx` is listed once **on each VM** that has a proxy, with its own options (server name, certificate).
 - Order in the file carries no meaning: the install order comes from `requires`.
@@ -112,22 +112,22 @@ Whether a literal secret may appear in the file is an [open question](#open-ques
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `name` | yes | Model name, as the engine knows it |
-| `engines` | yes | The engine(s) the model is installed on: an array of [component references](#component-references). **Exactly one** for now (`unsupported_count` otherwise) |
-| `chat_interfaces` | no | The chat interface(s) that show the model: an array of component references. Absent or empty: the model has none (an engine used through its API). **At most one** for now (`unsupported_count` otherwise) |
+| `engine` | yes | The engine the model is installed on: **one** [component reference](#component-references), an object. A model is **one instance of a model**, so it has one engine; the same model on two engines is two instances, hence two entries of `models` |
+| `chat_interfaces` | no | The chat interface(s) that show the model: an array of component references (several chat interfaces may show one instance of a model). Absent or empty: the model has none (an engine used through its API). **At most one** for now (`unsupported_count` otherwise) |
 | `force` | no | `true` skips the llmfit fit check, as `add --force` does |
 
-The two arrays replace what used to be the `engine` and `chat_interface` of a model, the `vm` of a model and the top-level `links`: **the model carries the link**. A chat interface of the engine's own VM is wired by `add` as on a single machine; a chat interface of **another VM** is the link between two machines, which installs nothing and is finished by hand once the VMs are up (see [spec: several VMs](spec-multi-vm.md#next-steps)).
+`engine` and `chat_interfaces` replace what used to be the `engine` (a name) and the `chat_interface` of a model, the `vm` of a model and the top-level `links`: **the model carries the link**. A chat interface of the engine's own VM is wired by `add` as on a single machine; a chat interface of **another VM** is the link between two machines, which installs nothing and is finished by hand once the VMs are up (see [spec: several VMs](spec-multi-vm.md#next-steps)).
 
 #### Component references
 
-An element of `engines` or `chat_interfaces` designates a component of a VM:
+The `engine` of a model, and each element of its `chat_interfaces`, designates a component of a VM:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `vm` | yes | The VM that holds the component. A name no VM has is `unknown_vm`, with the VM names of the file in the message |
 | `name` | no | The `name` of the component on that VM |
 
-The array it is in gives the type (`engines`: a component of type `engine`; `chat_interfaces`: of type `chat-interface`). It resolves as follows:
+The field it is in gives the type (`engine`: a component of type `engine`; `chat_interfaces`: of type `chat-interface`). It resolves as follows:
 
 | `name` | Component |
 | --- | --- |
@@ -136,13 +136,13 @@ The array it is in gives the type (`engines`: a component of type `engine`; `cha
 
 - The `vm` is always written, so that a reference never depends on what the other VMs hold; `name` is left out when the VM has one component of the type (the session and a program that follow the [journey](spec-journey.md#4-models) write it only when it is needed).
 - The **place** of a model is the engine component it resolves to, on its VM: it decides everything that follows: the VM where the model is pulled and [sized](spec-model-fit.md#declared-resources), the engine that serves it, the proxy of its VM that fronts it, and the [next steps](spec-multi-vm.md#next-steps) that read its URL. The resolved references (the VM and the `name` of each component) go into the plan of `config validate` (see [spec: capabilities](spec-capabilities.md#config-validate)).
-- The same model may go on several places (the same name on two engines is two entries). The same name twice on the **same place** is `duplicate_model`.
+- A model is **one instance**, on one engine: the same model on several places (the same name on two engines) is several instances, so several entries of `models`. The same name twice on the **same place** is `duplicate_model`.
 
 ### Slices
 
 The file is cut by VM, in the order of the file. A **slice** is a file of the same format with **one** VM and the models installed on it, and is validated **exactly as a file of one VM**: order from `requires`, a requirement satisfied by a component of the VM only, options, secrets. Errors and warnings keep the paths of the file as written, and name the VM they are about.
 
-- A model goes to the slice of **its engine's VM**, with its `engines` reference resolved (the `name` filled in); its `chat_interfaces` keeps the reference when the chat interface is on **that same VM** (the wiring of `add`, as on a single machine) and is emptied otherwise: a chat interface of another VM is not on this machine, and what the VM does must not depend on it.
+- A model goes to the slice of **its engine's VM**, with its `engine` reference resolved (the `name` filled in); its `chat_interfaces` keeps the reference when the chat interface is on **that same VM** (the wiring of `add`, as on a single machine) and is emptied otherwise: a chat interface of another VM is not on this machine, and what the VM does must not depend on it.
 - **What a VM receives**: `script` embeds the slice in the script of its VM (see [spec: VM script generator](spec-vm-generator.md#generated-script)), and `apply` on the VM reads it, so that it knows nothing of the other VMs. Being a file of one VM, it needs no `--vm`.
 - **`apply` on a file with several VMs** is refused (exit 2, listing the VM names) unless `--vm <name>` selects a slice, which is then applied as such. A file with one VM needs no `--vm`; `--vm` with an unknown name is exit 2. Pruning, `--dry-run` and the plan concern that slice only.
 
@@ -152,7 +152,7 @@ The file is cut by VM, in the order of the file. A **slice** is a file of the sa
 
 ### Validation
 
-`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, component or option, wrong value type, `schema_version` other than 2, a secret given as a plain string, an unresolvable engine or chat interface of a model. Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed. each slice is validated as a file of one VM, and the codes of [`vms`](#vms), [`components`](#components), [Component references](#component-references) and [Slices](#slices) join the list of [spec: capabilities](spec-capabilities.md#config-validate). A model whose proxy or provisioning component is not in the file is `missing_requirement` too, see [What a model needs](#what-a-model-needs).
+`apply` and the generator validate the file **before any side effect**, against the `describe` of the shipped scripts: unknown top-level key, unknown type, component or option, wrong value type, `schema_version` other than 2, a missing option that the component requires (`missing_option`), a secret given as a plain string, an unresolvable engine or chat interface of a model. Each problem is reported with its JSON path on stderr, and the exit code is 2. A higher `schema_version` is refused, never guessed. each slice is validated as a file of one VM, and the codes of [`vms`](#vms), [`components`](#components), [Component references](#component-references) and [Slices](#slices) join the list of [spec: capabilities](spec-capabilities.md#config-validate). A model whose proxy or provisioning component is not in the file is `missing_requirement` too, see [What a model needs](#what-a-model-needs).
 
 #### What a model needs
 
@@ -226,8 +226,8 @@ easy-cs-ai apply <file|-> [--vm <name>] [--prune] [--dry-run]
 
 - `bats` tests in `EASY_CS_AI_ROOT` mode with fake components: each validation error with its JSON path, order from `requires`, missing requirement, re-run is a no-op, changed options reconfigure, defaults, model resolution (single engine, `default`, ambiguous), `force`, stdin input, `--dry-run`, failure at each step and resume, `--prune` (and its absence), the secret forms.
 - Integration test on a fresh VM: `apply` of a configuration, `status` healthy, second `apply` changes nothing, `apply --prune` with a reduced file.
-- `bats` tests of the format of version 2: `wrong_type` and `invalid_value` on the name of a VM, `duplicate_vm`, `empty_vm`, `unknown_type` and `unknown_component` on `component`, the default `name` and `duplicate_name`, `duplicate_component` (also with two different `name`s), the same component on two VMs accepted, `several_defaults` per VM, a requirement satisfied by another VM refused, `schema_version` 1 refused with its message, and a flat file refused.
-- `bats` tests of the [component references](#component-references): `vm` given with and without `name`, a reference by the only component of the type, by the `default`, `ambiguous_engine` and `ambiguous_chat_interface`, `unresolved_engine` and `unresolved_chat_interface` (also when the name exists with another type), `unknown_vm`, `unsupported_count` on both arrays, an empty or absent `chat_interfaces`, the same model on two engines accepted and on one `duplicate_model`.
+- `bats` tests of the format of version 2: `wrong_type` and `invalid_value` on the name of a VM, `duplicate_vm`, `empty_vm`, `unknown_type` and `unknown_component` on `component`, the default `name` and `duplicate_name`, `duplicate_component` (also with two different `name`s), `missing_option` for each `required_when` of the shipped components (and not raised when the condition does not hold), the same component on two VMs accepted, `several_defaults` per VM, a requirement satisfied by another VM refused, `schema_version` 1 refused with its message, and a flat file refused.
+- `bats` tests of the [component references](#component-references): `vm` given with and without `name`, a reference by the only component of the type, by the `default`, `ambiguous_engine` and `ambiguous_chat_interface`, `unresolved_engine` and `unresolved_chat_interface` (also when the name exists with another type), `unknown_vm`, `unsupported_count` on `chat_interfaces` with two references, an `engine` that is an array (`wrong_type`) or absent, an empty or absent `chat_interfaces`, the same model on two engines accepted and on one `duplicate_model`.
 - `bats` tests of the [slices](#slices): each without the other VMs, models with their engine resolved, a chat interface of the same VM kept and one of another VM emptied, order of the file, paths of the file as written, `apply` refused without `--vm` on several VMs, accepted without it on one, `--vm` with an unknown name, `apply --vm` applying one slice.
 - `bats` tests of [what a model needs](#what-a-model-needs): a model with no proxy in the file is `missing_requirement` at its path (target `fresh`), and accepted when the proxy is installed (`--target this`); a `protected` engine needs none; no provisioning component without `force` is `missing_requirement`, and accepted with `force`; with several VMs, a proxy or a provisioning component on another VM does not count, and an engine VM with no model and no proxy is valid; the exit code of `apply` is 4 when it is the only kind of error.
 - `shellcheck` clean.
