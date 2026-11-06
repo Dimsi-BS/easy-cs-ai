@@ -66,6 +66,8 @@ The section appears only when the cloud has a **service configured** (an entry o
 
 ### The service
 
+> **Not decided: where the capabilities run.** A separate service is one of four ways to give the page the capabilities of the CLI, and the one that costs the user a component to host. The others are to run them **in the browser**, or to **embed `easy-cs-ai` in CloudStack**, through its extensions framework or a backend plugin. They are compared in [search/cloudstack: architecture](../search/cloudstack/architecture.md), with the experiments that decide between them. Everything below (the calls, what the service keeps, the collection) describes **the capabilities and what they must give**, whoever runs them; only the words "service" and "HTTP" are specific to the external-server option, and the [reach of the VMs](../search/cloudstack/architecture.md#who-can-reach-the-vms) depends on where they run.
+
 The CLI is a program for a machine, not for a browser, and the capabilities are what the page needs: they already answer in JSON. The service is the **thinnest possible wrapper** of them over HTTP, so that the page can call them:
 
 | Call | Runs | Document |
@@ -323,7 +325,8 @@ The first reading of the documentation is in [search/cloudstack](../search/cloud
 
 ## Open questions
 
-- **Authentication of the page to the service.** The service must accept only authenticated users of the CloudStack of the account. The page has the user's session, but the service is another origin: either the service checks the session (or a signature of the user's keys) against the management server on each call, or CloudStack gives the page a short-lived token. The first needs the service to reach the management server and the session to be sent cross-origin; the second needs something CloudStack does not offer today. Not specified, and the first thing to settle with the community.
+- **Where the capabilities run**: in the browser, on a service, or embedded in CloudStack ([extensions framework](../search/cloudstack/architecture.md#3a-the-extensions-framework-exists-new) or a [backend plugin](../search/cloudstack/architecture.md#3b-a-backend-plugin-in-cloudstack-would-be-contributed)). It decides what the user has to install, how the page authenticates, and from where the VMs are read. The first experiments are listed in [the research](../search/cloudstack/architecture.md#what-to-try-in-this-order).
+- **Authentication of the page to the service** (if there is one). The service must accept only authenticated users of the CloudStack of the account. The page has the user's session, but the service is another origin: either the service checks the session (or a signature of the user's keys) against the management server on each call, or CloudStack gives the page a short-lived token. The first needs the service to reach the management server and the session to be sent cross-origin; the second needs something CloudStack does not offer today. Not specified, and the first thing to settle with the community.
 - **The acceptance of an external service by the CloudStack community** ([contributing](#contributing-to-cloudstack)), and the alternatives if it is refused.
 - **Where the service runs and who owns it.** A component of the management server host, a VM of the cloud, or one per account. It decides who holds the monitoring keys and how they are protected.
 - **Where the configuration is saved** ([where a topology lives](#where-a-topology-lives)): depends on what CloudStack offers.

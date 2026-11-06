@@ -11,6 +11,7 @@ Research done on **2026-11-06**, from the CloudStack documentation (`latest`, wh
 | Note | Question |
 | --- | --- |
 | [UI extension](ui-extension.md) | How can a page be added to the CloudStack UI, and how does it authenticate? |
+| [Architecture](architecture.md) | Where do the capabilities run: in the browser, on an API server, or embedded in CloudStack (extensions framework, backend plugin)? |
 | [API and resources](api-resources.md) | User-data, tags, annotations, metrics, networks, GPU and compute offerings |
 | [Guest and templates](guest-and-templates.md) | cloud-init templates, running a script at first boot, and whether a VM can report to CloudStack |
 
