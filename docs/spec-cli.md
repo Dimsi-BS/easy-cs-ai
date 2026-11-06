@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. **Implemented**: the split of the former `generate` into `config edit` (creates or edits a configuration) and `script` (generates the scripts from a configuration), see [`config edit`](#config-edit-the-session) and [`script`](#script). What concerns a configuration that names several VMs (`apply --vm`, one script per VM) is implemented for the format of version 1, see [spec: several VMs](spec-multi-vm.md). **Format version 2** ([spec: config](spec-config.md#format): a file always names its VMs, even one) is decided, not implemented: `apply` needs `--vm` only when the file has several VMs, and `script` always writes `<output>-<vm>.<extension>`.
+**Status:** accepted. **Implemented**: the split of the former `generate` into `config edit` (creates or edits a configuration) and `script` (generates the scripts from a configuration), see [`config edit`](#config-edit-the-session) and [`script`](#script). What concerns a configuration that names several VMs (`apply --vm`, one script per VM) is implemented for the format of version 1, see [spec: several VMs](spec-multi-vm.md). **Format version 2** ([spec: config](spec-config.md#format): a file always has a `vms` array, even for one machine, and the name of a lone VM is optional) is decided, not implemented: `apply` needs `--vm` only when the file has several VMs, and `script` writes `<output>-<vm>.<extension>` for a VM that has a name (a session always names it), and exactly `<output>` for a lone VM that has none.
 
 ## Purpose
 
@@ -410,7 +410,7 @@ Hands over to the session of the generator (see [spec: VM script generator](spec
 easy-cs-ai script <file> [--output <path>] [--package-url <url>] [--package-version <v>] [--package-format <f>] [--package-sha256 <hash> | --package-file <path>] [--dry-run] [--json]
 ```
 
-Generates the layer 3 scripts from a [configuration](spec-config.md): **one per VM** of the file (one for a file of one VM, see [spec: several VMs](spec-multi-vm.md)), each named `<output>-<vm>.<extension>`. It **never prompts**: `<file>` is required and must be complete, the validation is the one of `config validate --target fresh` and an invalid file is exit 2. The summary is printed on stderr and not asked for confirmation. The [package source](spec-vm-generator.md#package-source) comes from its own options. There is no script for layer 1: the CLI chains components with `apply`.
+Generates the layer 3 scripts from a [configuration](spec-config.md): **one per VM** of the file (one for a file of one VM, see [spec: several VMs](spec-multi-vm.md)), each named `<output>-<vm>.<extension>` (a lone VM with no name: exactly `<output>`, no `VM:` line in the header). It **never prompts**: `<file>` is required and must be complete, the validation is the one of `config validate --target fresh` and an invalid file is exit 2. The summary is printed on stderr and not asked for confirmation. The [package source](spec-vm-generator.md#package-source) comes from its own options. There is no script for layer 1: the CLI chains components with `apply`.
 
 - Without `<file>`, `script` is a usage error (exit 2) whose message points to `easy-cs-ai config edit`, which creates the file.
 - The scripts are written together, all or nothing, and the next steps of a configuration whose models are shown in a chat interface of another VM are printed (see [spec: several VMs](spec-multi-vm.md#next-steps)).

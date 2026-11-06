@@ -173,7 +173,7 @@ Every resource created by the page carries [CloudStack resource tags](#to-verify
 | Key | Value |
 | --- | --- |
 | `easy-cs-ai.topology` | The name of the topology (a string of the shape of a [VM name](spec-config.md#vms)) |
-| `easy-cs-ai.vm` | The name of the VM in the configuration, on the VM, its volumes and its rules |
+| `easy-cs-ai.vm` | The name of the VM in the configuration, on the VM, its volumes and its rules. A VM of a topology always has a name: a lone VM left unnamed by a file (which the format allows) is named by the page when it imports the file (the session names its VMs, and a topology of several VMs needs them) |
 | `easy-cs-ai.version` | The version of the package the scripts pin |
 
 A resource without the topology tag is not part of it. Tag values are short and hold **no secret and no configuration**. A user may remove a tag by hand: that removes the resource from the topology, which is shown (the VM then appears as *not found* where it was expected), never guessed back.
