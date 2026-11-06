@@ -172,11 +172,11 @@ What is left to do once the VMs are up:
   3. Let the VM web reach the VM engine on the HTTPS port of its proxy
      (443 unless you set --port): firewall, security group.
   4. On the VM web, link each model of the VM engine:
-       sudo easy-cs-ai component chat-interface librechat add-endpoint <engine>-<model> <url> \
+       sudo easy-cs-ai component chat-interface librechat add-endpoint <vm>-<engine>-<model> <url> \
          --model <model> --api-key-file <file>
      <url> is the one read in step 2, <file> holds the key (mode 0600, or - for
      stdin), and the endpoint name is suggested unique on the VM (a chat
-     interface may link several engine VMs).
+     interface may link several engine VMs and several engines).
      With the default self-signed certificate, copy the certificate of the
      engine VM (/etc/easy-cs-ai/nginx/server.crt) to the VM web and add
      --ca-file <file>. The host in <url> must be one the certificate covers
@@ -195,6 +195,7 @@ With several steps links the steps are numbered in order, and there is one step 
 
 Rules for the text:
 
+- **The endpoint name** suggested in step 4 is `<vm>-<engine>-<model>`: the `name` of the engine VM, the `name` of the engine component and the model, in the slug of `add` (lowercase, characters outside `[a-z0-9.-]` replaced by `-`), for instance `gpu-ollama-llama3.2-3b`. The VM tells where the model runs, and the engine tells which one of several engines of that VM (vLLM next to Ollama), so two links never collide on the chat interface. The name is a suggestion, the administrator may choose another.
 - **Fixed text, filled with what the configuration says.** The component names, the VM names and the models are those of the file (one `add-endpoint` line per model, with its `--model`). The address, the port, the URL and the files stay placeholders: they do not exist yet.
 - **The text is the validation's, the commands are the contract's.** It never invents an action or an option: a bats test checks that every action and option named in the text is in the `describe` of the script it names (`actions` of nginx, `action_options` of the LibreChat script, see [Contract additions](#contract-additions)). The list is given only by a package whose scripts have them, so the CLI never gives a command that fails.
 - <a id="rules-for-the-text"></a>**Who writes which lines.** The heading (`<N> scripts written…` and the file of each VM) is the **generator's own**: it names the files it wrote, which the validation cannot know (`--output` changes them, and `config validate` writes nothing), and it is never part of `next_steps`. The steps are the validation's and what `next_steps` holds, **one string per step** (a step with commands is one multi-line string, with no numbering in it and no file name of a script: step 1 says "each script", not its path). The title `What is left to do once the VMs are up:`, the numbering and the closing line (when there are several steps) are added by the rendering of the validation, which `script` and `config validate` share, from the same array: what a person reads and the strings of `next_steps` are the same text in the same order.
