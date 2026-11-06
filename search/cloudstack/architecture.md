@@ -18,7 +18,7 @@ Research of 2026-11-06, from the documentation and the `main` branch of `apache/
 | --- | --- | --- |
 | `catalog`, `config schema` | The `describe` of each shipped script: **data that only changes with a release** | Anywhere, as a file generated at release |
 | `config validate` | One `jq` program run per slice ([spec: config](../../docs/spec-config.md#implementation-notes)), reading the `describe` data | Needs `jq`, or a port |
-| `generate` | Filling a small script template with the slice, the package version and its checksum | Needs the template, no tool beyond `bash` (or a port, with a test that both give the same bytes) |
+| `script` | Filling a small script template with the slice, the package version and its checksum | Needs the template, no tool beyond `bash` (or a port, with a test that both give the same bytes) |
 | `plan`, `suggest`, `check` | **`llmfit`** (Rust) with `--ram`, `--memory`, `--cpu-cores` overrides, so **no hardware detection is needed**, plus bash and `jq` for the margin | Needs the binary: 10 to 19 seconds per model ([spec: model fit](../../docs/spec-model-fit.md#recommended-vm)) |
 | Collect the status of the VMs ([status document](../../docs/spec-cloudstack.md#the-status-document)) | An HTTPS read with a key and a pinned certificate | Needs **network reach to the VMs**, which depends on where it runs (below) |
 
@@ -41,7 +41,7 @@ The capabilities are re-implemented in, or compiled for, the browser.
 | Part | Feasibility found |
 | --- | --- |
 | `catalog`, `schema` | Easy: static files generated at release |
-| `generate` | Easy: a template; the risk is two implementations drifting, which a test of byte parity answers |
+| `script` | Easy: a template; the risk is two implementations drifting, which a test of byte parity answers |
 | `config validate` | `jq` exists as WebAssembly: [`jq-web`](https://www.npmjs.com/package/jq-web) (npm 0.6.2, Emscripten) and [`jq-wasm`](https://github.com/paolosimone/jq-wasm), which says it moves to jq 1.6. The validation is **one `jq` program**, so it could run **as it is** in the browser, if it is kept in a file of its own and uses only what that version of jq has. The version of `jq` the project requires, and what the scripts use of it, **were not compared**: to check |
 | `plan`, `suggest`, `check` | **No sign of a WebAssembly build of llmfit**; the sources found speak of Cargo, Homebrew, Scoop and Docker, and of detection through native tools (`nvidia-smi`, `rocm-smi`, `system_profiler`), which the overrides avoid. Whether the crate builds for `wasm32` was **not checked**. If not, the sizing cannot move to the browser, or needs the rules and the models' figures re-implemented, which breaks [principle 1](../../docs/spec-cloudstack.md#principles) |
 | Monitoring | The browser vantage point above: workable for a VM with a public address and a trusted certificate, awkward otherwise |
@@ -75,7 +75,7 @@ Read from the [admin guide](https://docs.cloudstack.apache.org/en/latest/admingu
 **What fits.** It is the CloudStack-supported way to run an external program from the management server, with typed parameters, roles, and a form in the UI, and **it needs no change to the core of CloudStack**: the extension is registered by an operator (a user-defined one, `isuserdefined` in the response). The project could ship the extension as a small package that depends on `easy-cs-ai`.
 
 **What does not fit (to test).**
-- The actions are **tied to a VM, a network or a VPC** and are not documented as global: `catalog`, `validate`, `plan` and `generate` have **no resource**, since they act on a topology that does not exist yet. A workaround (an action on any existing VM or network as a pretext) is poor, and unconfirmed to be possible.
+- The actions are **tied to a VM, a network or a VPC** and are not documented as global: `catalog`, `validate`, `plan` and `script` have **no resource**, since they act on a topology that does not exist yet. A workaround (an action on any existing VM or network as a pretext) is poor, and unconfirmed to be possible.
 - It is a **call and a message**, not a data API: how the output of the executable reaches the page (the `result` of `runCustomAction`, an asynchronous job to poll) was **not confirmed**, nor any limit on its size.
 - A **timeout** per action, and each `plan` takes 10 to 19 seconds per model: workable if the maximum timeout allows it.
 - Orchestrator extensions bring **limits to extension-managed VMs** (no data volumes, no user-data, no SSH key injection, no live migration) that must not apply here: the project's VMs are ordinary VMs created through the normal API, and the extension would only **act on** them. That has to be tested, since the documentation describes extensions as the owner of the VMs they orchestrate.
@@ -122,7 +122,7 @@ The computations of the project (catalog, schema, validation, sizing, script gen
 
 - **No option is free.** Each trades the user's burden against a risk found here: a component to host (2), the llmfit blocker (1), the unknowns of a new mechanism (3a), the Java contribution (3b).
 - **3a is the closest to "embedded in CloudStack" and needs no change to the core**, which is why it is worth testing **first**. It stands or falls on two questions that only an instance answers: can an action exist **without a resource** (or can the topology be tied to a real resource, such as the SSH key pair or a network of the account), and does the output of an action come back **as data** to the page.
-- **1 is attractive for the part that is only data** (`catalog`, `schema`, `generate` and the validation through `jq` in WebAssembly) **and cannot do the sizing and the monitoring well**: a mix is possible, the browser for what it can do and a server-side mechanism for llmfit and for reading the VMs.
+- **1 is attractive for the part that is only data** (`catalog`, `schema`, `script` and the validation through `jq` in WebAssembly) **and cannot do the sizing and the monitoring well**: a mix is possible, the browser for what it can do and a server-side mechanism for llmfit and for reading the VMs.
 - **2 stays as the fallback that works on any cloud**, since nothing here depends on CloudStack's internals; its cost is the one the user named.
 
 ## What to try, in this order

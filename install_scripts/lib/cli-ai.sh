@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The machine interface of the CLI (catalog, host, config, guide, result
 # documents), see docs/spec-capabilities.md. Sourced by package/bin/easy-cs-ai,
-# and by vm_script/generate.sh for config_report. Needs common.sh, cli-base.sh
+# and by vm_script/lib/generator.sh for config_report. Needs common.sh, cli-base.sh
 # and cli-apply.sh. With --json (_OPT_JSON) stdout is exactly one JSON
 # document; without it a command with a human rendering prints that, one that
 # only returns data prints JSON anyway.
@@ -340,7 +340,7 @@ config_cross() {
 
 # config_validate_cross <config> <desc>: print the errors that need the whole file (the `links`
 # codes, `engine_unreachable`, `duplicate_server_name`, see docs/spec-multi-vm.md#validation) and
-# exit 2 when any. `generate --config` calls this before writing any script, as `config validate`
+# exit 2 when any. `script` calls this before writing any script, as `config validate`
 # does through `config_report`'s exit code; `apply` does not, see docs/spec-config.md#links.
 config_validate_cross() {
     local problems line
@@ -533,8 +533,8 @@ cmd_config() {
         rc="$(config_exit_code "$doc")"
         return "$rc"
         ;;
-    "") fail "$EXIT_USAGE" "config needs a subcommand" "easy-cs-ai config schema, or easy-cs-ai config validate <file|->" ;;
-    *) fail "$EXIT_USAGE" "unknown config subcommand '$sub'" "easy-cs-ai config schema, or easy-cs-ai config validate <file|->" ;;
+    "") fail "$EXIT_USAGE" "config needs a subcommand" "easy-cs-ai config edit [<file>], easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
+    *) fail "$EXIT_USAGE" "unknown config subcommand '$sub'" "easy-cs-ai config edit [<file>], easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
     esac
 }
 

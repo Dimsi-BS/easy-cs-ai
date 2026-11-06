@@ -1,13 +1,14 @@
-#!/usr/bin/env bash
-# Generator of the VM post-install script, see docs/spec-vm-generator.md.
-# Reached through `easy-cs-ai generate`. Interactive unless given --config.
-set -euo pipefail
+# shellcheck shell=bash
+# shellcheck disable=SC2034  # variables shared with config.sh and script.sh
+# Shared code of the two commands of the VM script generator, sourced by vm_script/config.sh
+# (the session that creates or edits a configuration) and vm_script/script.sh (the scripts from a
+# configuration). See docs/spec-vm-generator.md. Not run on its own.
 
 readonly GENERATOR_VERSION=0.1.0
 readonly DEFAULT_RELEASE_BASE=https://github.com/Dimsi-BS/easy-cs-ai/releases/download
 readonly SCRIPT_SIZE_LIMIT=32768
 
-HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 readonly HERE
 
 find_home() {
@@ -28,93 +29,21 @@ export EASY_CS_AI_LIB="$HOME_DIR/lib"
 export EASY_CS_AI_ASSUME_EMPTY=1
 export APPLY_ORDER_FAIL_CODE=2
 
-# shellcheck source=../install_scripts/lib/common.sh
+# shellcheck source=../../install_scripts/lib/common.sh
 source "$EASY_CS_AI_LIB/common.sh"
-# shellcheck source=../install_scripts/lib/cli-base.sh
+# shellcheck source=../../install_scripts/lib/cli-base.sh
 source "$EASY_CS_AI_LIB/cli-base.sh"
-# shellcheck source=../install_scripts/lib/cli-apply.sh
+# shellcheck source=../../install_scripts/lib/cli-apply.sh
 source "$EASY_CS_AI_LIB/cli-apply.sh"
-# shellcheck source=../install_scripts/lib/cli-ai.sh
+# shellcheck source=../../install_scripts/lib/cli-ai.sh
 source "$EASY_CS_AI_LIB/cli-ai.sh"
-# shellcheck source=lib/questions.sh
+# shellcheck source=questions.sh
 source "$HERE/lib/questions.sh"
 
 DRY=0
-CONFIG_FILE="" CONFIG_ONLY=0 OUTPUT="" EDIT_FILE=""
+CONFIG_FILE="" OUTPUT=""
 REPORT_DOC="" SCRIPT_BYTES=0
 PACKAGE_URL="" PACKAGE_VERSION="" PACKAGE_FORMAT=deb PACKAGE_SHA256="" PACKAGE_FILE="" PACKAGE_EXT=deb
-
-usage() {
-    cat <<'EOF'
-Usage: generate [options]
-
-Writes the VM post-install script (default ./easy-cs-ai-vm.sh), after an
-interactive session or from a configuration file. When the stack is split on
-two VMs (the first question of the session, or components that carry a vm),
-it writes one script per VM, the VM inserted before the extension of the name
-(easy-cs-ai-vm-engine.sh, easy-cs-ai-vm-web.sh), then prints what is left to do
-once the VMs are up.
-
-  --config <file>          configuration to turn into a script, no prompt at all
-  --config-only            write only the configuration (default ./easy-cs-ai.json)
-  --edit <file>            open an existing configuration in the session; saving regenerates
-                           its scripts (not with --config nor --config-only)
-  --output <path>          where to write the result (for several VMs: the name the VM is inserted in)
-  --package-url <url>      where the VM downloads the package (a mirror, for instance)
-  --package-version <v>    pinned version (default: the version of the installed CLI)
-  --package-format <f>     deb (default), rpm or tarball
-  --package-sha256 <hex>   checksum the script verifies
-  --package-file <path>    compute the checksum from a local copy of the package
-  --dry-run                run everything, print the result on stderr, write nothing
-  --json                   with --config: print one JSON document on stdout (validation,
-                           warnings, plan, script written, or scripts and next steps for
-                           several VMs) instead of the human output
-  --help --version --verbose
-
-Without --package-sha256 or --package-file, the checksum is read from <url>.sha256.
-EOF
-}
-
-parse_args() {
-    local arg
-    while [[ $# -gt 0 ]]; do
-        arg="$1"
-        shift
-        case "$arg" in
-        --help) usage; exit 0 ;;
-        --version) printf '%s\n' "$GENERATOR_VERSION"; exit 0 ;;
-        --verbose) export EASY_CS_AI_VERBOSE=1 ;;
-        --dry-run) DRY=1 ;;
-        --json) _OPT_JSON=1 ;;
-        --config-only) CONFIG_ONLY=1 ;;
-        --config | --edit | --output | --package-url | --package-version | --package-format | --package-sha256 | --package-file)
-            [[ $# -gt 0 ]] || die "$EXIT_USAGE" "$arg needs a value"
-            case "$arg" in
-            --config) CONFIG_FILE="$1" ;;
-            --edit) EDIT_FILE="$1" ;;
-            --output) OUTPUT="$1" ;;
-            --package-url) PACKAGE_URL="$1" ;;
-            --package-version) PACKAGE_VERSION="$1" ;;
-            --package-format) PACKAGE_FORMAT="$1" ;;
-            --package-sha256) PACKAGE_SHA256="$1" ;;
-            --package-file) PACKAGE_FILE="$1" ;;
-            esac
-            shift
-            ;;
-        *) die "$EXIT_USAGE" "unknown argument: $arg" ;;
-        esac
-    done
-    if [[ -n "$CONFIG_FILE" ]] && ((CONFIG_ONLY)); then
-        die "$EXIT_USAGE" "--config and --config-only cannot be combined"
-    fi
-    if [[ -n "$EDIT_FILE" ]] && { [[ -n "$CONFIG_FILE" ]] || ((CONFIG_ONLY)); }; then
-        die "$EXIT_USAGE" "--edit cannot be combined with --config nor --config-only"
-    fi
-    if ((_OPT_JSON)) && [[ -z "$CONFIG_FILE" ]]; then
-        die "$EXIT_USAGE" "--json needs --config: a session is interactive"
-    fi
-    case "$PACKAGE_FORMAT" in deb | rpm | tarball) ;; *) die "$EXIT_USAGE" "unknown package format '$PACKAGE_FORMAT' (deb, rpm or tarball)" ;; esac
-}
 
 # --- Package source -------------------------------------------------------------------
 
@@ -155,7 +84,7 @@ header() {
     local config="$1" vm="${2:-}" desc order type name version
     desc="$(apply_describes "$config")"
     order="$(apply_order "$config" "$desc")"
-    printf '# easy-cs-ai VM post-install script, generated by easy-cs-ai generate %s on %s\n' "$GENERATOR_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '# easy-cs-ai VM post-install script, generated by easy-cs-ai script %s on %s\n' "$GENERATOR_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     [[ -z "$vm" ]] || printf '# VM: %s (%s of %s)\n' "$vm" "$3" "$4"
     printf '# package: easy-cs-ai %s (%s)\n' "$PACKAGE_VERSION" "$PACKAGE_FORMAT"
     while read -r type name; do
@@ -238,7 +167,7 @@ emit_vm_scripts() {
             log_info "dry run, would write $out:"
             printf '%s\n' "$content" >&2
         else
-            if ! tmp="$(mktemp "$(dirname "$out")/.generate.XXXXXX" 2>/dev/null)"; then
+            if ! tmp="$(mktemp "$(dirname "$out")/.script.XXXXXX" 2>/dev/null)"; then
                 ((${#tmps[@]} == 0)) || rm -f "${tmps[@]}"
                 die "$EXIT_ERROR" "cannot write in $(dirname "$out"): no script was written"
             fi
@@ -274,7 +203,7 @@ write_output() {
         printf '%s\n' "$content" >&2
         return 0
     fi
-    tmp="$(mktemp "$(dirname "$path")/.generate.XXXXXX" 2>/dev/null)" || die "$EXIT_ERROR" "cannot write in $(dirname "$path")"
+    tmp="$(mktemp "$(dirname "$path")/.write.XXXXXX" 2>/dev/null)" || die "$EXIT_ERROR" "cannot write in $(dirname "$path")"
     printf '%s\n' "$content" >"$tmp"
     chmod "$mode" "$tmp"
     mv -f "$tmp" "$path" || die "$EXIT_ERROR" "cannot write $path"
@@ -364,7 +293,7 @@ load_config() {
     fi
 }
 
-# --- The editor: generate --edit <file>, docs/spec-multi-vm.md#editing ----------------
+# --- The session: config edit, docs/spec-multi-vm.md#editing -------------------------------
 
 EDIT_ORIGINAL=""
 
@@ -375,9 +304,9 @@ _editor_known_vm() {
     apply_vms "$1" | grep -qxF "$2"
 }
 
-# _editor_list_stale <config>: the scripts on disk (the pattern of --output) that no VM of the
-# file produces any more. The editor never deletes a file, only lists them.
-_editor_list_stale() {
+# list_stale_scripts <config>: the scripts on disk (the pattern of --output) that no VM of the
+# file produces any more. `script` never deletes a file, only lists them.
+list_stale_scripts() {
     local config="$1" base="${OUTPUT:-./easy-cs-ai-vm.sh}" dir file prefix ext f vm
     local -a stale=()
     apply_named "$config" || return 0
@@ -401,55 +330,76 @@ _editor_list_stale() {
     log_warn "no longer produced by any VM, remove by hand if unneeded: ${stale[*]}"
 }
 
+# ask_config_file <default> [<opened>]: "the file written" question (docs/spec-multi-vm.md#the-file-written).
+# The default is the file opened, or ./easy-cs-ai.json; another name is accepted. An existing file
+# other than the one opened is confirmed first, a directory that cannot be written is refused.
+# Leaves the answer in CONFIG_TARGET. Not asked with --dry-run (the caller does not call it).
+CONFIG_TARGET=""
+ask_config_file() {
+    local default="$1" opened="${2:-}" name dir
+    while :; do
+        _read "File to write (overwritten, or created if it does not exist)" "$default"
+        name="$REPLY"
+        dir="$(dirname "$name")"
+        if [[ -d "$name" ]]; then
+            log_warn "$name is a directory"
+            continue
+        fi
+        if [[ ! -d "$dir" || ! -w "$dir" ]]; then
+            log_warn "cannot write in $dir: not a writable directory"
+            continue
+        fi
+        if [[ -e "$name" ]] && ! { [[ -n "$opened" ]] && [[ "$name" -ef "$opened" ]]; }; then
+            _read "$name exists. Overwrite? (y/n)" n
+            [[ "$REPLY" == y || "$REPLY" == Y ]] || continue
+        fi
+        CONFIG_TARGET="$name"
+        return 0
+    done
+}
+
+# write_config <path> <config>: the configuration written whole or not at all (a temporary file in
+# the same directory, then rename), the mode of the file kept when it existed. With --dry-run the
+# result goes to stderr. Then names the command that makes the scripts.
+write_config() {
+    local path="$1" config="$2" mode=644 tmp
+    if ((DRY)); then
+        log_info "dry run, would write $path:"
+        jq . <<<"$config" >&2
+        return 0
+    fi
+    [[ ! -e "$path" ]] || mode="$(stat -c %a "$path" 2>/dev/null)" || mode=644
+    tmp="$(mktemp "$(dirname "$path")/.config.XXXXXX" 2>/dev/null)" || {
+        log_warn "cannot write in $(dirname "$path"): nothing written"
+        return 1
+    }
+    jq . <<<"$config" >"$tmp"
+    chmod "$mode" "$tmp" 2>/dev/null || true
+    if ! mv -f "$tmp" "$path"; then
+        rm -f "$tmp"
+        log_warn "cannot write $path: nothing written"
+        return 1
+    fi
+    log_info "configuration written to $path"
+    log_info "to generate the scripts: easy-cs-ai script $path"
+}
+
 # _editor_write <file>: `y`. Refuses when the file changed on disk since it was opened. Then
-# validates again, resolves the package source and writes the configuration and every script
-# together: the configuration is renamed into place only once the scripts succeeded, so a
-# failure of either keeps the file exactly as it was (docs/spec-multi-vm.md#editing).
+# validates again, asks the file to write and writes the configuration, and nothing else: the
+# scripts are made by `script` (docs/spec-multi-vm.md#editing).
 _editor_write() {
-    local file="$1" disk tmp mode
+    local file="$1" disk
     disk="$(cat "$file" 2>/dev/null || true)"
     if [[ "$disk" != "$EDIT_ORIGINAL" ]]; then
         log_warn "the file changed on disk since it was opened: nothing written, open it again"
         return 1
     fi
-    resolve_package_source
-    if ((DRY)); then
-        log_info "dry run, would write $file:"
-        printf '%s\n' "$EDIT_CONFIG" >&2
-        if apply_named "$EDIT_CONFIG"; then
-            emit_vm_scripts "$EDIT_CONFIG"
-            print_vm_scripts_report "$EDIT_CONFIG"
-        else
-            emit_script "$EDIT_CONFIG" "${OUTPUT:-./easy-cs-ai-vm.sh}"
-        fi
-        return 0
-    fi
-    mode="$(stat -c %a "$file" 2>/dev/null)" || mode=644
-    tmp="$(mktemp "$(dirname "$file")/.generate.XXXXXX" 2>/dev/null)" || {
-        log_warn "cannot write in $(dirname "$file"): nothing written"
-        return 1
-    }
-    jq . <<<"$EDIT_CONFIG" >"$tmp"
-    chmod "$mode" "$tmp" 2>/dev/null || true
-    if apply_named "$EDIT_CONFIG"; then
-        emit_vm_scripts "$EDIT_CONFIG"
-    else
-        emit_script "$EDIT_CONFIG" "${OUTPUT:-./easy-cs-ai-vm.sh}"
-    fi
-    if ! mv -f "$tmp" "$file"; then
-        rm -f "$tmp"
-        log_warn "cannot write $file: the scripts were written, the configuration was not; fix this and save again"
-        return 1
-    fi
-    log_info "configuration written to $file"
-    _editor_list_stale "$EDIT_CONFIG"
-    apply_named "$EDIT_CONFIG" && print_vm_scripts_report "$EDIT_CONFIG"
-    return 0
+    if ! ((DRY)); then ask_config_file "$file" "$file"; fi
+    write_config "${CONFIG_TARGET:-$file}" "$EDIT_CONFIG"
 }
 
 # run_editor <file>: open, show the summary, apply commands until the person writes (y), quits
-# (q) or cancels (end of input); see docs/spec-multi-vm.md#editing. Saving regenerates the
-# scripts: the configuration and the scripts of its VMs are written together.
+# (q) or cancels (end of input); see docs/spec-multi-vm.md#editing. Saving writes the file only.
 run_editor() {
     local file="$1" content cmd sub arg1 v
     [[ -r "$file" ]] || die "$EXIT_USAGE" "cannot read $file"
@@ -519,46 +469,3 @@ run_editor() {
         esac
     done
 }
-
-main() {
-    parse_args "$@"
-    _require_jq
-    local out desc
-    if [[ -n "$EDIT_FILE" ]]; then
-        run_editor "$EDIT_FILE"
-        return 0
-    fi
-    if [[ -n "$CONFIG_FILE" ]]; then
-        load_config
-    else
-        run_session
-        desc="$(apply_describes "$SESSION_CONFIG")"
-        apply_validate "$SESSION_CONFIG" "$desc"
-        apply_validate_models_need "$SESSION_CONFIG" "$desc"
-        config_validate_cross "$SESSION_CONFIG" "$desc"
-    fi
-    if ((CONFIG_ONLY)); then
-        out="${OUTPUT:-./easy-cs-ai.json}"
-        write_output "$out" "$SESSION_CONFIG" 0644
-        ((DRY)) || log_info "configuration written to $out"
-        return 0
-    fi
-    resolve_package_source
-    if apply_named "$SESSION_CONFIG"; then
-        emit_vm_scripts "$SESSION_CONFIG"
-        if ((_OPT_JSON)); then
-            json_result "$REPORT_DOC" null "$SCRIPTS_JSON"
-        else
-            print_vm_scripts_report "$SESSION_CONFIG"
-        fi
-        return 0
-    fi
-    out="${OUTPUT:-./easy-cs-ai-vm.sh}"
-    emit_script "$SESSION_CONFIG" "$out"
-    if ((_OPT_JSON)); then
-        json_result "$REPORT_DOC" "$(jq -nc --arg p "$out" --argjson b "$SCRIPT_BYTES" --argjson w "$((DRY ? 0 : 1))" --arg v "$PACKAGE_VERSION" --arg f "$PACKAGE_FORMAT" \
-            '{path: $p, bytes: $b, written: ($w == 1), package_version: $v, package_format: $f}')"
-    fi
-}
-
-main "$@"

@@ -17,7 +17,7 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
     [ "$status" -eq 0 ]
     [ -x "$DIST/stage/bin/easy-cs-ai" ]
     [ -f "$DIST/stage/lib/easy-cs-ai/lib/common.sh" ]
-    [ -f "$DIST/stage/lib/easy-cs-ai/vm_script/generate.sh" ]
+    [ -f "$DIST/stage/lib/easy-cs-ai/vm_script/script.sh" ]
     [ -f "$DIST/stage/lib/easy-cs-ai/engine/ollama.sh" ]
     [ -f "$DIST/stage/lib/easy-cs-ai/templates/ollama/ollama.service" ]
     [ -f "$DIST/stage/lib/easy-cs-ai/ranks.conf" ]
@@ -72,7 +72,7 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
     tar -xzf "$DIST/easy-cs-ai-$VERSION.tar.gz" -C "$BATS_TEST_TMPDIR/opt" --strip-components=1
     cd "$BATS_TEST_TMPDIR"
     printf '{"schema_version":1,"components":[{"type":"engine","name":"ollama"}]}' >cfg.json
-    run --separate-stderr bash "$BATS_TEST_TMPDIR/opt/bin/easy-cs-ai" generate --config cfg.json \
+    run --separate-stderr bash "$BATS_TEST_TMPDIR/opt/bin/easy-cs-ai" script cfg.json \
         --package-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --output vm.sh
     [ "$status" -eq 0 ]
     grep -q "^PACKAGE_VERSION='$VERSION'" vm.sh
@@ -96,7 +96,7 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
     [ -x "$DIST/stage/lib/easy-cs-ai/proxy/nginx.sh" ]
     [ -x "$DIST/stage/lib/easy-cs-ai/chat-interface/librechat.sh" ]
     [ -x "$DIST/stage/lib/easy-cs-ai/provisioning/llmfit.sh" ]
-    [ -x "$DIST/stage/lib/easy-cs-ai/vm_script/generate.sh" ]
+    [ -x "$DIST/stage/lib/easy-cs-ai/vm_script/script.sh" ]
 }
 
 # A stand-in for nfpm: records where and how it was run, then writes the package it was asked for
