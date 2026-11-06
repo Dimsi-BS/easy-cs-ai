@@ -118,8 +118,8 @@ A topology is edited as the [editor of spec: several VMs](spec-multi-vm.md#editi
 | --- | --- | --- |
 | **VMs** | A list; *add a VM* with a name (shape of [spec: config](spec-config.md#vms)) and an optional role (`engine`, `web`, `custom`, only a shortcut), rename, remove (with what goes with it announced) | [roles](spec-multi-vm.md#roles), [`vms`](spec-config.md#vms) |
 | **Components of a VM** | One selector per type with the shipped components and their rank, the dependencies a choice drags in listed and accepted explicitly, the options as typed fields (a secret option offers its channels only, never a value) | `catalog`, `config schema`, [step 2 and 3 of the journey](spec-journey.md#2-components-and-dependencies) |
-| **Models of an engine** | Hardware first (the specs of the VM, a ranked list of models that fit) or models first (the VM they need), each model with its fit verdict and the warning when llmfit disagrees; the place of a model is its engine component and that component's VM | [spec: model fit](spec-model-fit.md#choosing-models-in-a-session) |
-| **Where the models are shown** | For each VM that holds an engine with models, the chat interface (of which VM) that shows them, the answer written on each of those models; the page draws a line from the engine VM to the chat interface it feeds | [`chat_interfaces` of a model](spec-config.md#models), [spec: several VMs](spec-multi-vm.md#creating) |
+| **Models of an engine** | Hardware first (the specs of the VM, a ranked list of models that fit) or models first (the VM they need), each model with its fit verdict and the warning when llmfit disagrees; a model is edited inside its engine component, whose VM is its place | [spec: model fit](spec-model-fit.md#choosing-models-in-a-session) |
+| **Where the models are shown** | For each model, in the order of the file, the chat interface (of which VM) that shows it, written in the `chat_interfaces` of that model; the page draws a line from the engine VM to the chat interface it feeds | [`chat_interfaces` of a model](spec-config.md#models), [spec: several VMs](spec-multi-vm.md#creating) |
 | **Sizing of each VM** | The recommendation of `plan` for that VM, memory in two quantisations, the **estimated margin** shown as such with its sources, the models not covered, never a single total that looks measured | [estimated margin](spec-model-fit.md#estimated-margin) |
 | **Warnings and errors** | Those of `config validate`, each with its `vm` and path, and the fix proposed as the editor's `f` does; **nothing can be created while an error stands** | [validation](spec-multi-vm.md#validation) |
 | **File** | *Download* and *import* of the configuration | [spec: config](spec-config.md) |
@@ -217,7 +217,7 @@ CloudStack tells **what the hypervisor sees**. Only the VM knows whether the eng
 | Resources against the plan | vCPU, RAM, disk in use against what the VM has, and **against what `plan` recommended for its models**: the page flags a VM whose RAM or disk use approaches the limit; the figures are the CloudStack ones, the recommendation is the capability's, and the margin is described as an estimate | CloudStack and `plan` |
 | Certificate | The names it covers and its expiry (a self-signed certificate does not expire the same way as Let's Encrypt) | Status document |
 
-**Per model** (a table across the VMs, each model with its [place](spec-config.md#component-references)):
+**Per model** (a table across the VMs, each model with its [place](spec-config.md#models)):
 
 | Column | Meaning |
 | --- | --- |
