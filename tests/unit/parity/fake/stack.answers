@@ -1,8 +1,12 @@
 # Engine, chat interface, and the proxy it requires; one option changed, a default that warns.
-none  # provisioning
-none  # proxy, it is proposed below
+  # role of the VM: custom, the default
+  # name of the VM: vm-1, the default
+n  # provisioning
+n  # proxy, it is proposed below
+y  # engine
   # engine: ollama
-chat  # chat-interface
+y  # chat-interface
+  # chat-interface: chat
 y  # chat requires proxy: add proxy prox?
 9999  # ollama --port
   # chat --allow-registration: the default (true), which warns
@@ -10,3 +14,5 @@ y  # chat requires proxy: add proxy prox?
 m1, m2  # models to add
 y  # confirm
   # add another VM: no (default)
+  # m1 is shown in chat: yes, the default
+  # m2 is shown in chat: yes, the default

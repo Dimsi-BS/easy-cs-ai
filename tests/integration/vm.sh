@@ -254,7 +254,7 @@ cmd_run() {
     EASY_CS_AI_CLI_VERSION="$version" bash "$ROOT/vm_script/script.sh" "$config" --package-format tarball \
         --package-url "http://$gw:$HTTP_PORT/easy-cs-ai-$version.tar.gz" --package-file "$dist/easy-cs-ai-$version.tar.gz" \
         --package-version "$version" --output "$script" >&2
-    if jq -e 'any(.components[]?; has("vm"))' "$config" >/dev/null; then
+    if jq -e '(.vms | length) > 1 or any(.vms[]?; has("name"))' "$config" >/dev/null; then
         [[ -n "$which" ]] || die "$config names several VMs: say which one this VM is with --vm <name>"
         script="${script%.sh}-$which.sh"
         [[ -f "$script" ]] || die "$config has no VM named $which"

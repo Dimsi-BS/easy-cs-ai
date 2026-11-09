@@ -1,10 +1,20 @@
 {
-  "schema_version": 1,
-  "components": [
-    { "type": "provisioning", "name": "llmfit" },
-    { "type": "proxy", "name": "nginx" },
-    { "type": "engine", "name": "ollama" },
-    { "type": "chat-interface", "name": "librechat" }
+  "schema_version": 2,
+  "vms": [
+    {
+      "name": "vm-1",
+      "components": [
+        { "component": "provisioning/llmfit" },
+        { "component": "proxy/nginx" },
+        { "component": "engine/ollama", "name": "ollama", "models": [{ "model": "llama3.2:3b", "name": "llama3.2:3b" }] },
+        { "component": "chat-interface/librechat", "name": "librechat" }
+      ]
+    }
   ],
-  "models": [{ "name": "llama3.2:3b" }]
+  "links": [
+    {
+      "model": { "vm_ref": "vm-1", "component_ref": "ollama", "model_ref": "llama3.2:3b" },
+      "chat_interface": { "vm_ref": "vm-1", "component_ref": "librechat" }
+    }
+  ]
 }

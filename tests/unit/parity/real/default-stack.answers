@@ -1,7 +1,13 @@
 # The default stack of the shipped scripts, every option left at its default, one model.
+  # role of the VM: custom, the default
+  # name of the VM: vm-1, the default
+y  # provisioning
   # provisioning: llmfit, the rank 1
+y  # proxy
   # proxy: nginx
+y  # engine
   # engine: ollama
+y  # chat-interface
   # chat-interface: librechat (requires nginx, which is selected)
   # llmfit options: defaults (version, health-timeout, lock-timeout)
   # llmfit options: defaults (version, health-timeout, lock-timeout)
@@ -32,3 +38,4 @@
 llama3.2:3b  # models to add
 y  # confirm
   # add another VM: no (default)
+  # llama3.2:3b is shown in librechat: yes, the default

@@ -46,18 +46,14 @@ parse_args() {
 main() {
     parse_args "$@"
     _require_jq
-    local desc
     if [[ -n "$EDIT_FILE" ]]; then
         run_editor "$EDIT_FILE"
         return 0
     fi
     run_session
-    desc="$(apply_describes "$SESSION_CONFIG")"
-    apply_validate "$SESSION_CONFIG" "$desc"
-    apply_validate_models_need "$SESSION_CONFIG" "$desc"
-    config_validate_cross "$SESSION_CONFIG" "$desc"
-    if ! ((DRY)); then ask_config_file ./easy-cs-ai.json; fi
-    write_config "${CONFIG_TARGET:-./easy-cs-ai.json}" "$SESSION_CONFIG"
+    EDIT_ORIGINAL=""
+    EDIT_CONFIG="$(jq -c . <<<"$SESSION_CONFIG")"
+    run_editor_loop ""
 }
 
 main "$@"

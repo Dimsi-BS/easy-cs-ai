@@ -55,11 +55,49 @@ _join_lines() {
     REPLY_LINES=""
     for a in "$@"; do REPLY_LINES+="$a"$'\n'; done
 }
-# ask <answers…>: appends the answer to the question of another VM, left to its default (one VM
-# only), since this package ships an engine and a chat interface (docs/spec-multi-vm.md#principles).
-ask() { _join_lines "$@" ""; ANSWERS="$REPLY_LINES"; export ANSWERS; session; }
-# ask_raw <answers…>: no answer is added, the last one is the answer to the question of another VM.
-ask_raw() { _join_lines "$@"; ANSWERS="$REPLY_LINES"; export ANSWERS; session; }
+# _expand <answers…>: the answers of a one-VM session, written as the types of the pass were chosen
+# before (a component name, "" for the default, none), in the questions of the session: the role and
+# the name of the VM (defaults), then for each type the package ships "Add a <type> on vm-1? (y/n)"
+# and the choice, the other answers unchanged (docs/spec-multi-vm.md#creating).
+_expand() {
+    local n=0 t a i=0
+    for t in provisioning proxy engine chat-interface; do
+        compgen -G "$EASY_CS_AI_HOME/$t/*.sh" >/dev/null && n=$((n + 1))
+    done
+    REPLY_LINES=$'\n\n'
+    for a in "$@"; do
+        if ((i < n)); then
+            if [[ "$a" == none ]]; then REPLY_LINES+=$'n\n'; else REPLY_LINES+="y"$'\n'"$a"$'\n'; fi
+        else
+            REPLY_LINES+="$a"$'\n'
+        fi
+        i=$((i + 1))
+    done
+}
+# ask <answers…>: the one-VM session, then the question of another VM left to its default, the
+# questions of where each model is shown left to theirs (more empty answers than there are questions
+# are refused by the editor, harmlessly), and `y` to write (docs/spec-multi-vm.md#creating).
+ask() { _expand "$@"; ANSWERS="$REPLY_LINES"$'\n\n\n\ny\n'; export ANSWERS; session; }
+# ask_new <answers…>: the answers as the session asks them (the role and the name of the VM left to
+# their defaults), then the tail of `ask`.
+ask_new() {
+    local a
+    REPLY_LINES=$'
+
+'
+    for a in "$@"; do REPLY_LINES+="$a"$'
+'; done
+    ANSWERS="$REPLY_LINES"$'
+
+
+
+y
+'
+    export ANSWERS
+    session
+}
+# ask_raw <answers…>: the same, with nothing added after the answers.
+ask_raw() { _expand "$@"; ANSWERS="$REPLY_LINES"; export ANSWERS; session; }
 
 # ask_script <answers…>: the session writes a configuration (session.json), then `script` makes the
 # scripts from it, with GEN_ARGS as its options. Two commands since the split of generate: the
@@ -104,11 +142,11 @@ ask_script() {
     GEN_ARGS=(); OUTFILE=cfg.json
     ask none "" chat y 9999 "m1, m2" y
     [ "$status" -eq 0 ]
-    run jq -c '.components | map(.type + ":" + .name)' cfg.json
-    [ "$output" = '["proxy:prox","engine:eng","chat-interface:chat"]' ]
-    [ "$(jq -r '.components[1].options.port' cfg.json)" = "9999" ]
-    [ "$(jq -r '.components[1].options["api-key"] // "none"' cfg.json)" = "none" ]
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1","m2"]' ]
+    run jq -c '.vms[0].components | map(.component)' cfg.json
+    [ "$output" = '["proxy/prox","engine/eng","chat-interface/chat"]' ]
+    [ "$(jq -r '.vms[0].components[1].options.port' cfg.json)" = "9999" ]
+    [ "$(jq -r '.vms[0].components[1].options["api-key"] // "none"' cfg.json)" = "none" ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m1","m2"]' ]
     [[ "$stderr" == *"api-key is a secret, it is generated at run time"* ]]
     [[ "$stderr" == *"chat requires proxy: add proxy prox?"* ]]
 }
@@ -117,31 +155,32 @@ ask_script() {
     GEN_ARGS=(); OUTFILE=cfg.json
     ask none eng none "" "" y
     [ "$status" -eq 0 ]
-    [ "$(jq -c '.components' cfg.json)" = '[{"type":"engine","name":"eng"}]' ]
-    [ "$(jq 'has("models")' cfg.json)" = "false" ]
+    [ "$(jq -c '.vms[0].components' cfg.json)" = '[{"component":"engine/eng"}]' ]
 }
 
 @test "an invalid answer asks again instead of aborting" {
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask none zzz eng none "" "" y
+    ask_new n y zzz eng n "" "" y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"'zzz' is not one of"* ]]
-    [ "$(jq -r '.components[0].name' cfg.json)" = "eng" ]
+    [ "$(jq -r '.vms[0].components[0].component' cfg.json)" = "engine/eng" ]
 }
 
-@test "refusing a dependency goes back to the component choice" {
+@test "refusing a dependency goes back to the component choice, which can be changed" {
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask none none chat n none none none y
+    # proxy n, engine n, chat y chat, the proxy it requires refused; again: no component (asked again), then the engine
+    ask_new n n y chat n  n n n  n y eng n "" "" y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"chat cannot work without proxy"* ]]
-    [ "$(jq -c '.components' cfg.json)" = '[]' ]
+    [[ "$stderr" == *"this VM has no component yet, choose again"* ]]
+    [ "$(jq -c '.vms[0].components | map(.component)' cfg.json)" = '["engine/eng"]' ]
 }
 
 @test "the summary can be redone from a step, or cancelled" {
     GEN_ARGS=(); OUTFILE=cfg.json
     ask none eng none "" m1 y m m2 y
     [ "$status" -eq 0 ]
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m2"]' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m2"]' ]
     rm cfg.json
     ask none eng none "" m1 y n
     [ "$status" -eq 0 ]
@@ -161,7 +200,7 @@ ask_script() {
     ask none eng none "" "" y
     [ "$status" -eq 0 ]
     [ ! -e cfg.json ]
-    [[ "$stderr" == *'"name": "eng"'* ]]
+    [[ "$stderr" == *'"component": "engine/eng"'* ]]
 }
 
 # --- warnings of the options -----------------------------------------------------------------
@@ -182,28 +221,28 @@ make_warning_chat() {
 
 @test "script shows the warning of a default, and of an explicit value that matches" {
     make_warning_chat
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat"}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/prox"},{"component":"chat-interface/chat"}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"chat --allow-registration=true: registration is open"* ]]
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat","options":{"allow-registration":"true"}}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/prox"},{"component":"chat-interface/chat","options":{"allow-registration":"true"}}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [[ "$stderr" == *"chat --allow-registration=true: registration is open"* ]]
 }
 
 @test "no warning when the option has another value, whatever its type" {
     make_warning_chat
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat","options":{"allow-registration":"false"}}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/prox"},{"component":"chat-interface/chat","options":{"allow-registration":"false"}}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"to read before creating the VM"* ]]
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat","options":{"allow-registration":false}}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/prox"},{"component":"chat-interface/chat","options":{"allow-registration":false}}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [[ "$stderr" != *"to read before creating the VM"* ]]
 }
 
 @test "no warning section for components without a warning" {
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng"},{"type":"chat-interface","name":"chat"}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/prox"},{"component":"engine/eng"},{"component":"chat-interface/chat"}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"to read before creating the VM"* ]]
@@ -214,11 +253,11 @@ make_warning_chat() {
     cp "$REAL/chat-interface/librechat.sh" "$EASY_CS_AI_HOME/chat-interface/librechat.sh"
     cp "$REAL/proxy/nginx.sh" "$EASY_CS_AI_HOME/proxy/nginx.sh"
     ln -s "$REAL/templates" "$EASY_CS_AI_HOME/templates"
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"nginx"},{"type":"chat-interface","name":"librechat"}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/nginx"},{"component":"chat-interface/librechat"}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"librechat --allow-registration=true: registration is open: the first account created becomes the administrator"* ]]
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"nginx"},{"type":"chat-interface","name":"librechat","options":{"allow-registration":"false"}}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/nginx"},{"component":"chat-interface/librechat","options":{"allow-registration":"false"}}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [[ "$stderr" != *"registration is open"* ]]
 }
@@ -227,7 +266,7 @@ make_warning_chat() {
 
 valid_config() {
     cat >cfg.json <<'JSON'
-{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng","options":{"port":"9"}},{"type":"chat-interface","name":"chat"}],"models":[{"name":"m1","force":true}]}
+{"schema_version":2,"vms":[{"components":[{"component":"proxy/prox"},{"component":"engine/eng","options":{"port":"9"},"models":[{"model":"m1","force":true}]},{"component":"chat-interface/chat"}]}]}
 JSON
 }
 
@@ -240,11 +279,11 @@ JSON
 }
 
 @test "script: each validation problem exits 2 with its path, an incomplete file too" {
-    echo '{"schema_version":1,"components":[{"type":"engine","name":"nope"}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"engine/nope"}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}"
     [ "$status" -eq 2 ]
-    [[ "$stderr" == *'$.components[0].name: unknown engine "nope"'* ]]
-    echo '{"schema_version":1,"components":[{"type":"chat-interface","name":"chat"}]}' >cfg.json
+    [[ "$stderr" == *'$.vms[0].components[0].component: unknown engine "nope"'* ]]
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"chat-interface/chat"}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}"
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"proxy is required by chat"* ]]
@@ -258,7 +297,7 @@ JSON
 @test "script ignores what is installed on the generator machine" {
     mkdir -p "$EASY_CS_AI_ROOT/var/lib/easy-cs-ai/components"
     echo '{"name":"prox","type":"proxy"}' >"$EASY_CS_AI_ROOT/var/lib/easy-cs-ai/components/prox.json"
-    echo '{"schema_version":1,"components":[{"type":"chat-interface","name":"chat"}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"chat-interface/chat"}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}"
     [ "$status" -eq 2 ]
 }
@@ -278,7 +317,7 @@ JSON
 
 @test "the session asks the file to write, default ./easy-cs-ai.json, and writes no script" {
     GEN_ARGS=()
-    ask_raw none eng none "" "m1" y y "" ""
+    ask_raw none eng none "" "m1" y y "" y ""
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"File to write (overwritten, or created if it does not exist) [./easy-cs-ai.json]:"* ]]
     [ -s easy-cs-ai.json ]
@@ -289,7 +328,7 @@ JSON
 @test "the session asks again for another name when the file exists and the overwrite is refused" {
     GEN_ARGS=()
     echo '{"keep":1}' >easy-cs-ai.json
-    ask_raw none eng none "" "m1" y y "" "" n mine.json
+    ask_raw none eng none "" "m1" y y "" y "" n mine.json
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"./easy-cs-ai.json exists. Overwrite? (y/n) [n]:"* ]]
     [ "$(cat easy-cs-ai.json)" = '{"keep":1}' ]
@@ -299,9 +338,9 @@ JSON
 @test "the session overwrites an existing file once it is confirmed" {
     GEN_ARGS=()
     echo '{"keep":1}' >easy-cs-ai.json
-    ask_raw none eng none "" "m1" y y "" "" y
+    ask_raw none eng none "" "m1" y y "" y "" y
     [ "$status" -eq 0 ]
-    [ "$(jq -r '.schema_version' easy-cs-ai.json)" = 1 ]
+    [ "$(jq -r '.schema_version' easy-cs-ai.json)" = 2 ]
 }
 
 @test "the end of input at the question of the file writes nothing" {
@@ -337,7 +376,7 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
 }
 
 @test "nothing in the configuration is expanded" {
-    printf '%s' '{"schema_version":1,"components":[{"type":"engine","name":"eng","options":{"port":"$(touch pwned) `id` & \\ $HOME"}}]}' >cfg.json
+    printf '%s' '{"schema_version":2,"vms":[{"components":[{"component":"engine/eng","options":{"port":"$(touch pwned) `id` & \\ $HOME"}}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh
     diff <(embedded_config vm.sh) <(jq . cfg.json)
 }
@@ -439,7 +478,7 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
     run --separate-stderr bash "$CLI" config
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"config edit"*"config validate"*"config schema"* ]]
-    printf '{"schema_version":1,"components":[{"type":"engine","name":"eng"}]}' >cfg.json
+    printf '{"schema_version":2,"vms":[{"components":[{"component":"engine/eng"}]}]}' >cfg.json
     run --separate-stderr bash "$CLI" config edit cfg.json <<<"q"
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"cancelled, nothing written"* ]]
@@ -458,7 +497,7 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
     gen cfg.json --json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [ "$(jq -s 'length' <<<"$output")" = 1 ]
-    run jq -c '[.ok, .target, .errors, .script.path, .script.written, .script.package_version, .script.package_format, (.script.bytes > 0), (.plan.components | length > 0)]' <<<"$output"
+    run jq -c '[.ok, .target, .errors, .script.path, .script.written, .script.package_version, .script.package_format, (.script.bytes > 0), (.plan.vms[0].components | length > 0)]' <<<"$output"
     [ "$output" = '[true,"fresh",[],"vm.sh",true,"0.1.0","deb",true,true]' ]
     [ -x vm.sh ]
 }
@@ -472,7 +511,7 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
 }
 
 @test "script --json of an invalid or incomplete file: the document with its errors, exit 2, no script" {
-    echo '{"schema_version":1,"components":[{"type":"chat-interface","name":"chat"}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"chat-interface/chat"}]}]}' >cfg.json
     gen cfg.json --json "${PKG[@]}" --output vm.sh
     [ "$status" -eq 2 ]
     run jq -c '[.ok, .errors[0].code, .script, .plan]' <<<"$output"
@@ -556,7 +595,7 @@ FAKE
     # best score first, only the Ollama tags, nothing that is Too Tight
     [[ "$stderr" == *" 1) llama3.2:3b"*" 2) small:1b"* ]]
     [[ "$stderr" != *"huge:70b"* ]]
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["llama3.2:3b","big","unknown"]' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["llama3.2:3b","big","unknown"]' ]
     grep -qx 'suggest --target-ram 16 --target-cpu-cores 4' "$CALLS"
     grep -qx 'check big --target-ram 16 --target-cpu-cores 4' "$CALLS"
     grep -qx 'check unknown --target-ram 16 --target-cpu-cores 4' "$CALLS"
@@ -567,7 +606,7 @@ FAKE
     [[ "$stderr" == *"may not fit the VM, big: big: fit Too Tight"* ]]
     [[ "$stderr" == *"may not fit the VM, unknown: not known to llmfit"* ]]
     # llmfit is in the stack: no force, no warning about it
-    [ "$(jq '[.models[] | has("force")] | any' cfg.json)" = "false" ]
+    [ "$(jq '[.vms[0].components[].models[]? | has("force")] | any' cfg.json)" = "false" ]
     [[ "$stderr" != *"not checked for fit"* ]]
 }
 
@@ -578,7 +617,7 @@ FAKE
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"no spec given"* ]]
     ! grep -q -e suggest -e check -e plan "$CALLS"
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m1"]' ]
 }
 
 @test "a spec that is not a positive whole number is asked again" {
@@ -609,11 +648,11 @@ FAKE
     [[ "$stderr" == *"llmfit is not installed here: install it now"*"(y/n) [n]"* ]]
     [[ "$stderr" == *"sudo easy-cs-ai install provisioning llmfit"* ]]
     ! grep -q -e suggest -e check -e install "$CALLS"
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m1"]' ]
     # a redo of the step does not ask again
     ask "" none ollama none n m1 y m m2 y
     [ "$(grep -o 'install it now' <<<"$stderr" | wc -l)" -eq 1 ]
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m2"]' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m2"]' ]
 }
 
 @test "llmfit installed on the spot: the session goes on with the specs and the suggestions" {
@@ -624,7 +663,7 @@ FAKE
     [ "$status" -eq 0 ]
     grep -qx install "$CALLS"
     grep -qx 'suggest --target-ram 16' "$CALLS"
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["llama3.2:3b"]' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["llama3.2:3b"]' ]
 }
 
 @test "llmfit that cannot be installed: a warning, then typed names" {
@@ -636,7 +675,7 @@ FAKE
     [[ "$stderr" == *"llmfit could not be installed, type the model names"* ]]
     [[ "$stderr" != *"Recommended VM"* ]]
     ! grep -q -e suggest -e plan "$CALLS"
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m1"]' ]
 }
 
 @test "a package that ships no llmfit offers nothing to install" {
@@ -654,7 +693,7 @@ FAKE
     ask none none ollama none "" "" "" "" m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"with none, the models are added unchecked"* ]]
-    [ "$(jq -c '.models' cfg.json)" = '[{"name":"m1","force":true}]' ]
+    [ "$(jq -c '.vms[0].components[] | select(.component == "engine/ollama") | .models' cfg.json)" = '[{"model":"m1","force":true}]' ]
     [[ "$stderr" == *"[WARN] to read before creating the VM"* ]]
     [[ "$stderr" == *"models not checked for fit on the VM: llmfit is not part of the stack"* ]]
 }
@@ -664,7 +703,7 @@ FAKE
     GEN_ARGS=(); OUTFILE=cfg.json
     ask none none ollama none "" "" "" "" "" y
     [ "$status" -eq 0 ]
-    [ "$(jq 'has("models")' cfg.json)" = "false" ]
+    [ "$(jq '[.vms[0].components[] | has("models")] | any' cfg.json)" = "false" ]
     [[ "$stderr" != *"not checked for fit"* ]]
 }
 
@@ -696,8 +735,8 @@ FAKE
     [ "$(grep -o 'FAKE RECOMMENDATION' <<<"$stderr" | wc -l)" -eq 1 ]
     [[ "${stderr##*Summary}" == *"FAKE RECOMMENDATION"* ]]
     # the configuration is valid for any VM: models only
-    [ "$(jq -c 'keys' cfg.json)" = '["components","models","schema_version"]' ]
-    [ "$(jq -c '.models' cfg.json)" = '[{"name":"m1"}]' ]
+    [ "$(jq -c 'keys' cfg.json)" = '["schema_version","vms"]' ]
+    [ "$(jq -c '.vms[0].components[] | select(.component == "engine/ollama") | .models' cfg.json)" = '[{"model":"m1"}]' ]
 }
 
 @test "models first: all the models are given to the plan, in one call" {
@@ -726,7 +765,7 @@ FAKE
     [ "$status" -eq 0 ]
     grep -qx 'plan m1@ollama unknown@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama --target-cpu-cores 4' "$CALLS"
     [[ "$stderr" == *"vcpu: 4"* ]]
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1","unknown"]' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m1","unknown"]' ]
 }
 
 @test "models first: no model, the stack is sized from its components alone" {
@@ -751,12 +790,12 @@ FAKE
     # the summary shows the second one only
     [[ "${stderr##*Summary}" == *"FAKE RECOMMENDATION for m2 "* ]]
     [[ "${stderr##*Summary}" != *"FAKE RECOMMENDATION for m1 "* ]]
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m2"]' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m2"]' ]
 }
 
 @test "script: no session, so no recommendation" {
     make_llmfit
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"ollama"},{"type":"provisioning","name":"llmfit"}],"models":[{"name":"m1"}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/prox"},{"component":"engine/ollama","models":[{"model":"m1"}]},{"component":"provisioning/llmfit"}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"Recommended VM"* ]]
@@ -764,13 +803,13 @@ FAKE
 }
 
 @test "script: the warning follows a model with force and no llmfit, and nothing else changes" {
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng"}],"models":[{"name":"m1","force":true}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/prox"},{"component":"engine/eng","models":[{"model":"m1","force":true}]}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"models not checked for fit on the VM: llmfit is not part of the stack"* ]]
     # without force, a model needs a provisioning component: the file is refused, not warned about
     rm -f vm.sh
-    echo '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng"}],"models":[{"name":"m1"}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"proxy/prox"},{"component":"engine/eng","models":[{"model":"m1"}]}]}]}' >cfg.json
     gen cfg.json "${PKG[@]}" --output vm.sh </dev/null
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"needs a provisioning component"* ]]
@@ -785,9 +824,9 @@ FAKE
     ask none eng none "" m1 y llm.example.org y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"m1 needs a proxy to be reached from outside the VM (the engine listens on the loopback only). Add prox? (y/n) [y]"* ]]
-    [ "$(jq -c '.components | map(.name)' cfg.json)" = '["prox","eng"]' ]
-    [ "$(jq -c '.components[0].options' cfg.json)" = '{"server-name":"llm.example.org"}' ]
-    [ "$(jq -c '[.models[].name]' cfg.json)" = '["m1"]' ]
+    [ "$(jq -c '.vms[0].components | map(.component)' cfg.json)" = '["proxy/prox","engine/eng"]' ]
+    [ "$(jq -c '.vms[0].components[0].options' cfg.json)" = '{"server-name":"llm.example.org"}' ]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m1"]' ]
 }
 
 @test "refusing the proxy takes the models out of the list, with a message" {
@@ -796,8 +835,8 @@ FAKE
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"m1, m2 needs a proxy"* ]]
     [[ "$stderr" == *"without a proxy the models cannot be reached from outside the VM: none is added"* ]]
-    [ "$(jq -c '.components | map(.name)' cfg.json)" = '["eng"]' ]
-    [ "$(jq 'has("models")' cfg.json)" = "false" ]
+    [ "$(jq -c '.vms[0].components | map(.component)' cfg.json)" = '["engine/eng"]' ]
+    [ "$(jq '[.vms[0].components[] | has("models")] | any' cfg.json)" = "false" ]
 }
 
 @test "no proxy is proposed for a protected engine, with no model, or by a package that ships none" {
@@ -809,7 +848,7 @@ FAKE
     ask none eng none m1 y
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"needs a proxy"* ]]
-    [ "$(jq -c '.components | map(.name)' cfg.json)" = '["eng"]' ]
+    [ "$(jq -c '.vms[0].components | map(.component)' cfg.json)" = '["engine/eng"]' ]
     make_fake engine eng '[]' '[]'
     ask none eng none "" y
     [[ "$stderr" != *"needs a proxy"* ]]

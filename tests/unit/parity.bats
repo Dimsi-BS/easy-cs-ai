@@ -86,7 +86,7 @@ answers_of() { sed -E -e '/^#/d' -e 's/[[:space:]]+#.*$//' "$1"; }
 # a boolean read as its text (docs/spec-config.md: values are strings, numbers or booleans, and
 # reach a script as text), which is all the session ever writes.
 canonical() {
-    jq -S '.components |= map(if .options then .options |= map_values(if type == "object" then . else tostring end) else . end)' "$1"
+    jq -S '.vms |= map(.components |= map(if .options then .options |= map_values(if type == "object" then . else tostring end) else . end))' "$1"
 }
 
 # embedded <script>: the configuration the script carries.
@@ -112,7 +112,7 @@ summary_warnings() { grep -E '^    [^ ]+ --[a-z-]+=[^ ]*: ' <<<"$1" | sort -u ||
 # session_cfg <out>: `config edit` with the answers of stdin.txt, then the name of the file written
 # (and the confirmation when it exists already).
 session_cfg() {
-    { cat stdin.txt; echo "$1"; [[ ! -e "$1" ]] || echo y; } >stdin-cfg.txt
+    { cat stdin.txt; echo y; echo "$1"; [[ ! -e "$1" ]] || echo y; } >stdin-cfg.txt
     run --separate-stderr bash "$GEN" <stdin-cfg.txt
     # a scenario padded with empty answers takes the default name of the question of the file
     if [[ ! -e "$1" && -e easy-cs-ai.json ]]; then mv easy-cs-ai.json "$1"; fi
@@ -137,17 +137,17 @@ parity() {
     diff -u <(canonical "$oracle") <(canonical session.json)
 
     # what the session shows is what the plan says
-    [ "$(summary_order "$session_err")" = "$(jq -r '.plan.components[] | "\(.type) \(.name)"' <<<"$plan")" ]
-    [ "$(summary_models "$session_err")" = "$(jq -r '[.plan.models[].name] | if length == 0 then "none" else join(", ") end' <<<"$plan")" ]
-    diff -u <(jq -r '.warnings[] | select(.option != null) | "    \(.component.name) --\(.option)=\(.value): \(.message)"' <<<"$plan" | sort -u) \
+    [ "$(summary_order "$session_err")" = "$(jq -r '.plan.vms[0].components[] | .component | sub("/"; " ")' <<<"$plan")" ]
+    [ "$(summary_models "$session_err")" = "$(jq -r '[.plan.vms[0].models[].model] | if length == 0 then "none" else join(", ") end' <<<"$plan")" ]
+    diff -u <(jq -r '.warnings[] | select(.option != null) | "    \(.component | split("/")[1]) --\(.option)=\(.value): \(.message)"' <<<"$plan" | sort -u) \
         <(summary_warnings "$session_err")
     # and the ones the validation raises itself (a code, no option) are shown too
-    while IFS= read -r msg; do [[ "$session_err" == *"$msg"* ]]; done < <(jq -r '.warnings[] | select(.code != null and .vm == null) | .message' <<<"$plan")
+    while IFS= read -r msg; do [[ "$session_err" == *"$msg"* ]]; done < <(jq -r '.warnings[] | select(.code != null and .vm_ref == null) | .message' <<<"$plan")
 
     # same plan: the document of the generator on the oracle is the document of `config validate`
     run --separate-stderr bash "$SCRIPT" "$oracle" --json "${PKG[@]}" --output c.sh
     [ "$status" -eq 0 ]
-    diff -u <(jq -S . <<<"$plan") <(jq -S 'del(.script)' <<<"$output")
+    diff -u <(jq -S . <<<"$plan") <(jq -S 'del(.script, .scripts)' <<<"$output")
 
     # same script: all of it but the date, and the configuration it embeds, which is compared
     # as a configuration (the order of the keys and the spelling of an option are not decisions)
@@ -157,9 +157,9 @@ parity() {
     [ "$status" -eq 0 ]
     run --separate-stderr bash "$SCRIPT" "$oracle" "${PKG[@]}" --output oracle.sh </dev/null
     [ "$status" -eq 0 ]
-    diff -u <(bare oracle.sh) <(bare session.sh)
-    embedded oracle.sh >oracle-embedded.json
-    embedded session.sh >session-embedded.json
+    diff -u <(bare oracle-vm-1.sh) <(bare session-vm-1.sh)
+    embedded oracle-vm-1.sh >oracle-embedded.json
+    embedded session-vm-1.sh >session-embedded.json
     diff -u <(canonical oracle-embedded.json) <(canonical session-embedded.json)
 }
 
@@ -184,7 +184,7 @@ parity_vms() {
     diff -u <(canonical "$oracle") <(canonical session.json)
     # a summary per VM, and what each shows is what the plan says of that VM
     [ "$(grep -c '^Summary' <<<"$session_err")" -eq 2 ]
-    [ "$(sed -n 's/^  models: //p' <<<"$session_err" | head -n 1)" = "$(jq -r '[.plan.vms[0].models[].name] | if length == 0 then "none" else join(", ") end' <<<"$plan")" ]
+    [ "$(sed -n 's/^  models: //p' <<<"$session_err" | head -n 1)" = "$(jq -r '[.plan.vms[0].models[].model] | if length == 0 then "none" else join(", ") end' <<<"$plan")" ]
 
     # same plan
     run --separate-stderr bash "$SCRIPT" "$oracle" --json "${PKG[@]}" --output c.sh
@@ -198,7 +198,7 @@ parity_vms() {
     [ "$status" -eq 0 ]
     run --separate-stderr bash "$SCRIPT" "$oracle" "${PKG[@]}" --output oracle.sh </dev/null
     [ "$status" -eq 0 ]
-    for vm in $(jq -r '.plan.vms[].vm' <<<"$plan"); do
+    for vm in $(jq -r '.plan.vms[].name' <<<"$plan"); do
         diff -u <(bare "oracle-$vm.sh") <(bare "session-$vm.sh")
         embedded "oracle-$vm.sh" >oracle-embedded.json
         embedded "session-$vm.sh" >session-embedded.json
@@ -266,7 +266,7 @@ parity_vms() {
 # every_option_is_asked: for each component of the catalog, a session that selects it (and accepts
 # what it requires) asks every option of it, and says it will generate a secret.
 every_option_is_asked() {
-    local catalog selection type name opt secret asked=0
+    local catalog selection type name opt secret a asked=0
     run --separate-stderr bash "$CLI" catalog --json
     [ "$status" -eq 0 ]
     catalog="$output"
@@ -275,7 +275,8 @@ every_option_is_asked() {
         # defaults (the dependencies are accepted, the confirmation is yes)
         selection="$(jq -r --arg t "$type" --arg n "$name" '. as $c | $c.types[]
             | select(. as $x | $c.components | any(.type == $x)) | if . == $t then $n else "none" end' <<<"$catalog")"
-        { printf '%s\n' "$selection"; printf '\n%.0s' {1..200}; } >stdin.txt
+        # the role and the name of the VM (defaults), then "Add a <type>?" and the choice for each type
+        { printf '\n\n'; while IFS= read -r a; do if [[ "$a" == none ]]; then printf 'n\n'; else printf 'y\n%s\n' "$a"; fi; done <<<"$selection"; printf '\n%.0s' {1..200}; } >stdin.txt
         session_cfg cfg.json
         [ "$status" -eq 0 ]
         [ -s cfg.json ]
@@ -303,7 +304,7 @@ every_option_is_asked() {
 }
 
 @test "a missing answer is reported to a program, and it is the question the session asks" {
-    echo '{"schema_version":1,"components":[{"type":"chat-interface","name":"chat"}]}' >cfg.json
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"chat-interface/chat"}]}]}' >cfg.json
     run --separate-stderr bash "$CLI" config validate cfg.json --target fresh --json
     [ "$status" -eq 2 ]
     [ "$(jq -r '.errors[0].code' <<<"$output")" = missing_requirement ]
@@ -312,7 +313,8 @@ every_option_is_asked() {
     # the session proposes it, and what it writes is then valid
     # no engine: the answers stop at the confirmation and the question of another VM, and the next one is
     # the file written, which session_cfg adds
-    answers_of "$PARITY/fake/stack.answers" | sed '2,3s/.*/none/' | head -n 8 >stdin.txt
+    printf '%s
+' "" "" n n n y "" y "" y "" >stdin.txt
     session_cfg session.json
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"chat requires proxy: add proxy prox?"* ]]

@@ -194,20 +194,22 @@ done
 CONFIG="$WORK/multi-vm.json"
 cat >"$CONFIG" <<EOF
 {
-  "schema_version": 1,
-  "components": [
-    { "type": "provisioning", "name": "llmfit", "vm": "engine" },
-    { "type": "proxy", "name": "nginx", "vm": "engine" },
-    { "type": "engine", "name": "ollama", "vm": "engine" },
-    { "type": "proxy", "name": "nginx", "vm": "web", "options": { "server-name": "localhost" } },
-    { "type": "chat-interface", "name": "librechat", "vm": "web" },
-    { "type": "proxy", "name": "nginx", "vm": "web2", "options": { "server-name": "localhost2" } },
-    { "type": "chat-interface", "name": "librechat", "vm": "web2" }
+  "schema_version": 2,
+  "vms": [
+    { "name": "engine", "components": [
+        { "component": "provisioning/llmfit" },
+        { "component": "proxy/nginx" },
+        { "component": "engine/ollama", "name": "ollama", "models": [ { "model": "$MODEL", "name": "$MODEL" } ] } ] },
+    { "name": "web", "components": [
+        { "component": "proxy/nginx", "options": { "server-name": "localhost" } },
+        { "component": "chat-interface/librechat", "name": "librechat" } ] },
+    { "name": "web2", "components": [
+        { "component": "proxy/nginx", "options": { "server-name": "localhost2" } },
+        { "component": "chat-interface/librechat", "name": "librechat" } ] }
   ],
-  "models": [ { "name": "$MODEL", "vm": "engine", "engine": "ollama" } ],
   "links": [
-    { "web_vm": "web", "engine_vm": "engine" },
-    { "web_vm": "web2", "engine_vm": "engine" }
+    { "model": { "vm_ref": "engine", "component_ref": "ollama", "model_ref": "$MODEL" },
+      "chat_interface": { "vm_ref": "web", "component_ref": "librechat" } }
   ]
 }
 EOF

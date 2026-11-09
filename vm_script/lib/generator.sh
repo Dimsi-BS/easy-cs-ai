@@ -91,7 +91,7 @@ header() {
         [[ -n "$name" ]] || continue
         version="$(jq -r --arg k "$type/$name" '.[$k].component_version // "?"' <<<"$desc")"
         printf '# component: %s %s %s %s\n' "$type" "$name" "$version" \
-            "$(jq -r --arg t "$type" --arg n "$name" '(.components[] | select(.type == $t and .name == $n) | .options // {}) | to_entries | map("--\(.key)=\(.value)") | join(" ")' <<<"$config")"
+            "$(jq -r --arg k "$type/$name" '(.vms[0].components[] | select(.component == $k) | .options // {}) | to_entries | map("--\(.key)=\(.value)") | join(" ")' <<<"$config")"
     done <<<"$order"
 }
 
@@ -223,7 +223,7 @@ print_vm_scripts_report() {
         else printf '\n%s written, one per VM:\n' "$words"; fi
         for vm in "${names[@]}"; do
             printf '  %s   VM %s  (%s)\n' "${SCRIPT_PATHS[$i]}" "$vm" \
-                "$(apply_slice "$config" "$vm" | jq -r '[.components[].name] | join(", ")')"
+                "$(apply_slice "$config" "$vm" | jq -r '[.vms[0].components[].component | split("/")[1]] | join(", ")')"
             i=$((i + 1))
         done
         next_steps_text "$(jq -c '.next_steps' <<<"$cross")"
@@ -300,7 +300,6 @@ EDIT_ORIGINAL=""
 # _editor_known_vm <config> <vm>: that name is one of the VMs of the file.
 _editor_known_vm() {
     [[ -n "$2" ]] || return 1
-    apply_named "$1" || return 1
     apply_vms "$1" | grep -qxF "$2"
 }
 
@@ -358,6 +357,17 @@ ask_config_file() {
     done
 }
 
+# _canonical_order <config>: the configuration pretty printed with the keys of the VMs, of the
+# components and of the models in the order of docs/spec-config.md (name first, the models last), so a
+# file reads the same whoever wrote it. What is not an object of that shape is left as it is.
+_canonical_order() {
+    jq '
+      def ordk($order): . as $o | reduce (($order | map(. as $k | select($o | has($k)))[]), ($o | keys_unsorted[] | select(IN($order[]) | not))) as $k ({}; .[$k] = $o[$k]);
+      if (.vms | type) == "array" and all(.vms[]; type == "object" and ((.components // []) | type) == "array" and all((.components // [])[]; type == "object" and ((.models // []) | type) == "array" and all((.models // [])[]; type == "object")))
+      then .vms |= map(ordk(["name", "components"]) | if has("components") then .components |= map(ordk(["component", "name", "default", "options", "models"]) | if has("models") then .models |= map(ordk(["model", "name", "force", "options"])) else . end) else . end)
+      else . end' <<<"$1"
+}
+
 # write_config <path> <config>: the configuration written whole or not at all (a temporary file in
 # the same directory, then rename), the mode of the file kept when it existed. With --dry-run the
 # result goes to stderr. Then names the command that makes the scripts.
@@ -365,7 +375,7 @@ write_config() {
     local path="$1" config="$2" mode=644 tmp
     if ((DRY)); then
         log_info "dry run, would write $path:"
-        jq . <<<"$config" >&2
+        _canonical_order "$config" >&2
         return 0
     fi
     [[ ! -e "$path" ]] || mode="$(stat -c %a "$path" 2>/dev/null)" || mode=644
@@ -373,7 +383,7 @@ write_config() {
         log_warn "cannot write in $(dirname "$path"): nothing written"
         return 1
     }
-    jq . <<<"$config" >"$tmp"
+    _canonical_order "$config" >"$tmp"
     chmod "$mode" "$tmp" 2>/dev/null || true
     if ! mv -f "$tmp" "$path"; then
         rm -f "$tmp"
@@ -384,52 +394,64 @@ write_config() {
     log_info "to generate the scripts: easy-cs-ai script $path"
 }
 
-# _editor_write <file>: `y`. Refuses when the file changed on disk since it was opened. Then
-# validates again, asks the file to write and writes the configuration, and nothing else: the
-# scripts are made by `script` (docs/spec-multi-vm.md#editing).
+# _editor_write <file>: `y`. Refuses when the file changed on disk since it was opened (an edit;
+# a creation has no file yet). Then validates again, asks the file to write and writes the
+# configuration, and nothing else: the scripts are made by `script`
+# (docs/spec-multi-vm.md#editing).
 _editor_write() {
     local file="$1" disk
-    disk="$(cat "$file" 2>/dev/null || true)"
-    if [[ "$disk" != "$EDIT_ORIGINAL" ]]; then
-        log_warn "the file changed on disk since it was opened: nothing written, open it again"
-        return 1
+    if [[ -n "$file" ]]; then
+        disk="$(cat "$file" 2>/dev/null || true)"
+        if [[ "$disk" != "$EDIT_ORIGINAL" ]]; then
+            log_warn "the file changed on disk since it was opened: nothing written, open it again"
+            return 1
+        fi
     fi
-    if ! ((DRY)); then ask_config_file "$file" "$file"; fi
-    write_config "${CONFIG_TARGET:-$file}" "$EDIT_CONFIG"
+    if ! ((DRY)); then ask_config_file "${file:-./easy-cs-ai.json}" "$file"; fi
+    write_config "${CONFIG_TARGET:-${file:-./easy-cs-ai.json}}" "$EDIT_CONFIG"
 }
 
-# run_editor <file>: open, show the summary, apply commands until the person writes (y), quits
-# (q) or cancels (end of input); see docs/spec-multi-vm.md#editing. Saving writes the file only.
+# _editor_target <arg>: the VM a command designates, in REPLY: its name, or "" for the only VM of a
+# file that has no name. Fails (with the warning) when it designates none.
+_editor_target() {
+    local arg="$1"
+    if _editor_known_vm "$EDIT_CONFIG" "$arg"; then
+        REPLY="$arg"
+        return 0
+    fi
+    if [[ -z "$arg" && "$(jq -r '((.vms | type) == "array") and ((.vms | length) == 1) and (.vms[0].name == null)' <<<"$EDIT_CONFIG")" == true ]]; then
+        REPLY=""
+        return 0
+    fi
+    log_warn "'$arg' is not a VM of this configuration"
+    return 1
+}
+
+# run_editor <file>: open the file, then the editor's loop (docs/spec-multi-vm.md#editing).
 run_editor() {
-    local file="$1" content cmd sub arg1 v
+    local file="$1" content
     [[ -r "$file" ]] || die "$EXIT_USAGE" "cannot read $file"
     content="$(cat "$file")"
     jq -e . >/dev/null 2>&1 <<<"$content" || die "$EXIT_USAGE" "$file is not valid JSON"
     EDIT_ORIGINAL="$content"
     EDIT_CONFIG="$(jq -c . <<<"$content")"
+    run_editor_loop "$file"
+}
+
+# run_editor_loop <file>: show the summary, apply commands until the person writes (y), quits
+# (q) or cancels (end of input). <file> is the file opened, "" for the configuration a session
+# has just built. Saving writes the file only.
+run_editor_loop() {
+    local file="$1" cmd sub arg1 v
     while :; do
         _editor_summary "$EDIT_CONFIG"
-        _read "a add a VM   e <vm> edit   m <vm> models   l links   n <vm> rename   r <vm> remove   f fix   y write   q quit" ""
+        _read "a add a VM   e <vm> edit   m <vm> models   l where models are shown   n <vm> rename   r <vm> remove   f fix   y write   q quit   ? help" ""
         cmd="$REPLY"
         read -r sub arg1 _ <<<"$cmd"
         case "$sub" in
         a | A) _editor_add_vm ;;
-        e | E)
-            if _editor_known_vm "$EDIT_CONFIG" "$arg1"; then
-                _editor_edit_vm "$arg1"
-            elif ! apply_named "$EDIT_CONFIG" && [[ -z "$arg1" ]]; then
-                _editor_edit_vm ""
-            else
-                log_warn "'$arg1' is not a VM of this configuration"
-            fi
-            ;;
-        m | M)
-            if _editor_known_vm "$EDIT_CONFIG" "$arg1"; then
-                _editor_redo_models "$arg1"
-            else
-                log_warn "'$arg1' is not a VM of this configuration"
-            fi
-            ;;
+        e | E) if _editor_target "$arg1"; then _editor_edit_vm "$REPLY"; fi ;;
+        m | M) if _editor_target "$arg1"; then _editor_redo_models "$REPLY"; fi ;;
         l | L) _editor_redo_links ;;
         n | N)
             if ! _editor_known_vm "$EDIT_CONFIG" "$arg1"; then
@@ -444,19 +466,22 @@ run_editor() {
         r | R)
             if ! _editor_known_vm "$EDIT_CONFIG" "$arg1"; then
                 log_warn "'$arg1' is not a VM of this configuration"
-            elif (($(apply_vms "$EDIT_CONFIG" | grep -c .) <= 1)); then
+            elif (($(jq '.vms | length' <<<"$EDIT_CONFIG") <= 1)); then
                 log_warn "the last VM cannot be removed"
             else
                 printf 'removing VM %s: %s\n' "$arg1" \
-                    "$(jq -r --arg v "$arg1" '[.components[] | select(.vm == $v) | "\(.type) \(.name)"] | join(", ")' <<<"$EDIT_CONFIG")" >&2
+                    "$(jq -r --arg v "$arg1" '[.vms[] | select(.name == $v) | .components[] | .component] | join(", ")' <<<"$EDIT_CONFIG")" >&2
+                printf 'the links whose model or chat interface is on it go with it; the models that were shown in its chat interface stay, shown nowhere\n' >&2
                 _read "Remove VM $arg1? (y/n)" y
                 if [[ "$REPLY" == y || "$REPLY" == Y ]]; then
                     EDIT_CONFIG="$(_editor_remove_vm "$EDIT_CONFIG" "$arg1")"
-                    _editor_maybe_flatten
                 fi
             fi
             ;;
         f | F) _editor_fix ;;
+        '?')
+            printf '  a add a VM, its role, name and components, then where its models are shown\n  e <vm> edit the components and options of a VM, from what it holds\n  m <vm> redo the models of a VM, and which chat interface shows each one\n  l which chat interface shows each model\n  n <vm> rename a VM\n  r <vm> remove a VM, with its components, its models and the links that designate them\n  f fix the errors one at a time\n  y write the configuration   q quit, nothing written\n' >&2
+            ;;
         y | Y)
             if [[ "$EDIT_ERRORS" != '[]' ]]; then
                 log_warn "nothing is written while an error stands: fix it (f), or edit/link/rename/remove the VM it names"
