@@ -263,7 +263,7 @@ parity_vms() {
 
 # --- structure: a question is a field, a missing answer is reported -----------------------------------
 
-# every_option_is_asked: for each component of the catalog, a session that selects it (and accepts
+# every_option_is_asked (the options that only matter with another choice, relevant_when, are not asked by default): for each component of the catalog, a session that selects it (and accepts
 # what it requires) asks every option of it, and says it will generate a secret.
 every_option_is_asked() {
     local catalog selection type name opt secret a asked=0
@@ -288,7 +288,7 @@ every_option_is_asked() {
                 [[ "$stderr" == *"$name --$opt: "* || "$stderr" == *"$name --$opt ["* ]]
             fi
         done < <(jq -r --arg t "$type" --arg n "$name" '.components[] | select(.type == $t and .name == $n)
-            | .describe.options[]? | [.name, (.secret // false)] | @tsv' <<<"$catalog")
+            | .describe.options[]? | select(.relevant_when == null) | [.name, (.secret // false)] | @tsv' <<<"$catalog")
     done < <(jq -r '.components[] | [.type, .name] | @tsv' <<<"$catalog")
     # the check ran on something
     [ "$asked" -gt 0 ]

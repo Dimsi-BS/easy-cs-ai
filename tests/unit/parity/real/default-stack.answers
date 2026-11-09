@@ -19,9 +19,6 @@ y  # chat-interface
   # nginx options: defaults (the two secrets are not asked)
   # nginx options: defaults (the two secrets are not asked)
   # nginx options: defaults (the two secrets are not asked)
-  # nginx options: defaults (the two secrets are not asked)
-  # nginx options: defaults (the two secrets are not asked)
-  # nginx options: defaults (the two secrets are not asked)
   # ollama options: defaults
   # ollama options: defaults
   # ollama options: defaults

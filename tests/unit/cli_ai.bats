@@ -595,6 +595,47 @@ JSON
     [ "$status" -eq 0 ]
 }
 
+# a proxy that declares what nginx declares: tls-cert and tls-key required with tls provided, server-name and
+# tls-accept-terms required with letsencrypt, tls-key never generated
+make_tls_proxy() {
+    make_fake proxy prox '[]' '{"options":[
+      {"name":"tls","default":"self-signed","secret":false,"type":"enum","values":["self-signed","provided","letsencrypt"]},
+      {"name":"server-name","default":"","secret":false,"required_when":{"option":"tls","values":["letsencrypt"]}},
+      {"name":"tls-cert","default":"","secret":false,"relevant_when":{"option":"tls","values":["provided"]},"required_when":{"option":"tls","values":["provided"]}},
+      {"name":"tls-key","default":"","secret":true,"sources":["file","env"],"required_when":{"option":"tls","values":["provided"]}},
+      {"name":"tls-accept-terms","default":"false","secret":false,"type":"boolean","required_when":{"option":"tls","values":["letsencrypt"]}}]}'
+}
+
+@test "codes: missing_option, an option the component requires with the choices made, at the path of its options" {
+    make_tls_proxy
+    run problems "$(v '[{"component":"proxy/prox","options":{"tls":"letsencrypt"}}]')"
+    [ "$output" = "$(printf '%s
+%s' '$.vms[0].components[0].options missing_option' '$.vms[0].components[0].options missing_option')" ]
+    [[ "$(jq -r '.errors[0].message' <<<"$(bash "$CLI" config validate "$CFG" --target fresh --json 2>/dev/null)")" == "option server-name is required when tls is letsencrypt" ]]
+    run problems "$(v '[{"component":"proxy/prox","options":{"tls":"provided"}}]')"
+    [ "$(grep -c missing_option <<<"$output")" -eq 2 ]
+    # not raised when the condition does not hold, nor when the options are given
+    vmfile '[{"component":"proxy/prox"}]' >"$CFG"
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 0 ]
+    vmfile '[{"component":"proxy/prox","options":{"tls":"letsencrypt","server-name":"a.example.org","tls-accept-terms":true}}]' >"$CFG"
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 0 ]
+}
+
+@test "a secret that declares its sources refuses the others, and the schema encodes both rules" {
+    make_tls_proxy
+    run problems "$(v '[{"component":"proxy/prox","options":{"tls":"provided","tls-cert":"/c","tls-key":{"generate":true}}}]')"
+    [ "$output" = '$.vms[0].components[0].options.tls-key secret_source' ]
+    vmfile '[{"component":"proxy/prox","options":{"tls":"provided","tls-cert":"/c","tls-key":{"file":"/k"}}}]' >"$CFG"
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 0 ]
+    cli config schema
+    node='.properties.vms.items.properties.components.items.oneOf[] | select(.properties.component.const == "proxy/prox")'
+    [ "$(jq -r "$node"' | .properties.options.properties["tls-key"].oneOf | map(.required[0]) | join(",")' <<<"$output")" = "file,env" ]
+    [ "$(jq -c "$node"' | [.allOf[] | .description]' <<<"$output")" = '["option server-name is required when tls is letsencrypt","option tls-cert is required when tls is provided","option tls-key is required when tls is provided","option tls-accept-terms is required when tls is letsencrypt"]' ]
+}
+
 # --- apply --dry-run --json ----------------------------------------------------------------
 
 @test "apply --dry-run --json prints the document of config validate --target this" {

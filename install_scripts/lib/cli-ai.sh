@@ -199,10 +199,11 @@ def opt_schema:
      + (if $o.warn != null then " WARNING: " + $o.warn.message else "" end)
      + (if ($o.default // "") != "" and $o.secret != true then " (default: \($o.default))" else "" end)) as $d
   | (if $o.secret == true then
-       {oneOf: [
+       {oneOf: ([
          {type: "object", properties: {file: {type: "string"}}, required: ["file"], additionalProperties: false},
          {type: "object", properties: {env: {type: "string"}}, required: ["env"], additionalProperties: false},
-         {type: "object", properties: {generate: {const: true}}, required: ["generate"], additionalProperties: false}]}
+         {type: "object", properties: {generate: {const: true}}, required: ["generate"], additionalProperties: false}]
+         | map(select(.required[0] | IN(($o.sources // ["file", "env", "generate"])[]))))}
      elif $o.type == "integer" then
        {anyOf: [
          ({type: "integer"} + (if $o.min != null then {minimum: $o.min} else {} end) + (if $o.max != null then {maximum: $o.max} else {} end)),
@@ -222,6 +223,11 @@ def model_schema($c): {
     name: {type: "string", minLength: 1, pattern: "^[^\\u0000-\\u001f\\u007f]+$", description: "free name of the instance, needed to be the target of a link (the session writes the model)"},
     force: {type: "boolean", description: "true skips the llmfit fit check"},
     options: options_schema($c.describe.action_options["add-model"])}};
+def required_node($o): ($o.required_when | if type == "array" then . else [.] end) as $cs
+  | {"if": {required: ["options"], properties: {options: {required: [$cs[].option],
+        properties: (reduce $cs[] as $k ({}; .[$k.option] = {enum: $k.values}))}}},
+     "then": {required: ["options"], properties: {options: {required: [$o.name]}}},
+     description: "option \($o.name) is required when \([$cs[] | "\(.option) is \(.values | join(" or "))"] | join(" and "))"};
 def comp_schema:
   . as $c
   | ("\($c.type)/\($c.name)") as $k
@@ -232,7 +238,8 @@ def comp_schema:
        name: name_schema("how the component is called in its VM, needed only to be designated by a link; unique in the VM"),
        default: {type: "boolean", description: "make it the default of its type, at most one per type and per VM"},
        options: options_schema($c.describe.options)}
-       + (if $c.type == "engine" then {models: {type: "array", items: model_schema($c)}} else {} end))};
+       + (if $c.type == "engine" then {models: {type: "array", items: model_schema($c)}} else {} end))}
+     + (([($c.describe.options // [])[] | select(.required_when != null) | required_node(.)]) as $rn | if ($rn | length) > 0 then {allOf: $rn} else {} end);
 . as $cat
 | ([$cat.components[] | "\(.type)/\(.name)"]) as $kinds
 | {"$schema": "https://json-schema.org/draft/2020-12/schema",

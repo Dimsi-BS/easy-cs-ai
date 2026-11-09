@@ -15,9 +15,6 @@ ai.example.org  # nginx --server-name
   # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
   # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
   # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
-  # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
-  # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
-  # nginx options: defaults (tls, tls-cert, tls-email, tls-accept-terms, health-timeout, lock-timeout)
   # ollama options: defaults
   # ollama options: defaults
   # ollama options: defaults

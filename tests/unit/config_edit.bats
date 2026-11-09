@@ -456,3 +456,17 @@ JSON
     [ "$status" -eq 0 ]
     [ "$(jq -r '.vms[1].name' f.json)" = site ]
 }
+
+@test "f on missing_option re-asks that option, and a secret as the path of the file that holds it" {
+    make_fake proxy prox '[]' '[{"name":"tls","default":"self-signed","secret":false},{"name":"server-name","default":"","secret":false,"required_when":{"option":"tls","values":["letsencrypt"]}},{"name":"tls-key","default":"","secret":true,"sources":["file","env"],"required_when":{"option":"tls","values":["provided"]}}]' '{"actions":["install"]}'
+    two_vm_file f.json
+    jq '.vms[1].components[0].options = {"tls":"letsencrypt"}' f.json >f.tmp && mv f.tmp f.json
+    GEN_ARGS=()
+    edit f.json f x.example.org y
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.vms[1].components[0].options["server-name"]' f.json)" = x.example.org ]
+    jq '.vms[1].components[0].options = {"tls":"provided"}' f.json >f.tmp && mv f.tmp f.json
+    edit f.json f /etc/key y
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.vms[1].components[0].options["tls-key"]' f.json)" = '{"file":"/etc/key"}' ]
+}

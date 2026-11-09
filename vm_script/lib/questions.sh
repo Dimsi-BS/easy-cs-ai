@@ -118,8 +118,20 @@ step_dependencies() {
 
 # --- Step 3: options ------------------------------------------------------------------
 
+# _cond_holds <condition-json> <options-json> <describe-json>: the condition of a relevant_when or a
+# required_when ({"option": ..., "values": [...]}, or a list of them, all to hold) holds for the options
+# given so far, an option left out counting at its default (docs/spec-script-contract.md#describe).
+_cond_holds() {
+    jq -e -n --argjson c "$1" --argjson o "$2" --argjson d "$3" '
+        ($c | if type == "array" then . else [.] end)
+        | all(.[]; . as $k
+            | (if $o | has($k.option) then $o[$k.option] else (first(($d.options // [])[] | select(.name == $k.option)).default // null) end) as $v
+            | any(($k.values // [])[]; tostring == ($v | tostring)))' >/dev/null
+}
+
+
 step_options() {
-    local only="${1:-}" t name oname default descr secret
+    local only="${1:-}" t name oname default descr secret rel req required
     for t in "${TYPES[@]}"; do
         [[ -z "$only" || "$t" == "$only" ]] || continue
         name="${SEL[$t]:-}"
@@ -127,18 +139,38 @@ step_options() {
         _describe_of "$t" "$name"
         OPTV[$name]='{}'
         # Fields are joined with the unit separator: a tab would swallow empty defaults.
-        while IFS=$'\x1f' read -r oname default secret descr <&3; do
+        while IFS=$'\x1f' read -r oname default secret rel req descr <&3; do
             [[ -n "$oname" ]] || continue
+            # an option that does not matter with the choices made so far is not asked
+            if [[ -n "$rel" ]] && ! _cond_holds "$rel" "${OPTV[$name]}" "${DESC[$name]}"; then continue; fi
+            required=0
+            if [[ -n "$req" ]] && _cond_holds "$req" "${OPTV[$name]}" "${DESC[$name]}"; then required=1; fi
             if [[ "$secret" == true ]]; then
-                log_info "$name: $oname is a secret, it is generated at run time and never written"
+                if ((required)); then
+                    # a secret is never typed in: the file that holds it
+                    printf '  %s\n' "$descr" >&2
+                    _read "$name --$oname (path of the file that holds it)" ""
+                    while [[ -z "$REPLY" ]]; do
+                        log_warn "$oname is required here, give the path of a file"
+                        _read "$name --$oname (path of the file that holds it)" ""
+                    done
+                    OPTV[$name]="$(jq -c --arg k "$oname" --arg v "$REPLY" '. + {($k): {file: $v}}' <<<"${OPTV[$name]}")"
+                else
+                    log_info "$name: $oname is a secret, it is generated at run time and never written"
+                fi
                 continue
             fi
             printf '  %s\n' "$descr" >&2
             _read "$name --$oname" "$default"
-            if [[ "$REPLY" != "$default" && -n "$REPLY" ]]; then
+            # an option the component requires is never left empty, and is written even at its default
+            while ((required)) && [[ -z "$REPLY" ]]; do
+                log_warn "$oname is required here"
+                _read "$name --$oname" "$default"
+            done
+            if ((required)) || [[ "$REPLY" != "$default" && -n "$REPLY" ]]; then
                 OPTV[$name]="$(jq -c --arg k "$oname" --arg v "$REPLY" '. + {($k): $v}' <<<"${OPTV[$name]}")"
             fi
-        done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (.description // "")] | join("")' <<<"${DESC[$name]}")
+        done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (if .relevant_when then (.relevant_when | tojson) else "" end), (if .required_when then (.required_when | tojson) else "" end), (.description // "")] | join("\u001f")' <<<"${DESC[$name]}")
     done
 }
 
@@ -980,29 +1012,48 @@ _editor_seed() {
 # step_options_edit [<only>]: like step_options, but the default of each option is its current
 # value (from OPTV, seeded by _editor_seed) rather than the describe's default.
 step_options_edit() {
-    local only="${1:-}" t name oname default secret descr cur
+    local only="${1:-}" t name oname default secret rel req required descr cur
     for t in "${TYPES[@]}"; do
         [[ -z "$only" || "$t" == "$only" ]] || continue
         name="${SEL[$t]:-}"
         [[ -n "$name" ]] || continue
         _describe_of "$t" "$name"
         [[ -n "${OPTV[$name]:-}" ]] || OPTV[$name]='{}'
-        while IFS=$'\x1f' read -r oname default secret descr <&3; do
+        while IFS=$'\x1f' read -r oname default secret rel req descr <&3; do
             [[ -n "$oname" ]] || continue
+            if [[ -n "$rel" ]] && ! _cond_holds "$rel" "${OPTV[$name]}" "${DESC[$name]}"; then continue; fi
+            required=0
+            if [[ -n "$req" ]] && _cond_holds "$req" "${OPTV[$name]}" "${DESC[$name]}"; then required=1; fi
             if [[ "$secret" == true ]]; then
-                log_info "$name: $oname is a secret, it is generated at run time and never written"
+                if ((required)) && [[ "$(jq -r --arg k "$oname" 'has($k)' <<<"${OPTV[$name]}")" != true ]]; then
+                    printf '  %s\n' "$descr" >&2
+                    _read "$name --$oname (path of the file that holds it)" ""
+                    while [[ -z "$REPLY" ]]; do
+                        log_warn "$oname is required here, give the path of a file"
+                        _read "$name --$oname (path of the file that holds it)" ""
+                    done
+                    OPTV[$name]="$(jq -c --arg k "$oname" --arg v "$REPLY" '. + {($k): {file: $v}}' <<<"${OPTV[$name]}")"
+                elif ! ((required)); then
+                    log_info "$name: $oname is a secret, it is generated at run time and never written"
+                fi
                 continue
             fi
             cur="$(jq -r --arg k "$oname" 'if has($k) then .[$k] | tostring else empty end' <<<"${OPTV[$name]}")"
             [[ -n "$cur" ]] || cur="$default"
             printf '  %s\n' "$descr" >&2
             _read "$name --$oname" "$cur"
-            if [[ "$REPLY" == "$default" ]]; then
+            while ((required)) && [[ -z "$REPLY" ]]; do
+                log_warn "$oname is required here"
+                _read "$name --$oname" "$cur"
+            done
+            if ((required)); then
+                OPTV[$name]="$(jq -c --arg k "$oname" --arg v "$REPLY" '. + {($k): $v}' <<<"${OPTV[$name]}")"
+            elif [[ "$REPLY" == "$default" ]]; then
                 OPTV[$name]="$(jq -c --arg k "$oname" 'del(.[$k])' <<<"${OPTV[$name]}")"
             elif [[ -n "$REPLY" ]]; then
                 OPTV[$name]="$(jq -c --arg k "$oname" --arg v "$REPLY" '. + {($k): $v}' <<<"${OPTV[$name]}")"
             fi
-        done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (.description // "")] | join("\u001f")' <<<"${DESC[$name]}")
+        done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (if .relevant_when then (.relevant_when | tojson) else "" end), (if .required_when then (.required_when | tojson) else "" end), (.description // "")] | join("\u001f")' <<<"${DESC[$name]}")
     done
 }
 
@@ -1241,7 +1292,7 @@ _editor_del_path() {
 # its current value as the default; used for an option outside its values and for
 # duplicate_server_name. Returns 1 when the path is not that shape.
 _editor_reask_option() {
-    local path="$1" vi ci opt type name comp oname default secret descr cur
+    local path="$1" vi ci opt type name comp oname default secret rel req descr cur
     [[ "$path" =~ ^\$\.vms\[([0-9]+)\]\.components\[([0-9]+)\]\.options\.(.+)$ ]] || return 1
     vi="${BASH_REMATCH[1]}"
     ci="${BASH_REMATCH[2]}"
@@ -1251,13 +1302,20 @@ _editor_reask_option() {
     type="${comp%%/*}"
     name="${comp#*/}"
     _describe_of "$type" "$name"
-    while IFS=$'\x1f' read -r oname default secret descr <&3; do
+    while IFS=$'\x1f' read -r oname default secret rel req descr <&3; do
         [[ "$oname" == "$opt" ]] || continue
         cur="$(jq -r --argjson i "$vi" --argjson j "$ci" --arg k "$opt" '.vms[$i].components[$j].options[$k] // empty' <<<"$EDIT_CONFIG")"
         [[ -n "$cur" ]] || cur="$default"
         printf '  %s\n' "$descr" >&2
+        if [[ "$secret" == true ]]; then
+            # a secret is never typed in: the file that holds it (docs/spec-config.md#secrets)
+            _read "$name --$oname (path of the file that holds it)" ""
+            EDIT_CONFIG="$(jq -c --argjson i "$vi" --argjson j "$ci" --arg k "$opt" --arg v "$REPLY" '
+                .vms[$i].components[$j].options |= ((. // {}) + {($k): {file: $v}})' <<<"$EDIT_CONFIG")"
+            return 0
+        fi
         _read "$name --$oname" "$cur"
-        if [[ "$REPLY" == "$default" ]]; then
+        if [[ "$REPLY" == "$default" && "${REASK_REQUIRED:-0}" != 1 ]]; then
             EDIT_CONFIG="$(jq -c --argjson i "$vi" --argjson j "$ci" --arg k "$opt" '
                 .vms[$i].components[$j].options |= ((. // {}) | del(.[$k]))' <<<"$EDIT_CONFIG")"
         else
@@ -1265,7 +1323,7 @@ _editor_reask_option() {
                 .vms[$i].components[$j].options |= ((. // {}) + {($k): $v})' <<<"$EDIT_CONFIG")"
         fi
         return 0
-    done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (.description // "")] | join("\u001f")' <<<"${DESC[$name]}")
+    done 3< <(jq -r '.options[]? | [.name, (.default // ""), (.secret // false | tostring), (if .relevant_when then (.relevant_when | tojson) else "" end), (if .required_when then (.required_when | tojson) else "" end), (.description // "")] | join("\u001f")' <<<"${DESC[$name]}")
     return 1
 }
 
@@ -1362,7 +1420,14 @@ _editor_fix() {
             [[ "$REPLY" != y && "$REPLY" != Y ]] || { _editor_del_path "$path"; _editor_prune_links; }
             ;;
         invalid_value | wrong_type | duplicate_server_name | missing_option)
-            _editor_reask_option "$path" || {
+            local repath="$path" REASK_REQUIRED=0
+            if [[ "$code" == missing_option ]]; then
+                # the path is the options of the entry: the message names the option to give
+                repath="$path.${msg#option }"
+                repath="${repath%% is required*}"
+                REASK_REQUIRED=1
+            fi
+            _editor_reask_option "$repath" || {
                 _read "Edit VM $(_editor_vm_label "$vm") now to fix this? (y/n)" y
                 [[ "$REPLY" != y && "$REPLY" != Y || -z "$vm" ]] || _editor_edit_vm "$vm"
             }

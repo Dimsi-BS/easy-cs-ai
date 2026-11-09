@@ -89,14 +89,25 @@ def name_shape($x; $p): if ($x | has("name")) then
      elif ($x.name | vm_ok | not) then e("\($p).name"; "invalid_value"; "lowercase letters, digits and dashes, starting with a letter, are expected")
      else empty end)
   else empty end;
+def conds($c): if ($c | type) == "array" then $c else [$c] end;
+def cond_holds($given; $decl; $c): all(conds($c)[]; . as $k
+  | (if $given | has($k.option) then $given[$k.option] else (first($decl[] | select(.name == $k.option)).default // null) end) as $v
+  | any(($k.values // [])[]; tostring == ($v | tostring)));
+def cond_text($c): [conds($c)[] | "\(.option) is \((.values // []) | map(tostring) | join(" or "))"] | join(" and ");
+def missing_opts($p; $vname; $c; $decl): (if ($c.options | type) == "object" then $c.options else {} end) as $given
+  | $decl[]? | select(.required_when != null) | . as $o
+  | select(($given | has($o.name) | not) and cond_holds($given; $decl; $o.required_when))
+  | ev("\($p).options"; "missing_option"; "option \($o.name) is required when \(cond_text($o.required_when))"; $vname);
 def opts_errs($p; $o; $opts): ($o // {}) | if type != "object" then e("\($p).options"; "wrong_type"; "an object is expected") else
     to_entries[] | .key as $k | .value as $v | ($opts | map(select(.name == $k))[0]) as $d
     | if $d == null then e("\($p).options.\($k)"; "unknown_option"; "unknown option (known: \($opts | map(.name) | join(", ")))")
       elif $d.secret == true then
         (if ($v | type) != "object" then e("\($p).options.\($k)"; "secret_literal"; "a secret is given as {\"file\": …}, {\"env\": …} or {\"generate\": true}, never as a plain value")
-         elif ($v | keys) == ["file"] and ($v.file | type) == "string" then empty
-         elif ($v | keys) == ["env"] and ($v.env | type) == "string" then empty
-         elif ($v | keys) == ["generate"] and $v.generate == true then empty
+         elif (($v | keys) == ["file"] and ($v.file | type) == "string") or (($v | keys) == ["env"] and ($v.env | type) == "string") or (($v | keys) == ["generate"] and $v.generate == true) then
+           (($v | keys)[0]) as $src
+           | if (($d.sources // ["file", "env", "generate"]) | index($src)) == null
+             then e("\($p).options.\($k)"; "secret_source"; "this secret cannot be given as \($src), the allowed sources are: \(($d.sources // ["file", "env", "generate"]) | join(", "))")
+             else empty end
          else e("\($p).options.\($k)"; "secret_source"; "exactly one of file, env or generate is expected") end)
       elif ($v | type | IN("string", "number", "boolean") | not) then e("\($p).options.\($k)"; "wrong_type"; "a string, number or boolean is expected")
       else (typed($d; $v) | e("\($p).options.\($k)"; "invalid_value"; .)) end
@@ -149,7 +160,8 @@ def comp_errs($vi; $vname; $p; $c):
               then e("\($p).component"; "unsupported_platform"; "\($c.component) supports \(($d.platforms) | join(", ")), this machine is \($hostids | join("/"))") else empty end),
              (if $reqs then ($d.requires // [])[] | . as $r | select(satisfied($r; $vi) | not)
                 | ev($p; "missing_requirement"; "\($r) is required by \($c.component) and is neither installed nor in the file\(if $vname != null then " of VM \($vname)" else "" end)"; $vname) else empty end),
-             (if ($c | has("options")) then opts_errs($p; $c.options; ($d.options // [])) else empty end)
+             (if ($c | has("options")) then opts_errs($p; $c.options; ($d.options // [])) else empty end),
+             missing_opts($p; $vname; $c; ($d.options // []))
          end
      end),
     (if ($c | has("models")) then
