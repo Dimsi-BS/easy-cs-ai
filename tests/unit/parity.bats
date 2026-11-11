@@ -15,6 +15,7 @@ bats_require_minimum_version 1.5.0
 SHA=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 setup() {
+    export EASY_CS_AI_CHARSET=ascii
     GEN="${BATS_TEST_DIRNAME}/../../vm_script/config.sh"
     SCRIPT="${BATS_TEST_DIRNAME}/../../vm_script/script.sh"
     LIBGEN="${BATS_TEST_DIRNAME}/../../vm_script/lib/generator.sh"

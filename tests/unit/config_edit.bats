@@ -12,6 +12,7 @@ bats_require_minimum_version 1.5.0
 SHA=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 setup() {
+    export EASY_CS_AI_CHARSET=ascii
     GEN="${BATS_TEST_DIRNAME}/../../vm_script/config.sh"
     SCRIPT="${BATS_TEST_DIRNAME}/../../vm_script/script.sh"
     REAL="${BATS_TEST_DIRNAME}/../../install_scripts"
@@ -116,9 +117,9 @@ JSON
     GEN_ARGS=()
     edit f.json q
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"VM engine"* && "$stderr" == *"VM web"* ]]
-    [[ "$stderr" == *"proxy prox"* && "$stderr" == *"engine eng"* && "$stderr" == *"chat-interface chat"* ]]
-    [[ "$stderr" == *"models: m1"* ]]
+    [[ "$stderr" == *"VM 1 of 2 · engine"* && "$stderr" == *"VM 2 of 2 · web"* ]]
+    [[ "$stderr" == *"proxy "*" prox"* && "$stderr" == *"engine "*" eng"* && "$stderr" == *"chat-interface  chat"* ]]
+    [[ "$stderr" == *"models  m1"* ]]
     [[ "$stderr" == *"m1 on engine, shown in web"* ]]
     [[ "$stderr" == *"cancelled, nothing written"* ]]
 }
@@ -131,7 +132,7 @@ JSON
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"m1 on engine, shown nowhere"* ]]
     [[ "$stderr" != *"[ERROR]"* ]]
-    [ "$(grep -c 'models: ' <<<"$stderr")" -eq 1 ]
+    [ "$(grep -c '^  models  ' <<<"$stderr")" -eq 1 ]
 }
 
 @test "a file of version 1 is refused at loading with a message that the format changed" {
@@ -139,7 +140,7 @@ JSON
     GEN_ARGS=()
     edit v1.json q
     [[ "$stderr" == *"the format changed"* ]]
-    [[ "$stderr" == *"[unsupported_schema_version]"* ]]
+    [[ "$stderr" == *"unsupported_schema_version"* ]]
 }
 
 @test "opening a file with errors shows them, numbered, and q leaves it untouched" {
@@ -149,7 +150,7 @@ JSON
     GEN_ARGS=()
     edit f.json q
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"1. \$.links[0].model.model_ref"*"[unresolved_model]"* ]]
+    [[ "$stderr" == *"1  $.links[0].model.model_ref"*"unresolved_model"* ]]
     [ "$(cat f.json)" = "$before" ]
 }
 
@@ -248,7 +249,7 @@ JSON
     edit f.json "n web" Bad engine site q
     [[ "$stderr" == *"'Bad' is not lowercase letters"* ]]
     [[ "$stderr" == *"'engine' is already the name of another VM"* ]]
-    [[ "$stderr" == *"VM site"* ]]
+    [[ "$stderr" == *"· site"* ]]
 }
 
 @test "r <vm> removes it with its components, its models and the links naming it" {
@@ -277,7 +278,7 @@ JSON
     edit f.json "r web" y q
     [ "$status" -eq 0 ]
     [[ "$stderr" != *"keep its vm field"* ]]
-    [[ "$stderr" == *"VM engine"* ]]
+    [[ "$stderr" == *"· engine"* ]]
 }
 
 @test "the last VM cannot be removed" {
@@ -481,4 +482,16 @@ JSON
     run --separate-stderr bash "$GEN" edit
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"config new"* ]]
+}
+
+@test "the summary and the commands line are coloured when colour is on, and plain otherwise" {
+    two_vm_file f.json
+    run --separate-stderr env EASY_CS_AI_COLOR=always bash "$GEN" edit f.json <<<"q"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *$'\033['* ]]
+    plain="$(sed $'s/\033\[[0-9;]*m//g' <<<"$stderr")"
+    [[ "$plain" == *"[a] add   [e] edit   [m] models   [l] links   [n] rename   [r] remove   [f] fix   [y] write   [q] quit   [?] help"* ]]
+    run --separate-stderr env EASY_CS_AI_COLOR=never bash "$GEN" edit f.json <<<"q"
+    [[ "$stderr" != *$'\033'* ]]
+    [[ "$stderr" == *"[a] add   [e] edit"* ]]
 }

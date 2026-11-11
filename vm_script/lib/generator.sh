@@ -438,6 +438,18 @@ run_editor() {
     run_editor_loop "$file"
 }
 
+# _editor_commands_line: [a] add   [e] edit …, each letter in brackets followed by its word
+# (docs/spec-rendering.md#appearance); the commands that take a VM are typed with it (e web).
+_editor_commands_line() {
+    local item letter word line="" sep=""
+    for item in "a add" "e edit" "m models" "l links" "n rename" "r remove" "f fix" "y write" "q quit" "? help"; do
+        letter="${item%% *}" word="${item#* }"
+        line+="$sep$(style dim '[')$(style accent "$letter")$(style dim ']') $word"
+        sep="   "
+    done
+    printf '\n  %s\n' "$line" >&2
+}
+
 # run_editor_loop <file>: show the summary, apply commands until the person writes (y), quits
 # (q) or cancels (end of input). <file> is the file opened, "" for the configuration a session
 # has just built. Saving writes the file only.
@@ -445,7 +457,8 @@ run_editor_loop() {
     local file="$1" cmd sub arg1 v
     while :; do
         _editor_summary "$EDIT_CONFIG"
-        _read "a add a VM   e <vm> edit   m <vm> models   l where models are shown   n <vm> rename   r <vm> remove   f fix   y write   q quit   ? help" ""
+        _editor_commands_line
+        _read "Command" ""
         cmd="$REPLY"
         read -r sub arg1 _ <<<"$cmd"
         case "$sub" in

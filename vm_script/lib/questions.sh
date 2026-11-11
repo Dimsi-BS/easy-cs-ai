@@ -17,7 +17,7 @@ PROXY_DECLINED=0           # the proxy of the engine VM was refused: back to its
 # _read <prompt> [<default>]: answer in REPLY. End of input cancels the session.
 _read() {
     local prompt="$1" default="${2:-}"
-    printf '%s%s: ' "$prompt" "${default:+ [$default]}" >&2
+    printf '%s%s: ' "$prompt" "${default:+ $(style dim "[$default]")}" >&2
     if ! IFS= read -r REPLY; then
         printf '\n' >&2
         log_info "no more input, session cancelled, nothing written"
@@ -927,21 +927,32 @@ _editor_fmt_options() {
         | to_entries | map("--\(.key)=\(if (.value | type) == "object" then "(secret)" else (.value | tostring) end)") | join(" ")' <<<"$1"
 }
 
-# _editor_print_vm_body <slice>: components in install order (as written when the order is
-# circular, which the editor still has to show), then its models, only when it has an engine.
+# _editor_print_vm_body <slice>: the components in install order (as written when the order is
+# circular, which the editor still has to show) in aligned columns (type, implementation,
+# options), then its models, only when it has an engine.
 _editor_print_vm_body() {
-    local config="$1" desc order type name
+    local config="$1" desc order type name opts i w1=0 w2=0
+    local -a types=() names=() optss=()
     desc="$(apply_describes "$config")"
     if order="$(apply_order "$config" "$desc" 2>/dev/null)"; then
         while read -r type name; do
             [[ -n "$name" ]] || continue
-            printf '    %s %s %s\n' "$type" "$name" "$(_editor_fmt_options "$config" "$type/$name")"
+            opts="$(_editor_fmt_options "$config" "$type/$name")"
+            types+=("$type") names+=("$name") optss+=("${opts:-defaults}")
         done <<<"$order"
+        for i in "${!types[@]}"; do
+            ((${#types[i]} <= w1)) || w1=${#types[i]}
+            ((${#names[i]} <= w2)) || w2=${#names[i]}
+        done
+        for i in "${!types[@]}"; do
+            printf '  %s  %s  %s  %s\n' "$(style dim "$((i + 1))")" "$(style accent "$(printf '%-*s' "$w1" "${types[i]}")")" \
+                "$(printf '%-*s' "$w2" "${names[i]}")" "$(style dim "${optss[i]}")"
+        done
     else
-        jq -r '.vms[0].components[]? | "    \(.component) (order unresolved: circular requirement)"' <<<"$config"
+        jq -r '.vms[0].components[]? | "  \(.component) (order unresolved: circular requirement)"' <<<"$config"
     fi
     if [[ "$(jq -r 'any(.vms[0].components[]?; (.component // "") | startswith("engine/"))' <<<"$config")" == true ]]; then
-        printf '    models: %s\n' "$(jq -r '[.vms[0].components[] | .models[]? | .model] | if length == 0 then "none" else join(", ") end' <<<"$config")"
+        printf '\n  %s  %s\n' "$(style dim models)" "$(jq -r '[.vms[0].components[] | .models[]? | .model] | if length == 0 then "none" else join(", ") end' <<<"$config")"
     fi
 }
 
@@ -963,30 +974,38 @@ _editor_compute() {
 # numbered error, each with its code, its vm and the path. Leaves them in EDIT_ERRORS /
 # EDIT_WARNINGS for the command loop (f, and refusing y while an error stands).
 _editor_summary() {
-    local config="$1" vm shown errors warnings
+    local config="$1" vm shown errors warnings n i=0 count
     local -a names=()
     _editor_compute "$config"
     errors="$EDIT_ERRORS"
     warnings="$EDIT_WARNINGS"
     mapfile -t names < <(jq -r '(.vms // []) | if type == "array" then .[] else empty end | if type == "object" then (.name // "") else "" end' <<<"$config")
+    count=${#names[@]}
     shown="$(_shown_lines "$config" 2>/dev/null || true)"
     {
-        printf '\nConfiguration\n'
         for vm in "${names[@]}"; do
-            if [[ -n "$vm" ]]; then printf '  VM %s\n' "$vm"; else printf '  VM (no name)\n'; fi
+            i=$((i + 1))
+            printf '\n'
+            if [[ -n "$vm" ]]; then rule "VM $i of $count · $vm"; else rule "VM $i of $count (no name)"; fi
+            printf '\n\n'
             _editor_print_vm_body "$(apply_slice "$config" "$vm" 2>/dev/null || printf '{}')"
         done
         if [[ -n "$shown" ]]; then
-            printf '  models:\n'
+            printf '\n  %s\n' "$(style dim 'where the models are shown')"
             while IFS= read -r vm; do printf '    %s\n' "$vm"; done <<<"$shown"
         fi
         if [[ "$warnings" != '[]' ]]; then
-            printf '  [WARN]\n'
-            jq -r '.[] | "    \(.path): \(.message)" + (if .vm then " (VM \(.vm))" else "" end)' <<<"$warnings"
+            printf '\n'
+            jq -r '.[] | "\(.path)\t\(.message)" + (if .vm then " (VM \(.vm))" else "" end)' <<<"$warnings" | while IFS=$'\t' read -r vm n; do
+                printf '  %s %s\n%s\n' "$(sym warn)" "$(style warn "$vm")" "$(style dim "$(wrap 4 "$n")")"
+            done
         fi
         if [[ "$errors" != '[]' ]]; then
-            printf '  [ERROR]\n'
-            jq -r 'to_entries[] | "    \(.key + 1). \(.value.path): \(.value.message)" + (if .value.vm then " (VM \(.value.vm))" else "" end) + " [\(.value.code)]"' <<<"$errors"
+            n="$(jq 'length' <<<"$errors")"
+            printf '\n  %s %s %s\n' "$(sym error)" "$(style error "$n error(s)")" "$(style dim '- nothing is written while one remains')"
+            jq -r 'to_entries[] | "\(.key + 1)\t\(.value.path)\t\(.value.code)\t\(.value.message)" + (if .value.vm then " (VM \(.value.vm))" else "" end)' <<<"$errors" | while IFS=$'\t' read -r i vm n shown; do
+                printf '    %s  %s  %s\n%s\n' "$(style error "$i")" "$(style dim "$vm")" "$(style error "$n")" "$(wrap 7 "$shown")"
+            done
         fi
     } >&2
 }

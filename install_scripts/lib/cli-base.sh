@@ -15,7 +15,7 @@ fail() {
     *) meaning="failed" ;;
     esac
     log_error "$message (exit $code: $meaning)"
-    [[ -z "$hint" ]] || log_info "$hint"
+    [[ -z "$hint" ]] || printf '%s %s\n' "$(style dim hint:)" "$hint" >&2
     exit "$code"
 }
 
