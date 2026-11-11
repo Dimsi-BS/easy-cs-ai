@@ -577,10 +577,14 @@ cmd_apply() {
         return 0
     fi
     log_event "apply start components=$(apply_components "$config" | grep -c .) models=$(printf '%s\n' "$models" | grep -c .) prune=$( ((prune)) && printf true || printf false)$([[ -z "$vm" ]] || printf " vm=%s" "$vm")"
+    local step=0 steps
+    steps=$(($(apply_components "$config" | grep -c . || true) + $(printf '%s\n' "$models" | grep -c . || true)))
     while read -r type name; do
         [[ -n "$name" ]] || continue
         local args=()
         mapfile -t args < <(apply_install_args "$config" "$type" "$name")
+        step=$((step + 1))
+        progress "$step" "$steps" "install $type $name"
         (
             apply_export_secrets "$config" "$type" "$name"
             install_one "$type" "$name" 0 "${args[@]}"
@@ -596,6 +600,8 @@ cmd_apply() {
             local add_args=("$model" --engine "$engine")
             if [[ "$chat" == null ]]; then add_args+=(--no-chat-interface); else add_args+=(--chat-interface "$chat"); fi
             [[ "$force" == true ]] && add_args+=(--force)
+            step=$((step + 1))
+            progress "$step" "$steps" "add $model to $engine"
             (cmd_add "${add_args[@]}") || {
                 rc=$?
                 log_error "apply: add $model failed (exit $rc)"
@@ -605,6 +611,11 @@ cmd_apply() {
     fi
     if ((rc == 0 && prune)); then
         (apply_prune "$config") || rc=$?
+    fi
+    if ((rc == 0)); then
+        printf '%s %s %s\n' "$(sym ok)" "$(style ok applied)" "$(style dim "$step steps")" >&2
+    else
+        printf '%s %s %s\n' "$(sym error)" "$(style error stopped)" "$(style dim "at step $step of $steps")" >&2
     fi
     log_event "apply end exit=$rc duration=$((SECONDS - start))s"
     return "$rc"

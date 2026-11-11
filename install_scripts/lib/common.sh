@@ -116,6 +116,14 @@ wrap() {
     printf '%s\n' "$*" | fold -s -w $((width - indent)) | sed "s/^/$pad/; s/ *$//"
 }
 
+# progress <n> <total> <text…>: the header line of a step, [3/7] text. The steps print their own
+# lines, so it is printed once per step, never rewritten in place.
+progress() {
+    local n="$1" total="$2"
+    shift 2
+    printf '%s %s\n' "$(style dim "[$n/$total]")" "$*" >&2
+}
+
 _log() {
     local level="$1"
     shift

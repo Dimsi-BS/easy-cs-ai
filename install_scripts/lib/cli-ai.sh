@@ -478,6 +478,25 @@ config_report_text() {
         log_warn "$line"
     done < <(jq -r '.warnings[] | (if .code then .message else "\(.component) --\(.option)=\(.value): \(.message)" end) + (if .vm_ref then " (VM \(.vm_ref))" else "" end)' <<<"$doc")
     next_steps_text "$(jq -c '.next_steps // []' <<<"$doc")" >&2
+    config_verdict "$doc"
+}
+
+# config_verdict <document>: the last line of the text of a validation, what it found in a few
+# words: a symbol, valid or invalid, and the counts (docs/spec-rendering.md#appearance).
+config_verdict() {
+    local doc="$1" counts
+    counts="$(jq -r '(.warnings | length) as $w
+        | [(if .plan == null then empty else
+              ([.plan.vms[] | (.components | length)] | add // 0) as $c
+              | ([.plan.vms[] | (.models | length)] | add // 0) as $m
+              | ($c | tostring) + (if $c == 1 then " component" else " components" end),
+                ($m | tostring) + (if $m == 1 then " model" else " models" end) end),
+           ($w | tostring) + (if $w == 1 then " warning" else " warnings" end)] | join(", ")' <<<"$doc")"
+    if [[ "$(jq -r '.ok' <<<"$doc")" == true ]]; then
+        printf '%s %s %s\n' "$(sym ok)" "$(style ok valid)" "$(style dim "$counts")" >&2
+    else
+        printf '%s %s %s\n' "$(sym error)" "$(style error invalid)" "$(style dim "$(jq -r '.errors | length | tostring + (if . == 1 then " error" else " errors" end)' <<<"$doc"), $counts")" >&2
+    fi
 }
 
 # config_exit_code <document> [<missing-requirement-code>]: 0 when ok, else 2;

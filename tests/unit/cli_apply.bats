@@ -350,3 +350,17 @@ JSON
     [ "$status" -eq 5 ]
     installed chat
 }
+
+@test "apply prints a header line per step, [n/N], and a closing line saying what happened" {
+    export EASY_CS_AI_CHARSET=ascii EASY_CS_AI_COLOR=never
+    full_config
+    cli apply "$CFG"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"[1/5] install engine eng"*"[4/5] install provisioning fit"*"[5/5] add m1 to eng"* ]]
+    [[ "$stderr" == *"ok applied 5 steps"* ]]
+    FAKE_FAIL="eng-install"
+    export FAKE_FAIL
+    cli apply "$CFG"
+    [ "$status" -ne 0 ]
+    [[ "$stderr" == *"[ERROR] stopped at step "* ]]
+}

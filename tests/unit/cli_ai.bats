@@ -891,3 +891,18 @@ JSON
     [ "$(jq -c '.properties.vms.items.properties.components.items.oneOf | map(.properties.component.const)' <<<"$output")" = '["provisioning/llmfit","proxy/nginx","engine/ollama","chat-interface/librechat"]' ]
     [ "$(jq -c '.properties.vms.items.properties.components.items.oneOf[] | select(.properties.component.const == "proxy/nginx") | .properties.options.properties.tls.enum' <<<"$output")" = '["self-signed","provided","letsencrypt"]' ]
 }
+
+@test "config validate ends its text on a verdict: valid with the counts, or invalid with the errors" {
+    export EASY_CS_AI_CHARSET=ascii EASY_CS_AI_COLOR=never
+    full_config
+    export KEY=x
+    cli config validate "$CFG"
+    [[ "${stderr##*$'\n'}" != "" ]]
+    [[ "$stderr" == *"ok valid 3 components, 1 model, "* ]]
+    vmfile '[{"component":"nope/x"}]' >"$CFG"
+    cli config validate "$CFG"
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"[ERROR] invalid 1 error, 0 warnings"* ]]
+    cli config validate "$CFG" --json
+    [[ "$output" != *"valid"*"components"* ]]
+}
