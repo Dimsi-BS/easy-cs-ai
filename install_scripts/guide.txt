@@ -15,12 +15,11 @@ Procedure
                                              ranks, default models
                easy-cs-ai host --json       this machine (CPU, RAM, disk, GPU)
     For another machine (a VM to provision), ask the user for its specs.
-    Ask which VMs, and what each holds. Several VMs: a "vm" on every
-    component, on every model its "vm" and "engine", and "links":
-    [{"web_vm": VM, "engine_vm": VM}] (the chat interface of web_vm lists
-    the models of engine_vm: ask, never deduce; no VM stays alone). Do
-    steps 3 to 5 per VM (an engine VM that others reach needs a proxy). To change a
-    file, edit it and validate again (step 5).
+    Ask which VMs, and what each holds: a list of "vms" (a "name" each),
+    their "components", the "models" in their engine, and "links" saying
+    which chat interface shows which model, by name, every field written:
+    ask, never deduce. Do steps 3 to 5 per VM (an engine VM that others
+    reach needs a proxy). To change a file, edit it and validate again.
  3. Choose the models. There are TWO ORDERS: ask the user which one applies.
     a) HARDWARE FIRST, a VM is imposed: which models fit it?
          easy-cs-ai component provisioning llmfit suggest --json --target-ram GB

@@ -110,14 +110,15 @@ if [[ "$("$VM" status)" == "no VM"* ]]; then "$VM" create; fi
 CONFIG="$WORK/lifecycle.json"
 cat >"$CONFIG" <<EOF
 {
-  "schema_version": 1,
-  "components": [
-    { "type": "provisioning", "name": "llmfit" },
-    { "type": "proxy", "name": "nginx", "options": { "server-name": "localhost" } },
-    { "type": "engine", "name": "ollama" },
-    { "type": "chat-interface", "name": "librechat" }
-  ],
-  "models": [ { "name": "$MODEL" } ]
+  "schema_version": 2,
+  "vms": [ { "name": "vm-1", "components": [
+    { "component": "provisioning/llmfit" },
+    { "component": "proxy/nginx", "options": { "server-name": "localhost" } },
+    { "component": "engine/ollama", "name": "ollama", "models": [ { "model": "$MODEL", "name": "$MODEL" } ] },
+    { "component": "chat-interface/librechat", "name": "librechat" }
+  ] } ],
+  "links": [ { "model": { "vm_ref": "vm-1", "component_ref": "ollama", "model_ref": "$MODEL" },
+               "chat_interface": { "vm_ref": "vm-1", "component_ref": "librechat" } } ]
 }
 EOF
 # whatever a previous run left: the machine must start empty

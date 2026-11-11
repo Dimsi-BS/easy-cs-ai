@@ -1,13 +1,13 @@
-  # the first VM, plain: provisioning: llmfit, the rank 1
+engine  # role of the first VM
+  # name of the first VM: engine, the default
+  # provisioning: llmfit, the rank 1
   # proxy: prox
   # engine: ollama
-none  # chat-interface: declined, this VM is the engine
   # ollama --port, the default
 m  # order: models first
 m1  # models to add
 y  # confirm the first VM
 y  # add another VM
-engine  # name the first VM
 web  # role of the second VM
   # name it, default "web"
   # proxy: prox
@@ -15,5 +15,4 @@ web  # role of the second VM
   # chat --allow-registration, the default
 y  # confirm the second VM
 n  # no more VMs
-  # the links question, default: web -> engine
-y  # write the configuration
+  # where m1 is shown: web, the default

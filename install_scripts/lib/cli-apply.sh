@@ -4,104 +4,73 @@
 # uninstall_one, uninstall_order, cmd_add, cmd_remove, is_type, is_installed,
 # script_path, resolve_script and DRY.
 
-readonly APPLY_SCHEMA_VERSION=1
+readonly APPLY_SCHEMA_VERSION=2
 
-# The definitions shared by the validation and the slicing of a file that names
-# VMs, see docs/spec-config.md#several-vms. They read the configuration as $cfg
-# and the installed components as $installed. A model has a place, the VM and
-# the engine it is installed on (`place`), which is null for the VM of a
-# one-VM file.
+# The definitions shared by the validation and the slicing of a file, format of
+# version 2 (docs/spec-config.md#format): a list of VMs that hold their
+# components, an engine component holding its models, a `links` array. They read
+# the configuration as $cfg and the installed components as $installed. A VM is
+# designated by its index in `vms` (`vi`), its `name` being optional.
 # shellcheck disable=SC2016
 readonly APPLY_COMMON_JQ='
-def comps: [($cfg | if type == "object" then (.components // []) else [] end) | if type == "array" then .[] else empty end | select(type == "object")];
-def named: any(comps[]; has("vm"));
-def vms: reduce (comps[] | .vm | strings) as $v ([]; if index($v) != null then . else . + [$v] end);
 def vm_ok: type == "string" and test("^[a-z][a-z0-9-]*$");
-def engines: [comps[] | select(.type == "engine") | {vm: .vm, name: .name, default: (.default == true)}];
-def in_vm($v): select($v == null or .vm == $v);
-def listed($t; $v): [comps[] | select(.type == $t) | in_vm($v) | .name];
-def pick($t; $v): (listed($t; $v)) as $l
-  | if ($l | length) == 1 then $l[0]
-    else ([comps[] | select(.type == $t and .default == true) | in_vm($v) | .name][0]) end;
-def known($t; $n; $v): (listed($t; $v) + ($installed[$t] // [])) | index($n) != null;
-def satisfied($r; $v): (([comps[] | in_vm($v)] | any(.name == $r or .type == $r))
-  or (([$installed[]?[]]) | index($r) != null) or (($installed[$r] // []) | length > 0));
-def perr($at; $c; $m): {err: {at: $at, code: $c, msg: $m}};
-def place($m):
-  if ($m | has("engine")) and ($m.engine | type) != "string" then perr("engine"; "unresolved_engine"; "an engine name is expected")
-  else
-    (if ($m | has("vm")) and ($m.vm | vm_ok) then $m.vm else null end) as $v
-    | (if ($m | has("engine")) then $m.engine else null end) as $en
-    | engines as $all
-    | if named | not then
-        (if $en != null then
-           (if known("engine"; $en; null) then {vm: null, engine: $en}
-            else perr("engine"; "unresolved_engine"; "\"\($en)\" is neither listed in components nor installed") end)
-         else
-           (pick("engine"; null)) as $d
-           | if $d != null then {vm: null, engine: $d}
-             elif ($all | length) == 0 then perr("engine"; "unresolved_engine"; "no engine is listed in components, name one")
-             else perr("engine"; "ambiguous_engine"; "several engines and none is the default, name one") end
-         end)
-      elif $v != null and ((vms | index($v)) == null) then
-        perr("vm"; "unknown_vm"; "no component is on VM \"\($v)\" (the file names: \(vms | join(", ")))")
-      elif $v != null then
-        ([$all[] | select(.vm == $v)]) as $in
-        | if $en != null then
-            (if any($in[]; .name == $en) then {vm: $v, engine: $en}
-             elif any($all[]; .name == $en) then perr("engine"; "engine_other_vm"; "engine \"\($en)\" is not on VM \"\($v)\", it is on \([$all[] | select(.name == $en) | .vm] | join(", ")): a model goes to the engine of its own VM")
-             else perr("engine"; "unresolved_engine"; "\"\($en)\" is not an engine of the file") end)
-          elif ($in | length) == 0 then perr("engine"; "unresolved_engine"; "VM \"\($v)\" has no engine")
-          elif ($in | length) == 1 then {vm: $v, engine: $in[0].name}
-          else
-            ([$in[] | select(.default)][0].name) as $d
-            | if $d != null then {vm: $v, engine: $d}
-              else perr("engine"; "ambiguous_engine"; "VM \"\($v)\" has several engines and none is the default, name one") end
-          end
-      elif $en != null then
-        ([$all[] | select(.name == $en)]) as $on
-        | if ($on | length) == 1 then {vm: $on[0].vm, engine: $en}
-          elif ($on | length) == 0 then perr("engine"; "unresolved_engine"; "\"\($en)\" is not an engine of the file")
-          else perr("engine"; "ambiguous_engine"; "engine \"\($en)\" is on several VMs (\($on | map(.vm) | join(", "))), name the vm of the model") end
-      elif ($all | length) == 1 then {vm: $all[0].vm, engine: $all[0].name}
-      elif ($all | length) == 0 then perr("engine"; "unresolved_engine"; "no engine is listed in components, name one")
-      else perr("engine"; "ambiguous_engine"; "several engines (\($all | map("\(.vm)/\(.name)") | join(", "))), name the vm and the engine of the model") end
-  end;
-def places: [($cfg | if type == "object" then (.models // []) else [] end) | if type == "array" then to_entries[] else empty end
-  | select(.value | type == "object") | {i: .key, m: .value, p: place(.value)}];
+def vmlist: [($cfg | if type == "object" and (.vms | type) == "array" then .vms else [] end) | to_entries[]
+  | select(.value | type == "object")
+  | {vi: .key, vm: .value, vname: (if (.value.name | type) == "string" then .value.name else null end)}];
+def comps: [vmlist[] | . as $x
+  | ($x.vm.components | if type == "array" then to_entries[] else empty end) | select(.value | type == "object")
+  | .value as $c
+  | ($c.component | if type == "string" then split("/") else [] end) as $p
+  | {vi: $x.vi, vname: $x.vname, ci: .key, c: $c,
+     comp: (if ($p | length) == 2 then $c.component else null end), type: $p[0], impl: $p[1],
+     name: (if ($c.name | type) == "string" then $c.name else null end)}];
+def vnames: [vmlist[] | .vname | strings];
+def named: (vnames | length) > 0;
+def several: (vmlist | length) > 1;
+def installed_has($r): (([$installed[]?[]]) | index($r) != null) or (($installed[$r] // []) | length > 0);
+def satisfied($r; $vi): any(comps[]; .vi == $vi and (.impl == $r or .type == $r)) or installed_has($r);
+def vmtag($vname): if $vname != null then {vm: $vname} else {} end;
 '
 
-# The VM names of a file, in the order they first appear: empty for a one-VM file.
+# The VM names of a file, in the order they appear: empty for a file whose VMs
+# have none.
 # shellcheck disable=SC2016
-readonly APPLY_VMS_JQ='. as $cfg | '"$APPLY_COMMON_JQ"' vms[]'
+readonly APPLY_VMS_JQ='. as $cfg | '"$APPLY_COMMON_JQ"' vnames[]'
 
-# Whether a file names VMs (a component has a `vm`), whatever their number.
+# Whether a file names its VMs (at least one has a `name`).
 # shellcheck disable=SC2016
 readonly APPLY_NAMED_JQ='. as $cfg | '"$APPLY_COMMON_JQ"' named'
 
-# The slice of one VM, argument $vm: an ordinary one-VM configuration, the
-# components of that VM and the models placed on it, without `vm` and with
-# `engine` filled in.
+# The number of VMs of a file.
+# shellcheck disable=SC2016
+readonly APPLY_VMCOUNT_JQ='. as $cfg | '"$APPLY_COMMON_JQ"' vmlist | length'
+
+# The slice of one VM, argument $vm (its name, "" for the only VM of a file that
+# has one): a file of the same format with that VM, the models it holds with
+# their engine, and the links whose two ends are on it, see
+# docs/spec-config.md#slices.
 # shellcheck disable=SC2016
 readonly APPLY_SLICE_JQ='. as $cfg | '"$APPLY_COMMON_JQ"'
-  {schema_version: $cfg.schema_version,
-   components: [comps[] | select(.vm == $vm) | del(.vm)]}
-  + ([places[] | select(.p.err == null and .p.vm == $vm) | (.m | del(.vm)) + {engine: .p.engine}] | if length == 0 then {} else {models: .} end)'
+  (first(vmlist[] | select($vm == "" or .vname == $vm)) // null) as $x
+  | {schema_version: $cfg.schema_version, vms: (if $x == null then [] else [$x.vm] end)}
+  + (if $x == null or $x.vname == null then {}
+     else ([($cfg.links // [])[]? | select(type == "object" and .model.vm_ref == $x.vname and .chat_interface.vm_ref == $x.vname)]
+           | if length == 0 then {} else {links: .} end) end)'
 
 # The validation program. Input: the configuration. Arguments: $desc (describe
-# of every listed component, keyed "type/name"), $installed (installed
+# of every listed component, keyed "type/implementation"), $installed (installed
 # component names by type), $reqs (also report the requirements nothing
 # satisfies, and what a model needs), $hostids (the ids of this platform, [] to
 # skip the platform check) and $ranks (the proxy and provisioning component the
 # messages suggest). Output: one {path, code, message} object per problem, plus
-# the `vm` it is about for a file that names VMs, see docs/spec-capabilities.md
+# the `vm` it is about when that VM has a name, see docs/spec-capabilities.md
 # for the codes.
 # shellcheck disable=SC2016
 readonly APPLY_VALIDATE_JQ='. as $cfg |
 def types: ["engine", "chat-interface", "proxy", "provisioning"];
 def e($p; $c; $m): {path: $p, code: $c, message: $m};
-def ev($p; $c; $m; $v): e($p; $c; $m) + (if $v != null then {vm: $v} else {} end);
-def addvm($v): if $v == null or has("vm") then . else . + {vm: $v} end;
+def vmtag($vname): if $vname != null then {vm: $vname} else {} end;
+def ev($p; $c; $m; $v): e($p; $c; $m) + vmtag($v);
 def only_keys($allowed; $p): to_entries[] | select(.key | IN($allowed[]) | not) | e("\($p).\(.key)"; "unknown_key"; "unknown key");
 '"$APPLY_COMMON_JQ"'
 def int_of($v): if ($v | type) == "number" and $v == ($v | floor) then $v
@@ -115,168 +84,214 @@ def typed($o; $v): ($o.type // "string") as $t
     elif $t == "boolean" then (if ($v | type) == "boolean" or (($v | type) == "string" and ($v | IN("true", "false"))) then empty else "true or false is expected" end)
     elif $t == "enum" then (if ($v | tostring) | IN(($o.values // [])[]) then empty else "one of \(($o.values // []) | join(", ")) is expected" end)
     else empty end;
-def vm_shape($x; $p): if ($x | has("vm")) then
-    (if ($x.vm | type) != "string" then e("\($p).vm"; "wrong_type"; "a string is expected")
-     elif ($x.vm | vm_ok | not) then e("\($p).vm"; "invalid_value"; "lowercase letters, digits and dashes, starting with a letter, are expected")
+def name_shape($x; $p): if ($x | has("name")) then
+    (if ($x.name | type) != "string" then e("\($p).name"; "wrong_type"; "a string is expected")
+     elif ($x.name | vm_ok | not) then e("\($p).name"; "invalid_value"; "lowercase letters, digits and dashes, starting with a letter, are expected")
      else empty end)
   else empty end;
-def needs($p; $m; $s): ($m.name | tostring) as $n
-  | (place($m)) as $pl
-  | if $pl.err != null then empty else
-      ($desc["engine/\($pl.engine)"].endpoint.protected // false) as $prot
-      | (if $prot or satisfied("proxy"; $s) then empty
-         else ev($p; "missing_requirement"; "model \($n) needs a proxy to be reached from outside the VM (the engine listens on the loopback only) and none is installed or in the file\(if $ranks.proxy != null then ": add proxy \($ranks.proxy)" else "" end)"; $s) end),
-        (if ($m.force // false) == true or satisfied("provisioning"; $s) then empty
-         else ev($p; "missing_requirement"; "model \($n) needs a provisioning component to check that it fits and none is installed or in the file\(if $ranks.provisioning != null then ": add provisioning \($ranks.provisioning), or set force" else " (or set force)" end)"; $s) end)
-    end;
-if type != "object" then e("$"; "wrong_type"; "an object is expected") else
-  (only_keys(["schema_version", "components", "models", "links"]; "$")),
-  (if has("schema_version") | not then e("$.schema_version"; "wrong_type"; "required")
-   elif (.schema_version | type) != "number" then e("$.schema_version"; "wrong_type"; "a number is expected")
-   elif .schema_version > '"$APPLY_SCHEMA_VERSION"' then e("$.schema_version"; "unsupported_schema_version"; "\(.schema_version) is newer than the supported version '"$APPLY_SCHEMA_VERSION"'")
-   else empty end),
-  (if has("components") and (.components | type) != "array" then e("$.components"; "wrong_type"; "an array is expected") else empty end),
-  (if has("models") and (.models | type) != "array" then e("$.models"; "wrong_type"; "an array is expected") else empty end),
-  (if has("links") and (.links | type) != "array" then e("$.links"; "wrong_type"; "an array is expected") else empty end),
-  (if (.components | type) == "array" then
-    (.components | to_entries[] | .key as $i | .value as $c | "$.components[\($i)]" as $p
-     | (if ($c | type) == "object" and ($c.vm | type) == "string" then $c.vm else null end) as $cvm
-     | (if ($c | type) != "object" then e($p; "wrong_type"; "an object is expected") else
-         ($c | only_keys(["type", "name", "default", "options", "vm"]; $p)),
-         vm_shape($c; $p),
-         (if ($c.type | type) != "string" or ($c.type | IN(types[]) | not) then e("\($p).type"; "unknown_type"; "one of \(types | join(", ")) is expected")
-          elif ($c.name | type) != "string" then e("\($p).name"; "wrong_type"; "a string is expected")
-          elif $desc[$c.type + "/" + $c.name] == null then e("\($p).name"; "unknown_component"; "unknown \($c.type) \"\($c.name)\"")
-          else
-            $desc[$c.type + "/" + $c.name] as $d
-            | ($d.options // []) as $opts
-            | (if ($hostids | length) > 0 and (($d.platforms // []) | length) > 0 and ((($d.platforms // []) - (($d.platforms // []) - $hostids)) | length) == 0
-               then e("\($p).name"; "unsupported_platform"; "\($c.name) supports \(($d.platforms) | join(", ")), this machine is \($hostids | join("/"))") else empty end),
-              (if $reqs then ($d.requires // [])[] | . as $r | select(satisfied($r; $cvm) | not)
-                 | e($p; "missing_requirement"; "\($r) is required by \($c.name) and is neither installed nor in the file\(if $cvm != null then " of VM \($cvm)" else "" end)") else empty end),
-              (($c.options // {}) | if type != "object" then e("\($p).options"; "wrong_type"; "an object is expected") else
-                to_entries[] | .key as $k | .value as $v | ($opts | map(select(.name == $k))[0]) as $o
-                | if $o == null then e("\($p).options.\($k)"; "unknown_option"; "unknown option (known: \($opts | map(.name) | join(", ")))")
-                  elif $o.secret == true then
-                    (if ($v | type) != "object" then e("\($p).options.\($k)"; "secret_literal"; "a secret is given as {\"file\": …}, {\"env\": …} or {\"generate\": true}, never as a plain value")
-                     elif ($v | keys) == ["file"] and ($v.file | type) == "string" then empty
-                     elif ($v | keys) == ["env"] and ($v.env | type) == "string" then empty
-                     elif ($v | keys) == ["generate"] and $v.generate == true then empty
-                     else e("\($p).options.\($k)"; "secret_source"; "exactly one of file, env or generate is expected") end)
-                  elif ($v | type | IN("string", "number", "boolean") | not) then e("\($p).options.\($k)"; "wrong_type"; "a string, number or boolean is expected")
-                  else (typed($o; $v) | e("\($p).options.\($k)"; "invalid_value"; .)) end
-              end)
-          end),
-         (if ($c | has("default")) and ($c.default | type) != "boolean" then e("\($p).default"; "wrong_type"; "a boolean is expected") else empty end)
-       end) | addvm($cvm)),
-    (if named then ((.components | to_entries | map(select((.value | type) == "object" and (.value | has("vm") | not)))[0]) // null
-       | if . == null then empty else e("$.components[\(.key)]"; "missing_vm"; "this file names VMs and this component has no vm: give every component its vm, or none") end) else empty end),
-    ([comps[] | {vm: .vm, k: "\(.type)/\(.name)"}] | group_by([.vm, .k])[] | select(length > 1)
-      | ev("$.components"; "duplicate_component"; "\(.[0].k) is listed more than once\(if .[0].vm != null then " on VM \(.[0].vm)" else "" end)"; .[0].vm)),
-    ([comps[] | select(.default == true) | {vm: .vm, t: .type}] | group_by([.vm, .t])[] | select(length > 1)
-      | ev("$.components"; "several_defaults"; "several defaults of type \(.[0].t)\(if .[0].vm != null then " on VM \(.[0].vm)" else "" end)"; .[0].vm))
-   else empty end),
-  (if (.models | type) == "array" then
-    (.models | to_entries[] | .key as $i | .value as $m | "$.models[\($i)]" as $p
-     | if ($m | type) != "object" then e($p; "wrong_type"; "an object is expected") else
-         (place($m)) as $pl
-         | (if named then $pl.vm else null end) as $sv
-         | ($m | only_keys(["name", "engine", "vm", "chat_interface", "force"]; $p)),
-         (if ($m.name | type) != "string" or $m.name == "" then e("\($p).name"; "wrong_type"; "a model name is expected") else empty end),
-         (if ($m | has("force")) and ($m.force | type) != "boolean" then e("\($p).force"; "wrong_type"; "a boolean is expected") else empty end),
-         vm_shape($m; $p),
-         (if ($m | has("vm")) and ($m.vm | vm_ok) and (named | not) then e("\($p).vm"; "unknown_vm"; "the file names no VM: no component has a vm") else empty end),
-         (if $pl.err != null then ev("\($p).\($pl.err.at)"; $pl.err.code; $pl.err.msg; (if ($m.vm | type) == "string" and ($m.vm | vm_ok) then $m.vm else null end)) else empty end),
-         (if named and $pl.err != null then empty
-          elif ($m | has("chat_interface")) then
-            (if $m.chat_interface == null then empty
-             elif ($m.chat_interface | type) != "string" or (known("chat-interface"; $m.chat_interface; $sv) | not) then
-               (if named and ($m.chat_interface | type) == "string" and any(comps[]; .type == "chat-interface" and .name == $m.chat_interface)
-                then ev("\($p).chat_interface"; "chat_interface_other_vm"; "\"\($m.chat_interface)\" is on another VM than the model: a link between two VMs is a links entry of the file, finished by hand"; $sv)
-                else ev("\($p).chat_interface"; "unresolved_chat_interface"; "\"\($m.chat_interface)\" is neither listed in components nor installed"; $sv) end)
-             else empty end)
-          elif ((listed("chat-interface"; $sv)) | length) > 1 and pick("chat-interface"; $sv) == null then ev("\($p).chat_interface"; "ambiguous_chat_interface"; "several chat interfaces and none is the default, name one or null"; $sv)
-          else empty end),
-         (if $reqs then needs($p; $m; $sv) else empty end)
-       end),
-    (if named then
-       ([places[] | select(.p.err == null) | {i: .i, k: [.p.vm, .p.engine, (.m.name | tostring)]}] | group_by(.k)[] | select(length > 1) | .[1:][]
-        | ev("$.models[\(.i)]"; "duplicate_model"; "\(.k[2]) is listed more than once for engine \(.k[1]) of VM \(.k[0])"; .k[0]))
+def conds($c): if ($c | type) == "array" then $c else [$c] end;
+def cond_holds($given; $decl; $c): all(conds($c)[]; . as $k
+  | (if $given | has($k.option) then $given[$k.option] else (first($decl[] | select(.name == $k.option)).default // null) end) as $v
+  | any(($k.values // [])[]; tostring == ($v | tostring)));
+def cond_text($c): [conds($c)[] | "\(.option) is \((.values // []) | map(tostring) | join(" or "))"] | join(" and ");
+def missing_opts($p; $vname; $c; $decl): (if ($c.options | type) == "object" then $c.options else {} end) as $given
+  | $decl[]? | select(.required_when != null) | . as $o
+  | select(($given | has($o.name) | not) and cond_holds($given; $decl; $o.required_when))
+  | ev("\($p).options"; "missing_option"; "option \($o.name) is required when \(cond_text($o.required_when))"; $vname);
+def opts_errs($p; $o; $opts): ($o // {}) | if type != "object" then e("\($p).options"; "wrong_type"; "an object is expected") else
+    to_entries[] | .key as $k | .value as $v | ($opts | map(select(.name == $k))[0]) as $d
+    | if $d == null then e("\($p).options.\($k)"; "unknown_option"; "unknown option (known: \($opts | map(.name) | join(", ")))")
+      elif $d.secret == true then
+        (if ($v | type) != "object" then e("\($p).options.\($k)"; "secret_literal"; "a secret is given as {\"file\": …}, {\"env\": …} or {\"generate\": true}, never as a plain value")
+         elif (($v | keys) == ["file"] and ($v.file | type) == "string") or (($v | keys) == ["env"] and ($v.env | type) == "string") or (($v | keys) == ["generate"] and $v.generate == true) then
+           (($v | keys)[0]) as $src
+           | if (($d.sources // ["file", "env", "generate"]) | index($src)) == null
+             then e("\($p).options.\($k)"; "secret_source"; "this secret cannot be given as \($src), the allowed sources are: \(($d.sources // ["file", "env", "generate"]) | join(", "))")
+             else empty end
+         else e("\($p).options.\($k)"; "secret_source"; "exactly one of file, env or generate is expected") end)
+      elif ($v | type | IN("string", "number", "boolean") | not) then e("\($p).options.\($k)"; "wrong_type"; "a string, number or boolean is expected")
+      else (typed($d; $v) | e("\($p).options.\($k)"; "invalid_value"; .)) end
+  end;
+def needs($vi; $vname; $p; $m; $c): ($m.model | tostring) as $n
+  | ($desc[$c.component].endpoint.protected // false) as $prot
+  | (if $prot or satisfied("proxy"; $vi) then empty
+     else ev($p; "missing_requirement"; "model \($n) needs a proxy to be reached from outside the VM (the engine listens on the loopback only) and none is installed or in the file\(if $ranks.proxy != null then ": add proxy \($ranks.proxy)" else "" end)"; $vname) end),
+    (if ($m.force // false) == true or satisfied("provisioning"; $vi) then empty
+     else ev($p; "missing_requirement"; "model \($n) needs a provisioning component to check that it fits and none is installed or in the file\(if $ranks.provisioning != null then ": add provisioning \($ranks.provisioning), or set force" else " (or set force)" end)"; $vname) end);
+def model_errs($vi; $vname; $p; $m; $c):
+  if ($m | type) != "object" then e($p; "wrong_type"; "an object is expected") else
+    ($m | only_keys(["model", "name", "force", "options"]; $p)),
+    (if ($m | has("model") | not) then e("\($p).model"; "missing_key"; "the model, as the engine knows it, is required")
+     elif ($m.model | type) != "string" then e("\($p).model"; "wrong_type"; "a string is expected")
+     elif $m.model == "" then e("\($p).model"; "invalid_value"; "a model name is expected") else empty end),
+    (if ($m | has("name")) then
+       (if ($m.name | type) != "string" then e("\($p).name"; "wrong_type"; "a string is expected")
+        elif $m.name == "" or ($m.name | test("[[:cntrl:]]")) then e("\($p).name"; "invalid_value"; "a non-empty string with no control character is expected")
+        else empty end) else empty end),
+    (if ($m | has("force")) and ($m.force | type) != "boolean" then e("\($p).force"; "wrong_type"; "a boolean is expected") else empty end),
+    (if ($m | has("options")) then opts_errs($p; $m.options; ($desc[$c.component].action_options["add-model"] // [])) else empty end),
+    (if $reqs and ($m.model | type) == "string" and $m.model != "" then needs($vi; $vname; $p; $m; $c) else empty end)
+  end;
+def models_errs($vi; $vname; $p; $c):
+  if ($c.models | type) != "array" then e("\($p).models"; "wrong_type"; "an array is expected") else
+    ($c.models | to_entries[] | model_errs($vi; $vname; "\($p).models[\(.key)]"; .value; $c)),
+    ([$c.models | to_entries[] | select((.value | type) == "object" and (.value.model | type) == "string") | {i: .key, k: .value.model}]
+      | group_by(.k)[] | select(length > 1) | .[1:][]
+      | ev("\($p).models[\(.i)].model"; "duplicate_model"; "\(.k) is listed more than once in this engine"; $vname)),
+    ([$c.models | to_entries[] | select((.value | type) == "object" and (.value.name | type) == "string" and .value.name != "") | {i: .key, k: .value.name}]
+      | group_by(.k)[] | select(length > 1) | .[1:][]
+      | ev("\($p).models[\(.i)].name"; "duplicate_name"; "the name \(.k) is used by several models of this engine"; $vname))
+  end;
+def comp_errs($vi; $vname; $p; $c):
+  if ($c | type) != "object" then e($p; "wrong_type"; "an object is expected") else
+    ($c | only_keys(["component", "name", "default", "options", "models"]; $p)),
+    name_shape($c; $p),
+    (if ($c | has("default")) and ($c.default | type) != "boolean" then e("\($p).default"; "wrong_type"; "a boolean is expected") else empty end),
+    (if ($c | has("component") | not) then e("\($p).component"; "missing_key"; "required: <type>/<implementation>, e.g. engine/ollama")
+     elif ($c.component | type) != "string" then e("\($p).component"; "wrong_type"; "a string is expected")
+     else
+       ($c.component | split("/")) as $s
+       | if ($s | length) != 2 or $s[0] == "" or $s[1] == "" then e("\($p).component"; "invalid_value"; "<type>/<implementation> is expected, e.g. engine/ollama")
+         elif ($s[0] | IN(types[]) | not) then e("\($p).component"; "unknown_type"; "one of \(types | join(", ")) is expected")
+         elif $desc[$c.component] == null then e("\($p).component"; "unknown_component"; "unknown \($s[0]) \"\($s[1])\"")
+         else
+           $desc[$c.component] as $d
+           | (if ($hostids | length) > 0 and (($d.platforms // []) | length) > 0 and ((($d.platforms // []) - (($d.platforms // []) - $hostids)) | length) == 0
+              then e("\($p).component"; "unsupported_platform"; "\($c.component) supports \(($d.platforms) | join(", ")), this machine is \($hostids | join("/"))") else empty end),
+             (if $reqs then ($d.requires // [])[] | . as $r | select(satisfied($r; $vi) | not)
+                | ev($p; "missing_requirement"; "\($r) is required by \($c.component) and is neither installed nor in the file\(if $vname != null then " of VM \($vname)" else "" end)"; $vname) else empty end),
+             (if ($c | has("options")) then opts_errs($p; $c.options; ($d.options // [])) else empty end),
+             missing_opts($p; $vname; $c; ($d.options // []))
+         end
+     end),
+    (if ($c | has("models")) then
+       (if ($c.component | type) == "string" and ($c.component | startswith("engine/") | not) then e("\($p).models"; "models_on_non_engine"; "only an engine component holds models")
+        else models_errs($vi; $vname; $p; $c) end)
      else empty end)
-   else empty end)
-end'
-
-# The errors and warnings that need the whole file (several VMs and their
-# `links`), built on top of APPLY_COMMON_JQ: `vm_has`, `protected` and the
-# `link_errs` of docs/spec-config.md#links (unknown_vm, link_to_self,
-# link_without_chat_interface, link_without_engine, link_protected_engine,
-# duplicate_link, link_cycle, unlinked_vm), plus `valid_links` for the cross-VM
-# computations of docs/spec-multi-vm.md (engine_unreachable,
-# engine_address_unknown, duplicate_server_name, next_steps). Needs `$desc` and
-# APPLY_COMMON_JQ already spliced in, as APPLY_VALIDATE_JQ does. Not part of
-# APPLY_VALIDATE_JQ: `apply` installs one VM at a time and does not read
-# `links`, which never reaches a slice. Used by install_scripts/lib/cli-ai.sh.
-# shellcheck disable=SC2016,SC2034
-readonly APPLY_LINKS_JQ='
-def e($p; $c; $m): {path: $p, code: $c, message: $m};
-def ev($p; $c; $m; $v): e($p; $c; $m) + (if $v != null then {vm: $v} else {} end);
-def only_keys($allowed; $p): to_entries[] | select(.key | IN($allowed[]) | not) | e("\($p).\(.key)"; "unknown_key"; "unknown key");
-def has_vm($v): (vms | index($v)) != null;
-def chat_on($v): [comps[] | select(.vm == $v and .type == "chat-interface")];
-def eng_on($v): [comps[] | select(.vm == $v and .type == "engine")];
-def protected($c): ($desc["engine/\($c.name)"].endpoint.protected // false);
-# valid_links: the links of the file that resolve (known VMs, not to self, a chat interface on
-# web_vm, a non-protected engine on engine_vm): the ones a program can act on. A link with any
-# other shape or problem (duplicate, cycle, unknown VM…) is left to link_errs below.
-def valid_links: [(.links // [])[]? | select(type == "object" and (.web_vm | type) == "string" and (.engine_vm | type) == "string")
-  | select(.web_vm != .engine_vm and has_vm(.web_vm) and has_vm(.engine_vm))
-  | select((chat_on(.web_vm) | length) > 0 and (eng_on(.engine_vm) | length) > 0)
-  | select(any(eng_on(.engine_vm)[]; protected(.)) | not)
-  | {web_vm, engine_vm}];
-# link_errs: the errors of the top-level `links` array, see docs/spec-config.md#links.
-# A link is {web_vm, engine_vm}: the chat interface of web_vm lists the models engine_vm serves.
-def link_errs:
-  (.links // []) as $links
+  end;
+def vm_errs: ($cfg.vms | to_entries[]) | .key as $i | .value as $v | "$.vms[\($i)]" as $p
+  | (if ($v | type) == "object" and ($v.name | type) == "string" then $v.name else null end) as $vname
+  | if ($v | type) != "object" then e($p; "wrong_type"; "an object is expected") else
+      ($v | only_keys(["name", "components"]; $p)),
+      (if ($v | has("name")) then
+         (if ($v.name | type) != "string" then e("\($p).name"; "wrong_type"; "a string is expected")
+          elif ($v.name | vm_ok | not) then e("\($p).name"; "invalid_value"; "lowercase letters, digits and dashes, starting with a letter, are expected")
+          else empty end)
+       elif ($cfg.vms | length) > 1 then e($p; "missing_vm_name"; "a file with several VMs needs the name of each one") else empty end),
+      (if ($v | has("components") | not) then e("\($p).components"; "missing_key"; "required: the components installed on the VM")
+       elif ($v.components | type) != "array" then e("\($p).components"; "wrong_type"; "an array is expected")
+       elif ($v.components | length) == 0 then ev($p; "empty_vm"; "a VM holds at least one component"; $vname)
+       else
+         ($v.components | to_entries[] | comp_errs($i; $vname; "\($p).components[\(.key)]"; .value)),
+         ([comps[] | select(.vi == $i and .name != null) | {ci, k: .name}] | group_by(.k)[] | select(length > 1) | .[1:][]
+           | ev("\($p).components[\(.ci)].name"; "duplicate_name"; "the name \(.k) is used by several components of this VM"; $vname)),
+         ([comps[] | select(.vi == $i and .comp != null) | {ci, k: .comp}] | group_by(.k)[] | select(length > 1) | .[1:][]
+           | ev("\($p).components[\(.ci)]"; "duplicate_component"; "\(.k) is listed more than once on this VM"; $vname)),
+         ([comps[] | select(.vi == $i and .c.default == true) | {ci, t: .type}] | group_by(.t)[] | select(length > 1) | .[1:][]
+           | ev("\($p).components[\(.ci)].default"; "several_defaults"; "several defaults of type \(.t) on this VM"; $vname))
+       end)
+    end;
+def dup_vms: [vmlist[] | select(.vname != null)] | group_by(.vname)[] | select(length > 1) | .[1:][]
+  | e("$.vms[\(.vi)].name"; "duplicate_vm"; "the VM name \(.vname) is used more than once");
+def ref_errs($p; $r; $fields): if ($r | type) != "object" then e($p; "wrong_type"; "an object is expected") else
+    ($r | only_keys($fields; $p)),
+    ($fields[] as $f | if ($r | has($f) | not) then e($p; "missing_key"; "\($f) is required")
+       elif ($r[$f] | type) != "string" then e("\($p).\($f)"; "wrong_type"; "a string is expected") else empty end)
+  end;
+def link_errs: ($cfg.links // []) as $links
   | if ($links | type) != "array" then empty else
       ($links | to_entries[] | .key as $i | .value as $l | "$.links[\($i)]" as $p
        | if ($l | type) != "object" then e($p; "wrong_type"; "an object is expected") else
-           ($l | only_keys(["web_vm", "engine_vm"]; $p)),
-           (if ($l.web_vm | type) != "string" then e("\($p).web_vm"; "wrong_type"; "a string is expected") else empty end),
-           (if ($l.engine_vm | type) != "string" then e("\($p).engine_vm"; "wrong_type"; "a string is expected") else empty end),
-           (if ($l.web_vm | type) == "string" and ($l.engine_vm | type) == "string" then
-              (if named | not then e($p; "unknown_vm"; "the file names no VM: no component has a vm")
-               elif has_vm($l.web_vm) | not then e("\($p).web_vm"; "unknown_vm"; "no component is on VM \"\($l.web_vm)\" (the file names: \(vms | join(", ")))")
-               elif has_vm($l.engine_vm) | not then e("\($p).engine_vm"; "unknown_vm"; "no component is on VM \"\($l.engine_vm)\" (the file names: \(vms | join(", ")))")
-               elif $l.web_vm == $l.engine_vm then e($p; "link_to_self"; "VM \"\($l.web_vm)\" cannot link its own engine, that is what add does on one VM")
-               elif (chat_on($l.web_vm) | length) == 0 then e("\($p).web_vm"; "link_without_chat_interface"; "VM \"\($l.web_vm)\" has no chat interface to list the models of \($l.engine_vm)")
-               elif (eng_on($l.engine_vm) | length) == 0 then e("\($p).engine_vm"; "link_without_engine"; "VM \"\($l.engine_vm)\" has no engine for \($l.web_vm) to reach")
-               elif any(eng_on($l.engine_vm)[]; protected(.)) then e($p; "link_protected_engine"; "the engine of VM \"\($l.engine_vm)\" is protected: it enforces HTTPS and its key itself, and is not put behind a proxy, so no documented way links it to a chat interface")
-               else empty end)
+           ($l | only_keys(["model", "chat_interface"]; $p)),
+           (if ($l | has("model") | not) then e("\($p).model"; "missing_key"; "required: the reference to the model")
+            else ref_errs("\($p).model"; $l.model; ["vm_ref", "component_ref", "model_ref"]) end),
+           (if ($l | has("chat_interface") | not) then e("\($p).chat_interface"; "missing_key"; "required: the reference to the chat interface")
+            else ref_errs("\($p).chat_interface"; $l.chat_interface; ["vm_ref", "component_ref"]) end),
+           (if ($l.model | type) == "object" and ($l.model.vm_ref | type) == "string" then
+              ($l.model.vm_ref) as $mv
+              | (first(vmlist[] | select(.vname == $mv)) // null) as $x
+              | if $x == null then e("\($p).model.vm_ref"; "unknown_vm"; "no VM is named \"\($mv)\" (the file names: \(vnames | join(", ")))")
+                elif ($l.model.component_ref | type) == "string" then
+                  ($l.model.component_ref) as $cr
+                  | (first(comps[] | select(.vi == $x.vi and .name == $cr and .type == "engine")) // null) as $en
+                  | if $en == null then
+                      e("\($p).model.component_ref"; "unresolved_engine"; "VM \"\($mv)\" has no engine named \"\($cr)\"\(if any(comps[]; .vi == $x.vi and .name == $cr) then " (that name is another type of component)" elif any(comps[]; .vi == $x.vi and .type == "engine") then " (an engine of that VM has no name written, or another one)" else "" end)")
+                    elif ($l.model.model_ref | type) == "string" then
+                      ($l.model.model_ref) as $mr
+                      | if ([($en.c.models // [])[]? | select(type == "object" and .name == $mr)] | length) == 0 then
+                          e("\($p).model.model_ref"; "unresolved_model"; "engine \"\($cr)\" of VM \"\($mv)\" holds no model instance named \"\($mr)\"\(if any(($en.c.models // [])[]?; type == "object" and .model == $mr and has("name") | not) then " (an instance of that model has no name written)" else "" end)")
+                        else empty end
+                    else empty end
+                else empty end
+            else empty end),
+           (if ($l.chat_interface | type) == "object" and ($l.chat_interface.vm_ref | type) == "string" then
+              ($l.chat_interface.vm_ref) as $cv
+              | (first(vmlist[] | select(.vname == $cv)) // null) as $x
+              | if $x == null then e("\($p).chat_interface.vm_ref"; "unknown_vm"; "no VM is named \"\($cv)\" (the file names: \(vnames | join(", ")))")
+                elif ($l.chat_interface.component_ref | type) == "string" then
+                  ($l.chat_interface.component_ref) as $cr
+                  | if any(comps[]; .vi == $x.vi and .name == $cr and .type == "chat-interface") then empty
+                    else e("\($p).chat_interface.component_ref"; "unresolved_chat_interface"; "VM \"\($cv)\" has no chat interface named \"\($cr)\"\(if any(comps[]; .vi == $x.vi and .name == $cr) then " (that name is another type of component)" elif any(comps[]; .vi == $x.vi and .type == "chat-interface") then " (a chat interface of that VM has no name written, or another one)" else "" end)") end
+                else empty end
+            else empty end),
+           (if ($l.model | type) == "object" and ($l.chat_interface | type) == "object"
+               and ($l.model.vm_ref | type) == "string" and ($l.chat_interface.vm_ref | type) == "string"
+               and $l.model.vm_ref != $l.chat_interface.vm_ref then
+              (first(vmlist[] | select(.vname == $l.model.vm_ref)) // null) as $x
+              | (first(comps[] | select(.vi == $x.vi and .name == $l.model.component_ref and .type == "engine")) // null) as $en
+              | if $x != null and $en != null and ($desc[$en.comp].endpoint.protected // false) then
+                  e($p; "protected_engine_other_vm"; "the engine \"\($l.model.component_ref)\" is protected: it enforces HTTPS and its key itself and has no proxy to publish its URL, so its models cannot be linked to a chat interface of another VM")
+                else empty end
             else empty end)
          end),
-      ([$links | to_entries[] | select((.value | type) == "object" and (.value.web_vm | type) == "string" and (.value.engine_vm | type) == "string") | {i: .key, k: [.value.web_vm, .value.engine_vm]}]
-       | group_by(.k)[] | select(length > 1) | .[1:][] | e("$.links[\(.i)]"; "duplicate_link"; "the link \(.k[0]) -> \(.k[1]) is already given")),
-      (def reaches($adj; $from; $to; $seen):
-         if $from == $to then true
-         elif ($seen | index($from)) != null then false
-         else any(($adj[$from] // [])[]; reaches($adj; .; $to; $seen + [$from]))
-         end;
-       ([$links | to_entries[] | select((.value | type) == "object" and (.value.web_vm | type) == "string" and (.value.engine_vm | type) == "string"
-           and .value.web_vm != .value.engine_vm and has_vm(.value.web_vm) and has_vm(.value.engine_vm)
-           and (chat_on(.value.web_vm) | length) > 0 and (eng_on(.value.engine_vm) | length) > 0
-           and (any(eng_on(.value.engine_vm)[]; protected(.)) | not))
-         | {i: .key, w: .value.web_vm, en: .value.engine_vm}]) as $valid
-       | (reduce $valid[] as $l ({adj: {}, errs: []};
-            if reaches(.adj; $l.en; $l.w; []) then .errs += [{i: $l.i, w: $l.w, en: $l.en}]
-            else .adj[$l.w] = ((.adj[$l.w] // []) + [$l.en]) end)).errs[]
-       | e("$.links[\(.i)]"; "link_cycle"; "the links close a cycle: \(.w) and \(.en) would reach each other, directly or through others, a VM cannot link its own engine through other VMs")),
-      (if (vms | length) >= 2 then
-         ([$links[]? | select(type == "object") | (.web_vm, .engine_vm) | select(type == "string")]) as $linked
-         | (vms[] as $v | select(($linked | index($v)) == null)
-            | (([(.components // []) | to_entries[] | select((.value | type) == "object" and .value.vm == $v) | .key])[0]) as $fi
-            | ev("$.components[\($fi)]"; "unlinked_vm"; "VM \"\($v)\" is in no link: a configuration with several VMs describes machines that work together, link it, edit it, or remove it"; $v))
-       else empty end)
+      ([$links | to_entries[] | select((.value | type) == "object"
+          and ((.value.model | type) == "object") and ((.value.chat_interface | type) == "object")
+          and ([.value.model.vm_ref, .value.model.component_ref, .value.model.model_ref, .value.chat_interface.vm_ref, .value.chat_interface.component_ref] | all(type == "string")))
+        | {i: .key, m: [.value.model.vm_ref, .value.model.component_ref, .value.model.model_ref], c: [.value.chat_interface.vm_ref, .value.chat_interface.component_ref]}]
+       | (reduce .[] as $l ({seen: [], models: [], errs: []};
+            if (.seen | index([[$l.m, $l.c]])) != null then .errs += [e("$.links[\($l.i)]"; "duplicate_link"; "this link is already written")]
+            elif (.models | index([$l.m])) != null then .errs += [e("$.links[\($l.i)]"; "unsupported_count"; "a model is shown in one chat interface for now: this one has a second link")]
+            else .seen += [[$l.m, $l.c]] | .models += [$l.m] end)).errs[])
     end;
+def addvm: if has("vm") then . else ((.path | select(startswith("$.vms[")) | ltrimstr("$.vms[") | split("]")[0] | tonumber) // null) as $i
+  | if $i == null then . else ((first(vmlist[] | select(.vi == $i)).vname) // null) as $n | if $n == null then . else . + {vm: $n} end end end;
+(if type != "object" then e("$"; "wrong_type"; "an object is expected") else
+  (only_keys(["schema_version", "vms", "links"]; "$")),
+  (if has("schema_version") | not then e("$.schema_version"; "missing_key"; "required")
+   elif (.schema_version | type) != "number" or .schema_version != (.schema_version | floor) then e("$.schema_version"; "wrong_type"; "an integer is expected")
+   elif .schema_version < '"$APPLY_SCHEMA_VERSION"' then e("$.schema_version"; "unsupported_schema_version"; "the format changed: this version reads schema_version '"$APPLY_SCHEMA_VERSION"' only, a list of VMs that hold their components (see docs/spec-config.md#compatibility)")
+   elif .schema_version > '"$APPLY_SCHEMA_VERSION"' then e("$.schema_version"; "unsupported_schema_version"; "\(.schema_version) is newer than the supported version '"$APPLY_SCHEMA_VERSION"'")
+   else empty end),
+  (if has("vms") | not then e("$.vms"; "missing_key"; "required: the list of VMs")
+   elif (.vms | type) != "array" then e("$.vms"; "wrong_type"; "an array is expected")
+   else vm_errs, dup_vms end),
+  (if has("links") and (.links | type) != "array" then e("$.links"; "wrong_type"; "an array is expected") else empty end),
+  link_errs
+end) | addvm'
+
+# The definitions on top of APPLY_COMMON_JQ for the links of the file, see
+# docs/spec-config.md#links: `resolved_links` (the links whose two references
+# resolve, with what they designate) and `steps_links` (the ones whose chat
+# interface is on another VM than the engine of their model, and whose engine is
+# not protected: the next steps of docs/spec-multi-vm.md are given for these). The
+# errors of the links themselves are in APPLY_VALIDATE_JQ. Needs `$desc`, like it.
+# Used by install_scripts/lib/cli-ai.sh.
+# shellcheck disable=SC2016,SC2034
+readonly APPLY_LINKS_JQ='
+def fld($o; $k): if ($o | type) == "object" then $o[$k] else null end;
+def protected($en): ($desc[$en.comp].endpoint.protected // false);
+def resolved_links: [(($cfg.links // []) | if type == "array" then to_entries[] else empty end) | .key as $i | .value as $l
+  | select($l | type == "object")
+  | (first(vmlist[] | select(.vname != null and .vname == fld($l.model; "vm_ref"))) // null) as $mx
+  | (first(vmlist[] | select(.vname != null and .vname == fld($l.chat_interface; "vm_ref"))) // null) as $cx
+  | select($mx != null and $cx != null)
+  | (first(comps[] | select(.vi == $mx.vi and .name != null and .name == fld($l.model; "component_ref") and .type == "engine")) // null) as $en
+  | (first(comps[] | select(.vi == $cx.vi and .name != null and .name == fld($l.chat_interface; "component_ref") and .type == "chat-interface")) // null) as $ch
+  | select($en != null and $ch != null)
+  | (first(($en.c.models // [])[]? | select(type == "object" and .name != null and .name == fld($l.model; "model_ref"))) // null) as $m
+  | select($m != null)
+  | {i: $i, mvi: $mx.vi, mvn: $mx.vname, en: $en, model: $m, mref: $l.model.model_ref, cvi: $cx.vi, cvn: $cx.vname, ch: $ch, l: $l}];
+def steps_links: [resolved_links[] | select(.mvi != .cvi and (protected(.en) | not))];
 '
 
 # apply_describes <config>: describe of every listed component that is shipped.
@@ -289,7 +304,8 @@ apply_describes() {
             entry="$(bash "$script" describe)" || fail "$?" "describe of $type $name failed"
             out="$(jq -c --arg k "$type/$name" --argjson e "$entry" '. + {($k): $e}' <<<"$out")"
         fi
-    done < <(jq -r '(.components // []) | if type == "array" then .[] else empty end | select(type == "object" and (.type | type) == "string" and (.name | type) == "string") | [.type, .name] | @tsv' <<<"$1")
+    done < <(jq -r '(.vms // []) | if type == "array" then .[] else empty end | select(type == "object") | (.components // []) | if type == "array" then .[] else empty end
+        | select(type == "object" and (.component | type) == "string") | .component | split("/") | select(length == 2) | [.[0], .[1]] | @tsv' <<<"$1")
     printf '%s\n' "$out"
 }
 
@@ -318,8 +334,8 @@ apply_ranks() {
 }
 
 # apply_problems <config> <desc> [<reqs> [<hostids>]]: the problems as a JSON
-# array of {path, code, message} (plus the `vm` they are about in a file that
-# names VMs). <reqs> (true or false, default false) also reports the
+# array of {path, code, message} (plus the `vm` they are about when it has a
+# name). <reqs> (true or false, default false) also reports the
 # requirements nothing satisfies and what a model needs (a proxy, a provisioning
 # component), which `apply` and the generator check later with their own exit
 # code (apply_order, add).
@@ -329,32 +345,37 @@ apply_problems() {
 }
 
 # apply_vms <config>: the VM names of a file, one per line, in the order they
-# first appear. Nothing for a file that names none (a one-VM file).
+# appear. Nothing for a file whose VMs have none.
 apply_vms() {
     jq -r --argjson installed '{}' "$APPLY_VMS_JQ" <<<"$1" 2>/dev/null || true
 }
 
-# apply_named <config>: succeeds when the file names VMs (a component has a `vm`).
+# apply_vmcount <config>: the number of VMs of a file.
+apply_vmcount() {
+    jq -r --argjson installed '{}' "$APPLY_VMCOUNT_JQ" <<<"$1" 2>/dev/null || printf 0
+}
+
+# apply_named <config>: succeeds when the file names its VMs (at least one has a `name`).
 apply_named() {
     [[ "$(jq -r --argjson installed '{}' "$APPLY_NAMED_JQ" <<<"$1" 2>/dev/null || true)" == true ]]
 }
 
-# apply_slice <config> <vm>: the one-VM configuration of that VM, see spec-config.md.
+# apply_slice <config> <vm>: the file of that VM (<vm> empty: the only VM of the
+# file), see spec-config.md#slices.
 apply_slice() {
     jq -c --arg vm "$2" --argjson installed '{}' "$APPLY_SLICE_JQ" <<<"$1"
 }
 
-# apply_select_vm <config> <vm> <need-vm>: exit 2 when --vm does not fit the file: given
-# for a file that names no VM, a name no component has, or (when <need-vm> is 1, the
-# machine is this one) missing for a file that names several.
+# apply_select_vm <config> <vm> <need-vm>: exit 2 when --vm does not fit the file: a name
+# no VM has, or (when <need-vm> is 1, the machine is this one) missing for a file that
+# has several VMs. A file with one VM needs no --vm.
 apply_select_vm() {
     local config="$1" vm="$2" need="$3" names
     names="$(apply_vms "$config" | paste -sd, - | sed 's/,/, /g')"
     if [[ -n "$vm" ]]; then
-        apply_named "$config" || fail "$EXIT_USAGE" "--vm $vm: the configuration names no VM (no component has a vm)"
-        grep -qxF -- "$vm" < <(apply_vms "$config") || fail "$EXIT_USAGE" "--vm $vm: no component is on that VM (the file names: $names)"
-    elif ((need)) && apply_named "$config"; then
-        fail "$EXIT_USAGE" "the configuration names VMs ($names): select one with --vm <name>"
+        grep -qxF -- "$vm" < <(apply_vms "$config") || fail "$EXIT_USAGE" "--vm $vm: no VM has that name (the file names: ${names:-none})"
+    elif ((need)) && (($(apply_vmcount "$config") > 1)); then
+        fail "$EXIT_USAGE" "the configuration has several VMs (${names:-none}): select one with --vm <name>"
     fi
 }
 
@@ -375,18 +396,24 @@ apply_validate() {
 # where `apply` leaves it to the model step and its exit 4.
 apply_validate_models_need() {
     local problems line
-    problems="$(apply_problems "$1" "$2" true | jq -r '.[] | select(.code == "missing_requirement" and (.path | startswith("$.models"))) | "\(.path): \(.message)"')"
+    problems="$(apply_problems "$1" "$2" true | jq -r '.[] | select(.code == "missing_requirement" and (.path | test("\\.models\\[[0-9]+\\]$"))) | "\(.path): \(.message)"')"
     if [[ -n "$problems" ]]; then
         while IFS= read -r line; do log_error "$line"; done <<<"$problems"
         fail "$EXIT_USAGE" "the configuration is invalid"
     fi
 }
 
-# apply_order <config> <desc>: "type name" lines, requirements first. A
-# requirement neither installed nor listed is exit 4.
+# apply_components <config>: "type implementation" lines of the components of the
+# (one-VM) configuration, in the order of the file.
+apply_components() {
+    jq -r '(.vms[0].components // [])[] | .component | split("/") | "\(.[0]) \(.[1])"' <<<"$1"
+}
+
+# apply_order <config> <desc>: "type implementation" lines, requirements first. A
+# requirement neither installed nor listed is exit 4. <config> is the slice of one VM.
 apply_order() {
     local config="$1" desc="$2" pending=() placed=() line type name req ok progress i rtype
-    while IFS= read -r line; do pending+=("$line"); done < <(jq -r '(.components // [])[] | "\(.type) \(.name)"' <<<"$config")
+    while IFS= read -r line; do pending+=("$line"); done < <(apply_components "$config")
     reqs_of() { jq -r --arg k "$1/$2" '.[$k].requires[]?' <<<"$desc"; }
     # Fail early on a requirement that nothing satisfies.
     for line in "${pending[@]}"; do
@@ -394,7 +421,7 @@ apply_order() {
         while IFS= read -r req; do
             [[ -n "$req" ]] || continue
             if is_installed "$req"; then continue; fi
-            if jq -e --arg r "$req" '(.components // []) | any(.name == $r or .type == $r)' <<<"$config" >/dev/null; then continue; fi
+            if jq -e --arg r "$req" '(.vms[0].components // []) | any((.component | split("/")) as $p | $p[1] == $r or $p[0] == $r)' <<<"$config" >/dev/null; then continue; fi
             rtype="$req"
             is_type "$req" || rtype="$(type_of "$req" || printf '?')"
             fail "${APPLY_ORDER_FAIL_CODE:-$EXIT_PRECONDITION}" "$req is required by $name and is neither installed nor in the file" \
@@ -430,11 +457,11 @@ apply_order() {
     printf '%s\n' "${placed[@]}"
 }
 
-# apply_install_args <config> <type> <name>: print the install arguments, one
-# per line; secrets from the environment are exported by apply_export_secrets.
+# apply_install_args <config> <type> <implementation>: print the install arguments,
+# one per line; secrets from the environment are exported by apply_export_secrets.
 apply_install_args() {
-    jq -r --arg t "$2" --arg n "$3" '
-        (.components[] | select(.type == $t and .name == $n)) as $c
+    jq -r --arg k "$2/$3" '
+        (.vms[0].components[] | select(.component == $k)) as $c
         | (if $c.default == true then ["--default"] else [] end)
           + [($c.options // {}) | to_entries[] | .key as $k | .value as $v
              | if ($v | type) == "object" then
@@ -443,7 +470,7 @@ apply_install_args() {
         | .[]' <<<"$1"
 }
 
-# apply_export_secrets <config> <type> <name>: secrets given by environment
+# apply_export_secrets <config> <type> <implementation>: secrets given by environment
 # variable reach the script through its own EASY_CS_AI_<COMPONENT>_<OPTION>.
 apply_export_secrets() {
     local k src
@@ -453,32 +480,36 @@ apply_export_secrets() {
             fail "$EXIT_USAGE" "option $k of $3 reads the environment variable $src, which is not set"
         fi
         export "$(option_var "$3" "$k")=${!src}"
-    done < <(jq -r --arg t "$2" --arg n "$3" '(.components[] | select(.type == $t and .name == $n) | (.options // {}) | to_entries[] | select((.value | type) == "object" and .value.env) | [.key, .value.env] | @tsv)' <<<"$1")
+    done < <(jq -r --arg k "$2/$3" '(.vms[0].components[] | select(.component == $k) | (.options // {}) | to_entries[] | select((.value | type) == "object" and .value.env) | [.key, .value.env] | @tsv)' <<<"$1")
 }
 
-# apply_models <config>: "model<TAB>engine<TAB>chat-or-null<TAB>force" lines, resolved.
+# apply_models <config>: "model<TAB>engine<TAB>chat-or-null<TAB>force" lines for the
+# (one-VM) configuration: the models held by its engines, the implementation of the
+# engine that holds each one, of the chat interface its link designates ("null" with
+# no link in the slice), and `force`. The free names of a file are resolved here,
+# `add` knows the implementations only (spec-config.md#apply, step 4).
 apply_models() {
-    jq -r '
-        def listed($t): [(.components // [])[] | select(.type == $t) | .name];
-        def pick($t): (listed($t)) as $l
-          | if ($l | length) == 1 then $l[0]
-            else ([(.components // [])[] | select(.type == $t and .default == true) | .name][0]) end;
-        . as $cfg | (.models // [])[]
-        | [.name, (.engine // ($cfg | pick("engine"))),
-           (if has("chat_interface") then (.chat_interface // "null") else (($cfg | pick("chat-interface")) // "null") end),
-           (.force // false | tostring)] | @tsv' <<<"$1"
+    jq -r --argjson links "$(jq -c '.links // []' <<<"$1")" '
+        (.vms[0] // {}) as $vm | ($vm.name // null) as $vn | ($vm.components // []) as $cs
+        | $cs[] | select(.component | startswith("engine/")) | . as $en
+        | (.models // [])[] | . as $m
+        | ([$links[] | select(.model.component_ref == $en.name and .model.model_ref == $m.name and .model.vm_ref == $vn)
+            | .chat_interface.component_ref] [0]) as $cr
+        | ((if $cr == null then null else ([$cs[] | select(.name == $cr and (.component | startswith("chat-interface/"))) | .component | split("/")[1]][0]) end) // "null") as $chat
+        | [$m.model, ($en.component | split("/")[1]), $chat, (($m.force // false) | tostring)] | @tsv' <<<"$1"
 }
 
+# apply_prune <config>: <config> is the slice of the VM.
 apply_prune() {
     local config="$1" t n m e
     local -A in_file=()
-    while IFS= read -r n; do in_file["$n"]=1; done < <(jq -r '(.components // [])[] | .name' <<<"$config")
+    while read -r t n; do [[ -n "$n" ]] && in_file["$n"]=1; done < <(apply_components "$config")
     # models of the listed engines that the file does not name
-    for e in $(jq -r '(.components // [])[] | select(.type == "engine") | .name' <<<"$config"); do
+    for e in $(jq -r '(.vms[0].components // [])[] | select(.component | startswith("engine/")) | .component | split("/")[1]' <<<"$config"); do
         is_installed "$e" || continue
         while IFS= read -r m; do
             [[ -n "$m" ]] || continue
-            if ! jq -e --arg e "$e" --arg m "$m" '(.models // []) | any(.name == $m and (.engine // $e) == $e)' <<<"$config" >/dev/null; then
+            if ! jq -e --arg e "engine/$e" --arg m "$m" '(.vms[0].components // []) | any(.component == $e and ((.models // []) | any(.model == $m)))' <<<"$config" >/dev/null; then
                 log_info "prune: removing model $m from $e"
                 (cmd_remove "$m" --engine "$e") || fail "$?" "apply: prune of model $m failed"
             fi
@@ -526,10 +557,8 @@ cmd_apply() {
     ((!CONFIG_NOT_JSON)) || fail "$EXIT_USAGE" "the configuration is not valid JSON"
     desc="$(apply_describes "$config")"
     apply_validate "$config" "$desc" "$vm"
-    # a file that names VMs goes on as the one-VM configuration of the selected one
-    if [[ -n "$vm" ]]; then
-        config="$(apply_slice "$config" "$vm")"
-    fi
+    # the file goes on as the slice of the selected VM
+    config="$(apply_slice "$config" "$vm")"
     order="$(apply_order "$config" "$desc")"
     ((DRY)) || need_root apply "$source"
     local models
@@ -544,14 +573,18 @@ cmd_apply() {
         ((prune)) && log_info "plan: prune what the file does not name"
         while IFS= read -r line; do
             log_warn "$line"
-        done < <(jq -r --argjson desc "$desc" "$CONFIG_WARNINGS_JQ | .[] | \"\\(.component.name) --\\(.option)=\\(.value): \\(.message)\"" <<<"$config")
+        done < <(jq -r --argjson desc "$desc" "$CONFIG_WARNINGS_JQ | .[] | \"\\(.component) --\\(.option)=\\(.value): \\(.message)\"" <<<"$config")
         return 0
     fi
-    log_event "apply start components=$(jq '(.components // []) | length' <<<"$config") models=$(jq '(.models // []) | length' <<<"$config") prune=$( ((prune)) && printf true || printf false)$([[ -z "$vm" ]] || printf " vm=%s" "$vm")"
+    log_event "apply start components=$(apply_components "$config" | grep -c .) models=$(printf '%s\n' "$models" | grep -c .) prune=$( ((prune)) && printf true || printf false)$([[ -z "$vm" ]] || printf " vm=%s" "$vm")"
+    local step=0 steps
+    steps=$(($(apply_components "$config" | grep -c . || true) + $(printf '%s\n' "$models" | grep -c . || true)))
     while read -r type name; do
         [[ -n "$name" ]] || continue
         local args=()
         mapfile -t args < <(apply_install_args "$config" "$type" "$name")
+        step=$((step + 1))
+        progress "$step" "$steps" "install $type $name"
         (
             apply_export_secrets "$config" "$type" "$name"
             install_one "$type" "$name" 0 "${args[@]}"
@@ -567,6 +600,8 @@ cmd_apply() {
             local add_args=("$model" --engine "$engine")
             if [[ "$chat" == null ]]; then add_args+=(--no-chat-interface); else add_args+=(--chat-interface "$chat"); fi
             [[ "$force" == true ]] && add_args+=(--force)
+            step=$((step + 1))
+            progress "$step" "$steps" "add $model to $engine"
             (cmd_add "${add_args[@]}") || {
                 rc=$?
                 log_error "apply: add $model failed (exit $rc)"
@@ -576,6 +611,11 @@ cmd_apply() {
     fi
     if ((rc == 0 && prune)); then
         (apply_prune "$config") || rc=$?
+    fi
+    if ((rc == 0)); then
+        printf '%s %s %s\n' "$(sym ok)" "$(style ok applied)" "$(style dim "$step steps")" >&2
+    else
+        printf '%s %s %s\n' "$(sym error)" "$(style error stopped)" "$(style dim "at step $step of $steps")" >&2
     fi
     log_event "apply end exit=$rc duration=$((SECONDS - start))s"
     return "$rc"

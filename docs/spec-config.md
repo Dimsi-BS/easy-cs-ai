@@ -2,14 +2,14 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). **Format version 2 is decided and not implemented**: the file is a list of `vms` that hold their components (`component: <type>/<implementation>`, an optional free `name`), an `engine` component holds its `models` (each an instance of a model), a top-level `links` array says which model is shown in which chat interface (two [references](#references), **always complete**: `vm_ref`, `component_ref`, `model_ref`), there is no flat file and no top-level `models`, and `schema_version` is 2. The validation, `config schema`, `apply`, the slices and the tests still implement version 1 (the `vm` field, `links` made of pairs of VMs, the root `models` with `engine` and `chat_interface`, see `tests/unit/config_vm.bats`), and are to be rewritten. Everything below describes version 2; [What a model needs](#what-a-model-needs) is implemented as it is.
+**Status:** accepted (secrets handling still open, see [open questions](#open-questions)). **Format version 2 is implemented**: the file is a list of `vms` that hold their components (`component: <type>/<implementation>`, an optional free `name`), an `engine` component holds its `models` (each an instance of a model), a top-level `links` array says which model is shown in which chat interface (two [references](#references), **always complete**: `vm_ref`, `component_ref`, `model_ref`), there is no flat file and no top-level `models`, and `schema_version` is 2; a file of version 1 is refused with `unsupported_schema_version` (`install_scripts/lib/cli-apply.sh`, `cli-ai.sh`; tests `cli_apply.bats`, `cli_ai.bats`, `config_format.bats`). `missing_option` is given for the `required_when` of the shipped nginx, `config schema` encodes it, and the session skips the options whose `relevant_when` does not hold.
 
 ## Purpose
 
 One declarative **configuration file** describes a deployment: which components, with which options, and which models. It has two uses, with one format:
 
 - `easy-cs-ai apply <file>` (layer 2) interprets it and makes the machine match it;
-- the [generator](spec-vm-generator.md) writes it at the end of an interactive session (`config edit`, which also opens it again to edit it), and `script <file>` reads it back to generate the scripts without prompting (regeneration, tests). The two commands share nothing but this file.
+- the [generator](spec-vm-generator.md) writes it at the end of an interactive session (`config new`, and `config edit <file>`, which opens it again to edit it), and `script <file>` reads it back to generate the scripts without prompting (regeneration, tests). The two commands share nothing but this file.
 
 For the VM post-install layer, the generated script embeds the configuration (the [slice](#slices) of its VM) and hands it to `apply`, so the configuration travels **inside the generated script**: no external input file (see [spec: VM script generator](spec-vm-generator.md#generated-script)). The package itself is downloaded from a pinned source, not embedded, see [decision: VM script generator](decision-vm-generator.md).
 

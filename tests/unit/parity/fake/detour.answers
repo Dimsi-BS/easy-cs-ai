@@ -1,9 +1,13 @@
 # The decisions of `stack`, with a wrong answer, then the models redone from the summary.
-zzz  # provisioning: not one of the components, asked again
-none  # provisioning
-none  # proxy
+  # role of the VM: custom, the default
+  # name of the VM: vm-1, the default
+n  # provisioning
+n  # proxy
+y  # engine
+zzz  # engine: not one of the components, asked again
   # engine: ollama
-chat  # chat-interface
+y  # chat-interface
+  # chat-interface: chat
 y  # add proxy prox
 9999  # ollama --port
   # chat --allow-registration: the default
@@ -13,3 +17,5 @@ m  # redo the models
 m1, m2  # models to add
 y  # confirm
   # add another VM: no (default)
+  # m1 is shown in chat: yes, the default
+  # m2 is shown in chat: yes, the default

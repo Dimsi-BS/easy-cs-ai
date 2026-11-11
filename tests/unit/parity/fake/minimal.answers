@@ -1,8 +1,11 @@
 # An engine and one model, nothing else. llmfit is shipped but not installed here.
-none  # provisioning
-none  # proxy
+  # role of the VM: custom, the default
+  # name of the VM: vm-1, the default
+n  # provisioning
+n  # proxy
+y  # engine
   # engine: ollama, the rank 1
-none  # chat-interface
+n  # chat-interface
   # ollama --port, the default (api-key is a secret, not asked)
   # llmfit is not installed here: install it now? no
 m1  # models to add

@@ -71,7 +71,7 @@ build() { bash "$ROOT/package/build.sh" --output "$DIST" "$@"; }
     mkdir -p "$BATS_TEST_TMPDIR/opt"
     tar -xzf "$DIST/easy-cs-ai-$VERSION.tar.gz" -C "$BATS_TEST_TMPDIR/opt" --strip-components=1
     cd "$BATS_TEST_TMPDIR"
-    printf '{"schema_version":1,"components":[{"type":"engine","name":"ollama"}]}' >cfg.json
+    printf '{"schema_version":2,"vms":[{"components":[{"component":"engine/ollama"}]}]}' >cfg.json
     run --separate-stderr bash "$BATS_TEST_TMPDIR/opt/bin/easy-cs-ai" script cfg.json \
         --package-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --output vm.sh
     [ "$status" -eq 0 ]

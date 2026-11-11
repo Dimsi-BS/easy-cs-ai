@@ -33,6 +33,8 @@ setup() {
 
 # make_fake <type> <name> <requires-json>: describe with typed options, a secret and a warning.
 make_fake() {
+    local extra="${4:-}"
+    [[ -n "$extra" ]] || extra='{}'
     cat >"$EASY_CS_AI_HOME/$1/$2.sh" <<FAKE
 #!/usr/bin/env bash
 source "\$EASY_CS_AI_LIB/common.sh"
@@ -47,7 +49,7 @@ describe) jq -n '{schema_version: 1, name: "$2", type: "$1", component_version: 
     {name: "open", default: "true", secret: false, type: "boolean", description: "Open to all", warn: {when: "true", message: "it is open"}},
     {name: "mode", default: "a", secret: false, type: "enum", values: ["a", "b"], description: "Mode"},
     {name: "label", default: "", secret: false, description: "Free text"},
-    {name: "api-key", default: "generated", secret: true, description: "Key"}]}' ;;
+    {name: "api-key", default: "generated", secret: true, description: "Key"}]} + $extra' ;;
 install)
     state_read $2 >/dev/null 2>&1 && m= || m=',"models":[]'
     state_write $2 '{"name":"$2","type":"$1","version":"1","requires":$3,"endpoint":{"url":"http://127.0.0.1:1","openai_base_url":"http://127.0.0.1:1/v1","protected":false}'"\$m"'}' ;;
@@ -157,49 +159,58 @@ fake_host() {
 
 # --- config validate: the document ---------------------------------------------------------
 
+# vmfile <components-json> [<links-json>]: a file of one VM named vm-1.
+vmfile() {
+    printf '{"schema_version":2,"vms":[{"name":"vm-1","components":%s}]%s}' "$1" "${2:+,\"links\":$2}"
+}
+
 full_config() {
     cat >"$CFG" <<'JSON'
 {
-  "schema_version": 1,
-  "components": [
-    { "type": "chat-interface", "name": "chat", "default": true },
-    { "type": "engine", "name": "eng", "default": true, "options": { "port": 11500, "api-key": { "env": "KEY" } } },
-    { "type": "proxy", "name": "prox" }
-  ],
-  "models": [ { "name": "m1", "force": true } ]
+  "schema_version": 2,
+  "vms": [ { "name": "vm-1", "components": [
+    { "component": "chat-interface/chat", "name": "chat", "default": true },
+    { "component": "engine/eng", "name": "eng", "default": true, "options": { "port": 11500, "api-key": { "env": "KEY" } },
+      "models": [ { "model": "m1", "name": "m1", "force": true } ] },
+    { "component": "proxy/prox" }
+  ] } ],
+  "links": [ { "model": { "vm_ref": "vm-1", "component_ref": "eng", "model_ref": "m1" },
+               "chat_interface": { "vm_ref": "vm-1", "component_ref": "chat" } } ]
 }
 JSON
 }
 
-@test "config validate --json: ok, the plan in install order with the models resolved, the warnings, one document" {
+@test "config validate --json: ok, the plan per VM in install order, the models and the links, the warnings, one document" {
     full_config
     cli config validate "$CFG" --json
     [ "$status" -eq 0 ]
     one_document
-    run jq -c '[.schema_version, .ok, .target, .errors, (.plan.components | map("\(.order):\(.name)")), .plan.models, .plan.prune]' <<<"$output"
-    [ "$output" = '[1,true,"this",[],["1:eng","2:prox","3:chat"],[{"name":"m1","engine":"eng","chat_interface":"chat","force":true}],false]' ]
+    run jq -c '[.schema_version, .ok, .target, .errors, (.plan.vms | map(.name)), (.plan.vms[0].components | map("\(.order):\(.component)")), .plan.vms[0].models, .plan.vms[0].prune, .plan.links]' <<<"$output"
+    [ "$output" = '[2,true,"this",[],["vm-1"],["1:engine/eng","2:proxy/prox","3:chat-interface/chat"],[{"model":"m1","name":"m1","engine":{"vm_ref":"vm-1","component_ref":"eng","component":"engine/eng"},"force":true}],false,[{"model":{"vm_ref":"vm-1","component_ref":"eng","model_ref":"m1","component":"engine/eng"},"chat_interface":{"vm_ref":"vm-1","component_ref":"chat","component":"chat-interface/chat"}}]]' ]
     cli config validate "$CFG" --json
     # a secret is shown as its source, never as a value
-    [ "$(jq -c '.plan.components[0].options' <<<"$output")" = '{"port":11500,"api-key":{"env":"KEY"}}' ]
+    [ "$(jq -c '.plan.vms[0].components[0].options' <<<"$output")" = '{"port":11500,"api-key":{"env":"KEY"}}' ]
+    # nothing to do between machines: step 1 alone
+    [ "$(jq -c '.next_steps' <<<"$output")" = '["Run each script as root on its VM."]' ]
 }
 
 @test "config validate: the warn entries of describe whose condition holds, the default value included" {
     full_config
     cli config validate "$CFG" --json
-    run jq -c '.warnings | map(select(.option != null) | [.path, .component.name, .option, .value, .message])' <<<"$output"
-    [ "$output" = '[["$.components[0]","chat","open","true","it is open"],["$.components[1]","eng","open","true","it is open"],["$.components[2]","prox","open","true","it is open"]]' ]
-    jq '.components[0].options = {"open": false}' "$CFG" >"$CFG.2"
+    run jq -c '.warnings | map(select(.option != null) | [.path, .component_ref, .component, .option, .value, .message, .vm_ref])' <<<"$output"
+    [ "$output" = '[["$.vms[0].components[0]","chat","chat-interface/chat","open","true","it is open","vm-1"],["$.vms[0].components[1]","eng","engine/eng","open","true","it is open","vm-1"],["$.vms[0].components[2]",null,"proxy/prox","open","true","it is open","vm-1"]]' ]
+    jq '.vms[0].components[0].options = {"open": false}' "$CFG" >"$CFG.2"
     cli config validate "$CFG.2" --json
-    [ "$(jq -r '.warnings | map(select(.option != null) | .component.name) | join(",")' <<<"$output")" = "eng,prox" ]
+    [ "$(jq -r '.warnings | map(select(.option != null) | .component) | join(",")' <<<"$output")" = "engine/eng,proxy/prox" ]
     # a model written with force and no provisioning component gives the warning of the validation
-    [ "$(jq -c '.warnings | map(select(.code != null) | [.code, .path])' <<<"$output")" = '[["models_not_checked","$.models"]]' ]
+    [ "$(jq -c '.warnings | map(select(.code != null) | [.code, .path, .vm_ref])' <<<"$output")" = '[["models_not_checked","$.vms[0]","vm-1"]]' ]
 }
 
 @test "config validate: a warning does not change the exit code" {
     full_config
     cli config validate "$CFG"
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"[WARN] chat --open=true: it is open"* ]]
+    [[ "$stderr" == *"[WARN] chat-interface/chat --open=true: it is open"* ]]
 }
 
 @test "config validate: without --json the output is for humans, on stderr, and stdout is empty" {
@@ -207,23 +218,23 @@ JSON
     cli config validate "$CFG"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    [[ "$stderr" == *"plan: install engine eng --port 11500"*"plan: install proxy prox"*"plan: add m1 to eng"* ]]
+    [[ "$stderr" == *"plan: [vm-1] install engine/eng --port 11500"*"plan: [vm-1] install proxy/prox"*"plan: [vm-1] add m1 to eng"* ]]
+    [[ "$stderr" == *"What is left to do once the VMs are up:"*"1. Run each script as root on its VM."* ]]
 }
 
 @test "config validate --target this marks the installed components, fresh ignores what is installed" {
     full_config
     cli install proxy prox
     cli config validate "$CFG" --json
-    [ "$(jq -c '.plan.components | map(.installed)' <<<"$output")" = "[false,false,true]" ]
-    cat >"$CFG" <<'JSON'
-{ "schema_version": 1, "components": [ { "type": "chat-interface", "name": "chat" } ] }
-JSON
+    [ "$(jq -c '.plan.vms[0].components | map(.installed)' <<<"$output")" = "[false,false,true]" ]
+    vmfile '[{"component":"chat-interface/chat"}]' >"$CFG"
     cli config validate "$CFG" --json
     [ "$status" -eq 0 ]
     cli config validate "$CFG" --json --target fresh
     [ "$status" -eq 2 ]
     [ "$(jq -r '.target, .errors[0].code' <<<"$output" | paste -sd' ')" = "fresh missing_requirement" ]
     [ "$(jq -r '.plan' <<<"$output")" = "null" ]
+    [ "$(jq -c '.next_steps' <<<"$output")" = "[]" ]
 }
 
 @test "config validate reads stdin with -" {
@@ -262,7 +273,7 @@ JSON
 
 # --- config validate: the codes ------------------------------------------------------------
 
-# code_of <json> [<extra args>]: validate a configuration given as text; prints "path code" lines.
+# problems <json> [<extra args>]: validate a configuration given as text; prints "path code" lines.
 problems() {
     printf '%s' "$1" >"$CFG"
     cli config validate "$CFG" --json "${@:2}"
@@ -272,115 +283,228 @@ problems() {
     [ "$(jq -r .plan <<<"$output")" = "null" ]
     jq -r '.errors[] | "\(.path) \(.code)"' <<<"$output"
 }
+# one VM, unnamed, with these components
+v() { printf '{"schema_version":2,"vms":[{"components":%s}]}' "$1"; }
 
 @test "codes: structure" {
-    run problems '{"schema_version":1,"bogus":1}'
+    run problems '{"schema_version":2,"vms":[],"bogus":1}'
     [ "$output" = '$.bogus unknown_key' ]
-    run problems '{"components":[]}'
+    run problems '{"vms":[]}'
+    [ "$output" = '$.schema_version missing_key' ]
+    run problems '{"schema_version":"2","vms":[]}'
     [ "$output" = '$.schema_version wrong_type' ]
-    run problems '{"schema_version":"1"}'
-    [ "$output" = '$.schema_version wrong_type' ]
-    run problems '{"schema_version":2}'
+    run problems '{"schema_version":3,"vms":[]}'
+    [ "$output" = '$.schema_version unsupported_schema_version' ]
+    run problems '{"schema_version":1,"vms":[]}'
     [ "$output" = '$.schema_version unsupported_schema_version' ]
     run problems '[1]'
     [ "$output" = '$ wrong_type' ]
-    run problems '{"schema_version":1,"components":{}}'
-    [ "$output" = '$.components wrong_type' ]
-    run problems '{"schema_version":1,"components":[1]}'
-    [ "$output" = '$.components[0] wrong_type' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","x":1}]}'
-    [ "$output" = '$.components[0].x unknown_key' ]
+    run problems '{"schema_version":2}'
+    [ "$output" = '$.vms missing_key' ]
+    run problems '{"schema_version":2,"vms":{}}'
+    [ "$output" = '$.vms wrong_type' ]
+    run problems '{"schema_version":2,"vms":[1]}'
+    [ "$output" = '$.vms[0] wrong_type' ]
+    run problems '{"schema_version":2,"vms":[{"components":[{"component":"engine/eng"}],"x":1}]}'
+    [ "$output" = '$.vms[0].x unknown_key' ]
+    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng"}]}'
+    [[ "$output" == *'$.schema_version unsupported_schema_version'* && "$output" == *'$.components unknown_key'* ]]
+}
+
+@test "codes: VMs" {
+    run problems '{"schema_version":2,"vms":[{"name":"a"}]}'
+    [ "$output" = '$.vms[0].components missing_key' ]
+    run problems '{"schema_version":2,"vms":[{"name":"a","components":[]}]}'
+    [ "$output" = '$.vms[0] empty_vm' ]
+    run problems '{"schema_version":2,"vms":[{"name":7,"components":[{"component":"engine/eng"}]}]}'
+    [ "$output" = '$.vms[0].name wrong_type' ]
+    run problems '{"schema_version":2,"vms":[{"name":"Big","components":[{"component":"engine/eng"}]}]}'
+    [ "$output" = '$.vms[0].name invalid_value' ]
+    run problems '{"schema_version":2,"vms":[{"name":"a","components":[{"component":"engine/eng"}]},{"name":"a","components":[{"component":"engine/eng"}]}]}' --target fresh
+    [ "$output" = '$.vms[1].name duplicate_vm' ]
+    run problems '{"schema_version":2,"vms":[{"name":"a","components":[{"component":"engine/eng"}]},{"components":[{"component":"engine/eng"}]}]}' --target fresh
+    [ "$output" = '$.vms[1] missing_vm_name' ]
 }
 
 @test "codes: components" {
-    run problems '{"schema_version":1,"components":[{"type":"plugin","name":"x"}]}'
-    [ "$output" = '$.components[0].type unknown_type' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"nope"}]}'
-    [ "$output" = '$.components[0].name unknown_component' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":7}]}'
-    [ "$output" = '$.components[0].name wrong_type' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng"},{"type":"engine","name":"eng"}]}'
-    [ "$output" = '$.components duplicate_component' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","default":true},{"type":"engine","name":"eng2","default":true}]}'
-    [ "$output" = '$.components several_defaults' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","default":"yes"}]}'
-    [ "$output" = '$.components[0].default wrong_type' ]
-    run problems '{"schema_version":1,"components":[{"type":"chat-interface","name":"chat"}]}'
-    [ "$output" = '$.components[0] missing_requirement' ]
+    run problems "$(v '[{"component":"plugin/x"}]')"
+    [ "$output" = '$.vms[0].components[0].component unknown_type' ]
+    run problems "$(v '[{"component":"engine/nope"}]')"
+    [ "$output" = '$.vms[0].components[0].component unknown_component' ]
+    run problems "$(v '[{"component":"engine"}]')"
+    [ "$output" = '$.vms[0].components[0].component invalid_value' ]
+    run problems "$(v '[{"component":7}]')"
+    [ "$output" = '$.vms[0].components[0].component wrong_type' ]
+    run problems "$(v '[{}]')"
+    [ "$output" = '$.vms[0].components[0].component missing_key' ]
+    run problems "$(v '[{"component":"engine/eng","name":"Eng"}]')"
+    [ "$output" = '$.vms[0].components[0].name invalid_value' ]
+    run problems "$(v '[{"component":"engine/eng","name":"a"},{"component":"engine/eng2","name":"a"}]')"
+    [ "$output" = '$.vms[0].components[1].name duplicate_name' ]
+    run problems "$(v '[{"component":"engine/eng"},{"component":"engine/eng","name":"other"}]')"
+    [ "$output" = '$.vms[0].components[1] duplicate_component' ]
+    run problems "$(v '[{"component":"engine/eng","default":true},{"component":"engine/eng2","default":true}]')"
+    [ "$output" = '$.vms[0].components[1].default several_defaults' ]
+    run problems "$(v '[{"component":"engine/eng","default":"yes"}]')"
+    [ "$output" = '$.vms[0].components[0].default wrong_type' ]
+    run problems "$(v '[{"component":"chat-interface/chat"}]')"
+    [ "$output" = '$.vms[0].components[0] missing_requirement' ]
+    run problems "$(v '[{"component":"engine/eng","x":1}]')"
+    [ "$output" = '$.vms[0].components[0].x unknown_key' ]
+}
+
+@test "the same component on two VMs is accepted, a requirement on another VM is not" {
+    printf '%s' '{"schema_version":2,"vms":[{"name":"a","components":[{"component":"proxy/prox"}]},{"name":"b","components":[{"component":"proxy/prox"}]}]}' >"$CFG"
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 0 ]
+    run problems '{"schema_version":2,"vms":[{"name":"a","components":[{"component":"proxy/prox"}]},{"name":"b","components":[{"component":"chat-interface/chat"}]}]}' --target fresh
+    [ "$output" = '$.vms[1].components[0] missing_requirement' ]
 }
 
 @test "codes: options" {
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","options":{"colour":"red"}}]}'
-    [ "$output" = '$.components[0].options.colour unknown_option' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","options":{"label":[1]}}]}'
-    [ "$output" = '$.components[0].options.label wrong_type' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","options":"x"}]}'
-    [ "$output" = '$.components[0].options wrong_type' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","options":{"api-key":"s3cret"}}]}'
-    [ "$output" = '$.components[0].options.api-key secret_literal' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","options":{"api-key":{"file":"/a","env":"B"}}}]}'
-    [ "$output" = '$.components[0].options.api-key secret_source' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","options":{"api-key":{"generate":false}}}]}'
-    [ "$output" = '$.components[0].options.api-key secret_source' ]
+    run problems "$(v '[{"component":"engine/eng","options":{"colour":"red"}}]')"
+    [ "$output" = '$.vms[0].components[0].options.colour unknown_option' ]
+    run problems "$(v '[{"component":"engine/eng","options":{"label":[1]}}]')"
+    [ "$output" = '$.vms[0].components[0].options.label wrong_type' ]
+    run problems "$(v '[{"component":"engine/eng","options":"x"}]')"
+    [ "$output" = '$.vms[0].components[0].options wrong_type' ]
+    run problems "$(v '[{"component":"engine/eng","options":{"api-key":"s3cret"}}]')"
+    [ "$output" = '$.vms[0].components[0].options.api-key secret_literal' ]
+    run problems "$(v '[{"component":"engine/eng","options":{"api-key":{"file":"/a","env":"B"}}}]')"
+    [ "$output" = '$.vms[0].components[0].options.api-key secret_source' ]
+    run problems "$(v '[{"component":"engine/eng","options":{"api-key":{"generate":false}}}]')"
+    [ "$output" = '$.vms[0].components[0].options.api-key secret_source' ]
 }
 
 @test "codes: typed options are checked before anything runs" {
-    local base='{"schema_version":1,"components":[{"type":"engine","name":"eng","options":{'
-    run problems "$base"'"port":99999}}]}'
-    [ "$output" = '$.components[0].options.port invalid_value' ]
-    run problems "$base"'"port":0}}]}'
-    [ "$output" = '$.components[0].options.port invalid_value' ]
-    run problems "$base"'"port":"http"}}]}'
-    [ "$output" = '$.components[0].options.port invalid_value' ]
-    run problems "$base"'"port":1.5}}]}'
-    [ "$output" = '$.components[0].options.port invalid_value' ]
-    run problems "$base"'"open":"maybe"}}]}'
-    [ "$output" = '$.components[0].options.open invalid_value' ]
-    run problems "$base"'"open":3}}]}'
-    [ "$output" = '$.components[0].options.open invalid_value' ]
-    run problems "$base"'"mode":"c"}}]}'
-    [ "$output" = '$.components[0].options.mode invalid_value' ]
+    local base='{"schema_version":2,"vms":[{"components":[{"component":"engine/eng","options":{'
+    run problems "$base"'"port":99999}}]}]}'
+    [ "$output" = '$.vms[0].components[0].options.port invalid_value' ]
+    run problems "$base"'"port":0}}]}]}'
+    [ "$output" = '$.vms[0].components[0].options.port invalid_value' ]
+    run problems "$base"'"port":"http"}}]}]}'
+    [ "$output" = '$.vms[0].components[0].options.port invalid_value' ]
+    run problems "$base"'"port":1.5}}]}]}'
+    [ "$output" = '$.vms[0].components[0].options.port invalid_value' ]
+    run problems "$base"'"open":"maybe"}}]}]}'
+    [ "$output" = '$.vms[0].components[0].options.open invalid_value' ]
+    run problems "$base"'"open":3}}]}]}'
+    [ "$output" = '$.vms[0].components[0].options.open invalid_value' ]
+    run problems "$base"'"mode":"c"}}]}]}'
+    [ "$output" = '$.vms[0].components[0].options.mode invalid_value' ]
     jq -r '.errors[0].message' <<<"$(bash "$CLI" config validate "$CFG" --json 2>/dev/null)" | grep -q "one of a, b is expected"
 }
 
 @test "typed options accept the JSON type or its text, as the CLI passes the text" {
     cat >"$CFG" <<'JSON'
-{ "schema_version": 1, "components": [ { "type": "engine", "name": "eng",
+{ "schema_version": 2, "vms": [ { "components": [ { "component": "engine/eng",
   "options": { "port": "11500", "open": "false", "mode": "b" } },
-  { "type": "proxy", "name": "prox", "options": { "port": 443, "open": true } } ] }
+  { "component": "proxy/prox", "options": { "port": 443, "open": true } } ] } ] }
 JSON
     cli config validate "$CFG" --json
     [ "$status" -eq 0 ]
 }
 
 @test "codes: models" {
-    local c='{"schema_version":1,"components":[{"type":"engine","name":"eng"},{"type":"engine","name":"eng2"}'
-    run problems "$c"'],"models":[{"name":"m"}]}'
-    [ "$output" = '$.models[0].engine ambiguous_engine' ]
-    run problems "$c"'],"models":[{"name":"m","engine":"zzz"}]}'
-    [ "$output" = '$.models[0].engine unresolved_engine' ]
-    run problems '{"schema_version":1,"models":[{"name":"m"}]}'
-    [ "$output" = '$.models[0].engine unresolved_engine' ]
-    run problems "$c"',{"type":"proxy","name":"prox"},{"type":"chat-interface","name":"chat"},{"type":"chat-interface","name":"chat"}],"models":[{"name":"m","engine":"eng"}]}'
-    [[ "$output" == *'$.components duplicate_component'* ]]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng","default":true},{"type":"proxy","name":"prox"}],"models":[{"name":"m","force":true,"chat_interface":"zzz"}]}'
-    [ "$output" = '$.models[0].chat_interface unresolved_chat_interface' ]
-    run problems '{"schema_version":1,"components":[{"type":"engine","name":"eng"}],"models":[{"name":"","force":"yes"}]}'
-    [[ "$output" == *'$.models[0].name wrong_type'* && "$output" == *'$.models[0].force wrong_type'* ]]
+    run problems "$(v '[{"component":"proxy/prox","models":[]}]')"
+    [ "$output" = '$.vms[0].components[0].models models_on_non_engine' ]
+    run problems "$(v '[{"component":"engine/eng","models":{}}]')"
+    [ "$output" = '$.vms[0].components[0].models wrong_type' ]
+    run problems "$(v '[{"component":"engine/eng","models":[1]}]')"
+    [ "$output" = '$.vms[0].components[0].models[0] wrong_type' ]
+    run problems "$(v '[{"component":"engine/eng","models":[{}]}]')"
+    [ "$output" = '$.vms[0].components[0].models[0].model missing_key' ]
+    run problems "$(v '[{"component":"engine/eng","models":[{"model":"m","chat_interfaces":[]}]}]')"
+    [[ "$output" == *'$.vms[0].components[0].models[0].chat_interfaces unknown_key'* ]]
+    run problems "$(v '[{"component":"engine/eng","models":[{"model":"m","force":"yes"}]}]')"
+    [[ "$output" == *'$.vms[0].components[0].models[0].force wrong_type'* ]]
+    run problems "$(v '[{"component":"engine/eng","models":[{"model":"m","name":""}]}]')"
+    [[ "$output" == *'$.vms[0].components[0].models[0].name invalid_value'* ]]
+    run problems "$(v '[{"component":"engine/eng","models":[{"model":"m","name":7}]}]')"
+    [[ "$output" == *'$.vms[0].components[0].models[0].name wrong_type'* ]]
+    run problems "$(v '[{"component":"engine/eng","models":[{"model":"m","force":true},{"model":"m","force":true}]}]')"
+    [[ "$output" == *'$.vms[0].components[0].models[1].model duplicate_model'* ]]
+    run problems "$(v '[{"component":"engine/eng","models":[{"model":"a","name":"x","force":true},{"model":"b","name":"x","force":true}]}]')"
+    [[ "$output" == *'$.vms[0].components[0].models[1].name duplicate_name'* ]]
+    run problems "$(v '[{"component":"engine/eng","models":[{"model":"m","options":{"x":1},"force":true}]}]')"
+    [[ "$output" == *'$.vms[0].components[0].models[0].options.x unknown_option'* ]]
 }
 
-@test "codes: a configuration with several chat interfaces and no default is ambiguous" {
+@test "the same model in two engines is accepted" {
+    vmfile '[{"component":"proxy/prox"},{"component":"engine/eng","models":[{"model":"m","force":true}]},{"component":"engine/eng2","models":[{"model":"m","force":true}]}]' >"$CFG"
+    cli config validate "$CFG" --json
+    [ "$status" -eq 0 ]
+}
+
+@test "codes: what a model needs, at the path of the model" {
+    run problems "$(v '[{"component":"engine/eng","models":[{"model":"m","force":true}]}]')"
+    [ "$output" = '$.vms[0].components[0].models[0] missing_requirement' ]
+    run problems "$(v '[{"component":"proxy/prox"},{"component":"engine/eng","models":[{"model":"m"}]}]')"
+    [ "$output" = '$.vms[0].components[1].models[0] missing_requirement' ]
+    # accepted once the proxy is installed here, a model with force needs no provisioning component
+    cli install proxy prox
+    vmfile '[{"component":"engine/eng","models":[{"model":"m","force":true}]}]' >"$CFG"
+    cli config validate "$CFG" --json
+    [ "$status" -eq 0 ]
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 2 ]
+}
+
+@test "codes: links" {
     make_fake chat-interface chat2 '["proxy"]'
-    run problems '{"schema_version":1,"components":[{"type":"proxy","name":"prox"},{"type":"engine","name":"eng"},{"type":"chat-interface","name":"chat"},{"type":"chat-interface","name":"chat2"}],"models":[{"name":"m","force":true}]}'
-    [ "$output" = '$.models[0].chat_interface ambiguous_chat_interface' ]
+    local files='{"component":"proxy/prox"},{"component":"engine/eng","name":"eng","models":[{"model":"m","name":"m","force":true}]},{"component":"chat-interface/chat","name":"chat"}'
+    local ok='{"model":{"vm_ref":"vm-1","component_ref":"eng","model_ref":"m"},"chat_interface":{"vm_ref":"vm-1","component_ref":"chat"}}'
+    run problems "$(vmfile "[$files]" "[$ok,$ok]")"
+    [ "$output" = '$.links[1] duplicate_link' ]
+    run problems "$(vmfile "[$files,{\"component\":\"chat-interface/chat2\",\"name\":\"chat2\"}]" "[$ok,$(sed 's/"chat"/"chat2"/' <<<"$ok")]")"
+    [ "$output" = '$.links[1] unsupported_count' ]
+    run problems "$(vmfile "[$files]" '[{"model":{"vm_ref":"vm-1","component_ref":"eng"},"chat_interface":{"vm_ref":"vm-1"}}]')"
+    [[ "$output" == *'$.links[0].model missing_key'* && "$output" == *'$.links[0].chat_interface missing_key'* ]]
+    run problems "$(vmfile "[$files]" '[{"model":{"vm_ref":"zz","component_ref":"eng","model_ref":"m"},"chat_interface":{"vm_ref":"vm-1","component_ref":"chat"}}]')"
+    [ "$output" = '$.links[0].model.vm_ref unknown_vm' ]
+    run problems "$(vmfile "[$files]" '[{"model":{"vm_ref":"vm-1","component_ref":"nope","model_ref":"m"},"chat_interface":{"vm_ref":"vm-1","component_ref":"chat"}}]')"
+    [ "$output" = '$.links[0].model.component_ref unresolved_engine' ]
+    run problems "$(vmfile "[$files]" '[{"model":{"vm_ref":"vm-1","component_ref":"eng","model_ref":"zz"},"chat_interface":{"vm_ref":"vm-1","component_ref":"chat"}}]')"
+    [ "$output" = '$.links[0].model.model_ref unresolved_model' ]
+    run problems "$(vmfile "[$files]" '[{"model":{"vm_ref":"vm-1","component_ref":"eng","model_ref":"m"},"chat_interface":{"vm_ref":"vm-1","component_ref":"eng"}}]')"
+    [ "$output" = '$.links[0].chat_interface.component_ref unresolved_chat_interface' ]
+    # a component with no name cannot be designated
+    run problems "$(vmfile '[{"component":"proxy/prox"},{"component":"engine/eng","models":[{"model":"m","force":true}]},{"component":"chat-interface/chat"}]' "[$ok]")"
+    [[ "$output" == *'$.links[0].model.component_ref unresolved_engine'* ]]
+}
+
+@test "codes: a link of a protected engine to another VM" {
+    cat >"$EASY_CS_AI_HOME/engine/prot.sh" <<'FAKE'
+#!/usr/bin/env bash
+jq -n '{name: "prot", type: "engine", requires: [], platforms: ["debian"], options: [], endpoint: {protected: true}}'
+FAKE
+    local web='{"name":"web","components":[{"component":"proxy/prox"},{"component":"chat-interface/chat","name":"chat"}]}'
+    local eng='{"name":"gpu","components":[{"component":"engine/prot","name":"prot","models":[{"model":"m","name":"m","force":true}]}]}'
+    printf '%s' '{"schema_version":2,"vms":['"$eng,$web"'],"links":[{"model":{"vm_ref":"gpu","component_ref":"prot","model_ref":"m"},"chat_interface":{"vm_ref":"web","component_ref":"chat"}}]}' >"$CFG"
+    run problems "$(cat "$CFG")" --target fresh
+    [ "$output" = '$.links[0] protected_engine_other_vm' ]
+    # on the same VM it is accepted
+    printf '%s' '{"schema_version":2,"vms":[{"name":"gpu","components":[{"component":"proxy/prox"},{"component":"chat-interface/chat","name":"chat"},{"component":"engine/prot","name":"prot","models":[{"model":"m","name":"m","force":true}]}]}],"links":[{"model":{"vm_ref":"gpu","component_ref":"prot","model_ref":"m"},"chat_interface":{"vm_ref":"gpu","component_ref":"chat"}}]}' >"$CFG"
+    cli config validate "$CFG" --json
+    [ "$status" -eq 0 ]
+}
+
+@test "a model with no link is accepted, a link designates by name and not by default" {
+    vmfile '[{"component":"proxy/prox"},{"component":"engine/eng","default":true,"name":"eng","models":[{"model":"m","name":"m","force":true}]},{"component":"engine/eng2","name":"eng2"},{"component":"chat-interface/chat","name":"chat"}]' >"$CFG"
+    cli config validate "$CFG" --json
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.plan.links' <<<"$output")" = "[]" ]
+    jq '.links = [{"model":{"vm_ref":"vm-1","component_ref":"eng2","model_ref":"m"},"chat_interface":{"vm_ref":"vm-1","component_ref":"chat"}}]' "$CFG" >"$CFG.2"
+    cli config validate "$CFG.2" --json
+    [ "$(jq -r '.errors[0].code' <<<"$output")" = unresolved_model ]
 }
 
 @test "codes: a platform the component does not support, only for this machine" {
     export EASY_CS_AI_HOST_IDS="fedora rhel"
-    echo '{"schema_version":1,"components":[{"type":"engine","name":"eng"}]}' >"$CFG"
+    v '[{"component":"engine/eng"}]' >"$CFG"
     cli config validate "$CFG" --json
     [ "$status" -eq 2 ]
-    [ "$(jq -r '.errors[0] | "\(.path) \(.code)"' <<<"$output")" = '$.components[0].name unsupported_platform' ]
+    [ "$(jq -r '.errors[0] | "\(.path) \(.code)"' <<<"$output")" = '$.vms[0].components[0].component unsupported_platform' ]
     cli config validate "$CFG" --json --target fresh
     [ "$status" -eq 0 ]
     export EASY_CS_AI_HOST_IDS="linuxmint ubuntu debian"
@@ -401,12 +525,115 @@ JSON
 }
 
 @test "config validate reports every problem at once, with the message of the human form" {
-    printf '%s' '{"schema_version":1,"bogus":1,"components":[{"type":"engine","name":"eng","options":{"port":0,"colour":1}}]}' >"$CFG"
+    printf '%s' '{"schema_version":2,"bogus":1,"vms":[{"components":[{"component":"engine/eng","options":{"port":0,"colour":1}}]}]}' >"$CFG"
     cli config validate "$CFG" --json
     [ "$(jq '.errors | length' <<<"$output")" = 3 ]
     cli config validate "$CFG"
     [ "$status" -eq 2 ]
-    [[ "$stderr" == *'$.bogus: unknown key'*'$.components[0].options.port: an integer between 1 and 65535 is expected'* ]]
+    [[ "$stderr" == *'$.bogus: unknown key'*'$.vms[0].components[0].options.port: an integer between 1 and 65535 is expected'* ]]
+}
+
+# --- several VMs: the slices, the steps, the cross checks -----------------------------------
+
+two_vms() {
+    cat >"$CFG" <<'JSON'
+{ "schema_version": 2, "vms": [
+  { "name": "gpu", "components": [ { "component": "proxy/prox" },
+      { "component": "engine/eng", "name": "eng", "models": [ { "model": "m1", "name": "m1", "force": true } ] } ] },
+  { "name": "web", "components": [ { "component": "proxy/prox" }, { "component": "chat-interface/chat", "name": "chat" } ] } ],
+  "links": [ { "model": { "vm_ref": "gpu", "component_ref": "eng", "model_ref": "m1" },
+               "chat_interface": { "vm_ref": "web", "component_ref": "chat" } } ] }
+JSON
+}
+
+@test "config validate on several VMs: one plan per VM in the order of the file, the links as resolved" {
+    two_vms
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.plan.vms | map([.name, (.components | map(.component)), (.models | map(.model))])' <<<"$output")" = '[["gpu",["proxy/prox","engine/eng"],["m1"]],["web",["proxy/prox","chat-interface/chat"],[]]]' ]
+    [ "$(jq -c '.plan.links | map([.model.vm_ref, .chat_interface.vm_ref])' <<<"$output")" = '[["gpu","web"]]' ]
+}
+
+@test "config validate --target this needs --vm on a file of several VMs, and plans that slice alone" {
+    two_vms
+    cli config validate "$CFG" --json
+    [ "$status" -eq 2 ]
+    cli config validate "$CFG" --json --vm zzz
+    [ "$status" -eq 2 ]
+    cli config validate "$CFG" --json --vm gpu
+    [ "$status" -eq 0 ]
+    [ "$(jq -c '.plan.vms | map(.name)' <<<"$output")" = '["gpu"]' ]
+    [ "$(jq -c '.plan.links' <<<"$output")" = '[]' ]
+    [ "$(jq -c '.next_steps' <<<"$output")" = '["Run each script as root on its VM."]' ]
+}
+
+@test "next steps: a link to another VM gives the steps of the contract, when the describes have them" {
+    make_fake proxy prox '[]' '{"actions":["install","status","show-key","list-upstreams"]}'
+    make_fake chat-interface chat '["proxy"]' '{"action_options":{"add-endpoint":[{"name":"model"},{"name":"api-key-file"},{"name":"ca-file"}]}}'
+    two_vms
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '.next_steps | length' <<<"$output")" -eq 4 ]
+    [ "$(jq -r '.next_steps[0]' <<<"$output")" = "Run each script as root on its VM, the engine VMs first." ]
+    [[ "$(jq -r '.next_steps[3]' <<<"$output")" == *"On the VM web, link each model of the VM gpu:"*"add-endpoint gpu-eng-m1 <url>"*"--model m1"* ]]
+    # the address of the engine VM is not known: the warning, once
+    [ "$(jq -r '[.warnings[] | select(.code == "engine_address_unknown") | .vm_ref] | join(",")' <<<"$output")" = gpu ]
+    # a server-name written removes it
+    jq '.vms[0].components[0].options = {"server-name": "gpu.example.org"}' "$CFG" >"$CFG.2"
+    cli config validate "$CFG.2" --json --target fresh
+    [ "$(jq '[.warnings[] | select(.code == "engine_address_unknown")] | length' <<<"$output")" -eq 0 ]
+}
+
+@test "duplicate_server_name: two VMs writing the same server-name are an error at the path of the second" {
+    make_fake proxy prox '[]' '{"options":[{"name":"server-name","default":"","secret":false}]}'
+    two_vms
+    jq '.vms[0].components[0].options = {"server-name": "A.example.org"} | .vms[1].components[0].options = {"server-name": "a.example.org"}' "$CFG" >"$CFG.2"
+    cli config validate "$CFG.2" --json --target fresh
+    [ "$status" -eq 2 ]
+    [ "$(jq -r '.errors[0] | "\(.path) \(.code) \(.vm_ref)"' <<<"$output")" = '$.vms[1].components[0].options.server-name duplicate_server_name web' ]
+    cli config validate "$CFG.2" --json --vm web
+    [ "$status" -eq 0 ]
+}
+
+# a proxy that declares what nginx declares: tls-cert and tls-key required with tls provided, server-name and
+# tls-accept-terms required with letsencrypt, tls-key never generated
+make_tls_proxy() {
+    make_fake proxy prox '[]' '{"options":[
+      {"name":"tls","default":"self-signed","secret":false,"type":"enum","values":["self-signed","provided","letsencrypt"]},
+      {"name":"server-name","default":"","secret":false,"required_when":{"option":"tls","values":["letsencrypt"]}},
+      {"name":"tls-cert","default":"","secret":false,"relevant_when":{"option":"tls","values":["provided"]},"required_when":{"option":"tls","values":["provided"]}},
+      {"name":"tls-key","default":"","secret":true,"sources":["file","env"],"required_when":{"option":"tls","values":["provided"]}},
+      {"name":"tls-accept-terms","default":"false","secret":false,"type":"boolean","required_when":{"option":"tls","values":["letsencrypt"]}}]}'
+}
+
+@test "codes: missing_option, an option the component requires with the choices made, at the path of its options" {
+    make_tls_proxy
+    run problems "$(v '[{"component":"proxy/prox","options":{"tls":"letsencrypt"}}]')"
+    [ "$output" = "$(printf '%s
+%s' '$.vms[0].components[0].options missing_option' '$.vms[0].components[0].options missing_option')" ]
+    [[ "$(jq -r '.errors[0].message' <<<"$(bash "$CLI" config validate "$CFG" --target fresh --json 2>/dev/null)")" == "option server-name is required when tls is letsencrypt" ]]
+    run problems "$(v '[{"component":"proxy/prox","options":{"tls":"provided"}}]')"
+    [ "$(grep -c missing_option <<<"$output")" -eq 2 ]
+    # not raised when the condition does not hold, nor when the options are given
+    vmfile '[{"component":"proxy/prox"}]' >"$CFG"
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 0 ]
+    vmfile '[{"component":"proxy/prox","options":{"tls":"letsencrypt","server-name":"a.example.org","tls-accept-terms":true}}]' >"$CFG"
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 0 ]
+}
+
+@test "a secret that declares its sources refuses the others, and the schema encodes both rules" {
+    make_tls_proxy
+    run problems "$(v '[{"component":"proxy/prox","options":{"tls":"provided","tls-cert":"/c","tls-key":{"generate":true}}}]')"
+    [ "$output" = '$.vms[0].components[0].options.tls-key secret_source' ]
+    vmfile '[{"component":"proxy/prox","options":{"tls":"provided","tls-cert":"/c","tls-key":{"file":"/k"}}}]' >"$CFG"
+    cli config validate "$CFG" --json --target fresh
+    [ "$status" -eq 0 ]
+    cli config schema
+    node='.properties.vms.items.properties.components.items.oneOf[] | select(.properties.component.const == "proxy/prox")'
+    [ "$(jq -r "$node"' | .properties.options.properties["tls-key"].oneOf | map(.required[0]) | join(",")' <<<"$output")" = "file,env" ]
+    [ "$(jq -c "$node"' | [.allOf[] | .description]' <<<"$output")" = '["option server-name is required when tls is letsencrypt","option tls-cert is required when tls is provided","option tls-key is required when tls is provided","option tls-accept-terms is required when tls is letsencrypt"]' ]
 }
 
 # --- apply --dry-run --json ----------------------------------------------------------------
@@ -419,16 +646,16 @@ JSON
     expected="$(bash "$CLI" config validate "$CFG" --json 2>/dev/null)"
     [ "$output" = "$expected" ]
     cli --dry-run --json apply "$CFG" --prune
-    [ "$(jq -r .plan.prune <<<"$output")" = "true" ]
+    [ "$(jq -r '.plan.vms[0].prune' <<<"$output")" = "true" ]
     ! installed eng
 }
 
 @test "apply --dry-run --json: an invalid file is exit 2, a requirement nothing satisfies keeps exit 4" {
-    printf '%s' '{"schema_version":1,"bogus":1}' >"$CFG"
+    printf '%s' '{"schema_version":2,"vms":[],"bogus":1}' >"$CFG"
     cli apply "$CFG" --dry-run --json
     [ "$status" -eq 2 ]
     [ "$(jq -r '.errors[0].code' <<<"$output")" = unknown_key ]
-    printf '%s' '{"schema_version":1,"components":[{"type":"chat-interface","name":"chat"}]}' >"$CFG"
+    vmfile '[{"component":"chat-interface/chat"}]' >"$CFG"
     cli apply "$CFG" --dry-run --json
     [ "$status" -eq 4 ]
     [ "$(jq -r '.errors[0].code' <<<"$output")" = missing_requirement ]
@@ -442,7 +669,7 @@ JSON
     full_config
     cli apply "$CFG" --dry-run
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"plan: install"*"[WARN] chat --open=true: it is open"* ]]
+    [[ "$stderr" == *"plan: install"*"[WARN] chat-interface/chat --open=true: it is open"* ]]
 }
 
 # --- config schema -------------------------------------------------------------------------
@@ -454,22 +681,30 @@ JSON
     run jq -r '."$schema"' <<<"$output"
     [[ "$output" == *"2020-12"* ]]
     cli config schema
-    [ "$(jq -r '.properties.schema_version.maximum' <<<"$output")" = 1 ]
-    [ "$(jq -c '.properties.components.items.oneOf | map(.properties.name.const)' <<<"$output")" = '["fit","prox","eng2","eng","chat"]' ]
-    [ "$(jq -c '.properties.models.items.properties.engine.enum' <<<"$output")" = '["eng2","eng"]' ]
-    [ "$(jq -c '.properties.models.items.properties.chat_interface.enum' <<<"$output")" = '["chat",null]' ]
+    [ "$(jq -c '.properties.schema_version' <<<"$output")" = '{"const":2}' ]
+    [ "$(jq -c '.required' <<<"$output")" = '["schema_version","vms"]' ]
+    [ "$(jq -c '.properties.vms.items.properties.components.items.oneOf | map(.properties.component.const)' <<<"$output")" = '["provisioning/fit","proxy/prox","engine/eng2","engine/eng","chat-interface/chat"]' ]
+    [ "$(jq -c '.properties.vms.items.properties.components.items.properties.component.enum | length' <<<"$output")" = 5 ]
+    # models are held by the engines only
+    [ "$(jq -c '[.properties.vms.items.properties.components.items.oneOf[] | select(.properties.models != null) | .properties.component.const]' <<<"$output")" = '["engine/eng2","engine/eng"]' ]
+    [ "$(jq -c '.properties.vms.items.properties.components.items.oneOf[] | select(.properties.component.const == "engine/eng") | .properties.models.items.required' <<<"$output")" = '["model"]' ]
+    # a link is complete: every field of a reference is required
+    [ "$(jq -c '.properties.links.items.properties.model.required' <<<"$output")" = '["vm_ref","component_ref","model_ref"]' ]
+    [ "$(jq -c '.properties.links.items.properties.chat_interface.required' <<<"$output")" = '["vm_ref","component_ref"]' ]
+    # the name of a VM is required when the file has several
+    [ "$(jq -c '.allOf[0].then.properties.vms.items.required' <<<"$output")" = '["name"]' ]
 }
 
 @test "config schema: options are typed from describe, secrets are sources, warnings are in the description" {
     cli config schema
-    opts='.properties.components.items.oneOf[] | select(.properties.name.const == "eng") | .properties.options.properties'
+    opts='.properties.vms.items.properties.components.items.oneOf[] | select(.properties.component.const == "engine/eng") | .properties.options.properties'
     [ "$(jq -c "$opts"'.port.anyOf[0] | [.type, .minimum, .maximum]' <<<"$output")" = '["integer",1,65535]' ]
     [ "$(jq -c "$opts"'.mode.enum' <<<"$output")" = '["a","b"]' ]
     [ "$(jq -c "$opts"'.open.anyOf | map(.type // .enum)' <<<"$output")" = '["boolean",["true","false"]]' ]
     [ "$(jq -r "$opts"'."api-key".oneOf | map(.required[0]) | join(",")' <<<"$output")" = "file,env,generate" ]
     [[ "$(jq -r "$opts"'.open.description' <<<"$output")" == *"WARNING: it is open"* ]]
     [ "$(jq -r "$opts"'.label.type | join(",")' <<<"$output")" = "string,number,boolean" ]
-    [ "$(jq -r '.properties.components.items.oneOf[] | select(.properties.name.const == "chat") | .description' <<<"$output")" = "chat-interface chat, rank 1, requires proxy" ]
+    [ "$(jq -r '.properties.vms.items.properties.components.items.oneOf[] | select(.properties.component.const == "chat-interface/chat") | .description' <<<"$output")" = "chat-interface/chat, rank 1, requires proxy" ]
 }
 
 @test "config schema takes no argument" {
@@ -540,7 +775,7 @@ JSON
 
 @test "apply --json: the result of the run, a failing step stops it and is named" {
     full_config
-    jq '.components[1].options = {"port": 11500} | .components += [{"type": "provisioning", "name": "fit"}] | del(.models[0].force)' "$CFG" >"$CFG.2"
+    jq '.vms[0].components[1].options = {"port": 11500} | .vms[0].components += [{"component": "provisioning/fit"}] | del(.vms[0].components[1].models[0].force)' "$CFG" >"$CFG.2"
     cli apply "$CFG.2" --json
     [ "$status" -eq 0 ]
     one_document
@@ -555,7 +790,7 @@ JSON
 
 @test "apply --json: a failure outside a component script still names the step" {
     full_config
-    jq 'del(.models[0].force)' "$CFG" >"$CFG.2"
+    jq 'del(.vms[0].components[1].models[0].force)' "$CFG" >"$CFG.2"
     KEY=x cli apply "$CFG.2" --json
     [ "$status" -eq 4 ]
     [ "$(jq -r '.ok, .failed_step, .message' <<<"$output" | paste -sd'|')" = "false|add m1|fit is required to add a model (exit 4: precondition not met)" ]
@@ -629,20 +864,21 @@ JSON
 @test "config validate on the shipped scripts: the default stack is valid, with the registration warning, and typed values are checked" {
     export EASY_CS_AI_HOME="$REAL"
     cat >"$CFG" <<'JSON'
-{ "schema_version": 1, "components": [
-  { "type": "provisioning", "name": "llmfit" },
-  { "type": "proxy", "name": "nginx", "options": { "server-name": "ai.example.org", "port": 443 } },
-  { "type": "engine", "name": "ollama", "default": true },
-  { "type": "chat-interface", "name": "librechat", "options": { "allow-registration": false } } ],
-  "models": [ { "name": "llama3.2:3b" } ] }
+{ "schema_version": 2, "vms": [ { "name": "vm-1", "components": [
+  { "component": "provisioning/llmfit" },
+  { "component": "proxy/nginx", "options": { "server-name": "ai.example.org", "port": 443 } },
+  { "component": "engine/ollama", "name": "ollama", "default": true, "models": [ { "model": "llama3.2:3b", "name": "llama3.2:3b" } ] },
+  { "component": "chat-interface/librechat", "name": "librechat", "options": { "allow-registration": false } } ] } ],
+  "links": [ { "model": { "vm_ref": "vm-1", "component_ref": "ollama", "model_ref": "llama3.2:3b" },
+               "chat_interface": { "vm_ref": "vm-1", "component_ref": "librechat" } } ] }
 JSON
     cli config validate "$CFG" --json --target fresh
     [ "$status" -eq 0 ]
     [ "$(jq -c '.warnings' <<<"$output")" = "[]" ]
-    jq 'del(.components[3].options)' "$CFG" >"$CFG.2"
+    jq 'del(.vms[0].components[3].options)' "$CFG" >"$CFG.2"
     cli config validate "$CFG.2" --json --target fresh
     [ "$(jq -r '.warnings[0].option' <<<"$output")" = "allow-registration" ]
-    jq '.components[1].options.tls = "selfsigned" | .components[2].options.port = 70000 | .components[3].options["allow-registration"] = "nope"' "$CFG" >"$CFG.3"
+    jq '.vms[0].components[1].options.tls = "selfsigned" | .vms[0].components[2].options.port = 70000 | .vms[0].components[3].options["allow-registration"] = "nope"' "$CFG" >"$CFG.3"
     cli config validate "$CFG.3" --json --target fresh
     [ "$status" -eq 2 ]
     [ "$(jq -r '.errors | map(.code) | join(",")' <<<"$output")" = "invalid_value,invalid_value,invalid_value" ]
@@ -652,6 +888,21 @@ JSON
     export EASY_CS_AI_HOME="$REAL"
     cli config schema
     [ "$status" -eq 0 ]
-    [ "$(jq -c '.properties.components.items.oneOf | map(.properties.name.const)' <<<"$output")" = '["llmfit","nginx","ollama","librechat"]' ]
-    [ "$(jq -c '.properties.components.items.oneOf[] | select(.properties.name.const == "nginx") | .properties.options.properties.tls.enum' <<<"$output")" = '["self-signed","provided","letsencrypt"]' ]
+    [ "$(jq -c '.properties.vms.items.properties.components.items.oneOf | map(.properties.component.const)' <<<"$output")" = '["provisioning/llmfit","proxy/nginx","engine/ollama","chat-interface/librechat"]' ]
+    [ "$(jq -c '.properties.vms.items.properties.components.items.oneOf[] | select(.properties.component.const == "proxy/nginx") | .properties.options.properties.tls.enum' <<<"$output")" = '["self-signed","provided","letsencrypt"]' ]
+}
+
+@test "config validate ends its text on a verdict: valid with the counts, or invalid with the errors" {
+    export EASY_CS_AI_CHARSET=ascii EASY_CS_AI_COLOR=never
+    full_config
+    export KEY=x
+    cli config validate "$CFG"
+    [[ "${stderr##*$'\n'}" != "" ]]
+    [[ "$stderr" == *"ok valid 3 components, 1 model, "* ]]
+    vmfile '[{"component":"nope/x"}]' >"$CFG"
+    cli config validate "$CFG"
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"[ERROR] invalid 1 error, 0 warnings"* ]]
+    cli config validate "$CFG" --json
+    [[ "$output" != *"valid"*"components"* ]]
 }

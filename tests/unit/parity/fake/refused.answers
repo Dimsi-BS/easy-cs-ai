@@ -1,13 +1,17 @@
 # The dependency is refused, the session goes back to the components and ends on the minimal stack.
-none  # provisioning
-none  # proxy
-none  # engine
-chat  # chat-interface
+  # role of the VM: custom, the default
+  # name of the VM: vm-1, the default
+n  # provisioning
+n  # proxy
+n  # engine
+y  # chat-interface
+  # chat-interface: chat
 n  # chat requires proxy: add proxy prox? no, back to the components
-none  # provisioning
-none  # proxy
-ollama  # engine
-none  # chat-interface
+n  # provisioning
+n  # proxy
+y  # engine
+  # engine: ollama
+n  # chat-interface
   # ollama --port, the default
   # llmfit is not installed here: install it now? no
 m1  # models to add
