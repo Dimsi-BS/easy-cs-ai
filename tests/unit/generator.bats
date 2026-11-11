@@ -45,7 +45,7 @@ session() {
         [[ ! -e "$OUTFILE" ]] || ANSWERS+=$'y\n'
     fi
     export ANSWERS
-    run --separate-stderr bash -c 'bash "$0" "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
+    run --separate-stderr bash -c 'bash "$0" new "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
 }
 ANSWERS=""
 # _join_lines <answers…>: one line per answer, a trailing empty one kept (unlike "$(printf …)",
@@ -125,7 +125,7 @@ ask_script() {
     [ "$status" -eq 0 ]
     gen </dev/null
     [ "$status" -eq 2 ]
-    [[ "$stderr" == *"easy-cs-ai config edit"* ]]
+    [[ "$stderr" == *"easy-cs-ai config new"* ]]
     gen a.json b.json
     [ "$status" -eq 2 ]
     gen --bogus
@@ -457,27 +457,27 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
     [ ! -e vm2.sh ]
 }
 
-@test "easy-cs-ai script with no file is exit 2 and points to config edit" {
+@test "easy-cs-ai script with no file is exit 2 and points to config new" {
     ln -s "${BATS_TEST_DIRNAME}/../../vm_script" "$BATS_TEST_TMPDIR/vm_script"
     run --separate-stderr bash "$CLI" script </dev/null
     [ "$status" -eq 2 ]
-    [[ "$stderr" == *"easy-cs-ai config edit"* ]]
+    [[ "$stderr" == *"easy-cs-ai config new"* ]]
 }
 
-@test "easy-cs-ai generate is no longer a command: exit 2, the hint names config edit and script" {
+@test "easy-cs-ai generate is no longer a command: exit 2, the hint names config new, config edit and script" {
     run --separate-stderr bash "$CLI" generate --config x.json
     [ "$status" -eq 2 ]
     [[ "$stderr" == *"unknown command 'generate'"* ]]
-    [[ "$stderr" == *"easy-cs-ai config edit"* && "$stderr" == *"easy-cs-ai script"* ]]
+    [[ "$stderr" == *"easy-cs-ai config new"* && "$stderr" == *"easy-cs-ai config edit"* && "$stderr" == *"easy-cs-ai script"* ]]
 }
 
-@test "easy-cs-ai config edit hands over to the session; config alone lists its subcommands" {
+@test "easy-cs-ai config new and config edit hand over to the session; config alone lists its subcommands" {
     ln -s "${BATS_TEST_DIRNAME}/../../vm_script" "$BATS_TEST_TMPDIR/vm_script"
-    run --separate-stderr bash "$CLI" config edit --json
+    run --separate-stderr bash "$CLI" config new --json
     [ "$status" -eq 2 ]
     run --separate-stderr bash "$CLI" config
     [ "$status" -eq 2 ]
-    [[ "$stderr" == *"config edit"*"config validate"*"config schema"* ]]
+    [[ "$stderr" == *"config new"*"config edit"*"config validate"*"config schema"* ]]
     printf '{"schema_version":2,"vms":[{"components":[{"component":"engine/eng"}]}]}' >cfg.json
     run --separate-stderr bash "$CLI" config edit cfg.json <<<"q"
     [ "$status" -eq 0 ]
@@ -487,7 +487,7 @@ embedded_config() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1
 # --- --json (docs/spec-capabilities.md) ---------------------------------------------------
 
 @test "--json is refused by the session: it is interactive" {
-    run --separate-stderr bash "$GEN" --json
+    run --separate-stderr bash "$GEN" new --json
     [ "$status" -eq 2 ]
     [ -z "$output" ]
 }

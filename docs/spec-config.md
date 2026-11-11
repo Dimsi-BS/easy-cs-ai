@@ -9,7 +9,7 @@
 One declarative **configuration file** describes a deployment: which components, with which options, and which models. It has two uses, with one format:
 
 - `easy-cs-ai apply <file>` (layer 2) interprets it and makes the machine match it;
-- the [generator](spec-vm-generator.md) writes it at the end of an interactive session (`config edit`, which also opens it again to edit it), and `script <file>` reads it back to generate the scripts without prompting (regeneration, tests). The two commands share nothing but this file.
+- the [generator](spec-vm-generator.md) writes it at the end of an interactive session (`config new`, and `config edit <file>`, which opens it again to edit it), and `script <file>` reads it back to generate the scripts without prompting (regeneration, tests). The two commands share nothing but this file.
 
 For the VM post-install layer, the generated script embeds the configuration (the [slice](#slices) of its VM) and hands it to `apply`, so the configuration travels **inside the generated script**: no external input file (see [spec: VM script generator](spec-vm-generator.md#generated-script)). The package itself is downloaded from a pinned source, not embedded, see [decision: VM script generator](decision-vm-generator.md).
 

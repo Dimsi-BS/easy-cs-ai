@@ -293,7 +293,7 @@ load_config() {
     fi
 }
 
-# --- The session: config edit, docs/spec-multi-vm.md#editing -------------------------------
+# --- The session: config new, config edit, docs/spec-multi-vm.md#editing -------------------------------
 
 EDIT_ORIGINAL=""
 

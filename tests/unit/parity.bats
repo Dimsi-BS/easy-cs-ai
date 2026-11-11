@@ -109,11 +109,11 @@ summary_warnings() { grep -E '^    [^ ]+ --[a-z-]+=[^ ]*: ' <<<"$1" | sort -u ||
 
 # parity <catalog> <scenario> [<oracle>]: play tests/unit/parity/<catalog>/<scenario>.answers in
 # a session and compare it with the oracle, the .json of the same name unless another is given.
-# session_cfg <out>: `config edit` with the answers of stdin.txt, then the name of the file written
+# session_cfg <out>: `config new` with the answers of stdin.txt, then the name of the file written
 # (and the confirmation when it exists already).
 session_cfg() {
     { cat stdin.txt; echo y; echo "$1"; [[ ! -e "$1" ]] || echo y; } >stdin-cfg.txt
-    run --separate-stderr bash "$GEN" <stdin-cfg.txt
+    run --separate-stderr bash "$GEN" new <stdin-cfg.txt
     # a scenario padded with empty answers takes the default name of the question of the file
     if [[ ! -e "$1" && -e easy-cs-ai.json ]]; then mv easy-cs-ai.json "$1"; fi
 }

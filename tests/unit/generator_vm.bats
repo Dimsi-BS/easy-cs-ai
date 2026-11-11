@@ -63,7 +63,7 @@ ask() {
         ANSWERS+=$'y\n'
     fi
     export ANSWERS
-    run --separate-stderr bash -c 'bash "$0" "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
+    run --separate-stderr bash -c 'bash "$0" new "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
 }
 
 # ask_script <answers…>: the session writes a configuration (session.json), then `script` makes the

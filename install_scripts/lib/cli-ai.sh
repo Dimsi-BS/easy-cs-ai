@@ -564,8 +564,8 @@ cmd_config() {
         rc="$(config_exit_code "$doc")"
         return "$rc"
         ;;
-    "") fail "$EXIT_USAGE" "config needs a subcommand" "easy-cs-ai config edit [<file>], easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
-    *) fail "$EXIT_USAGE" "unknown config subcommand '$sub'" "easy-cs-ai config edit [<file>], easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
+    "") fail "$EXIT_USAGE" "config needs a subcommand" "easy-cs-ai config new, easy-cs-ai config edit <file>, easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
+    *) fail "$EXIT_USAGE" "unknown config subcommand '$sub'" "easy-cs-ai config new, easy-cs-ai config edit <file>, easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
     esac
 }
 

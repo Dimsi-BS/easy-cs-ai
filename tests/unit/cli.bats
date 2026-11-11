@@ -101,7 +101,8 @@ has() { [[ "$1" == *"$2"* ]]; }
     has "$tree" $'\n├── install '
     has "$tree" $'\n│   ├── <type> <name> [--default] [options]  '
     has "$tree" $'\n│   └── [<type>] --defaults '
-    has "$tree" $'\n│   ├── edit [<file>] '
+    has "$tree" $'\n│   ├── new '
+    has "$tree" $'\n│   ├── edit <file> '
     has "$tree" $'\n│   ├── validate <file|-> '
     has "$tree" $'\n│   └── schema '
     # no run of dashes as a branch: the tree is not confused with the options

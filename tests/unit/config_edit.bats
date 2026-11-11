@@ -41,7 +41,7 @@ FAKE
 
 gen() { run --separate-stderr bash "$SCRIPT" "$@"; }
 # cfg <args…>: the session, `config edit` with arguments.
-cfg() { run --separate-stderr bash "$GEN" "$@"; }
+cfg() { run --separate-stderr bash "$GEN" edit "$@"; }
 _join_lines() {
     local a
     REPLY_LINES=""
@@ -55,7 +55,7 @@ edit() {
     if [[ "${!#}" == y ]]; then _join_lines "$@" ""; else _join_lines "$@"; fi
     ANSWERS="$REPLY_LINES"
     export ANSWERS GEN_FILE="$file"
-    run --separate-stderr bash -c 'bash "$0" "$GEN_FILE" "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
+    run --separate-stderr bash -c 'bash "$0" edit "$GEN_FILE" "${@:1}" <<<"$ANSWERS"' "$GEN" "${GEN_ARGS[@]}"
 }
 embedded() { sed -n "/<<'EASY_CS_AI_CONFIG'/,/^EASY_CS_AI_CONFIG\$/p" "$1" | sed '1d;$d'; }
 
@@ -215,7 +215,7 @@ JSON
 @test "the end of input at the question of the file writes nothing" {
     two_vm_file f.json
     before="$(cat f.json)"
-    run --separate-stderr bash -c 'printf "y\n" | bash "$0" f.json' "$GEN"
+    run --separate-stderr bash -c 'printf "y\n" | bash "$0" edit f.json' "$GEN"
     [ "$status" -eq 0 ]
     [ "$(cat f.json)" = "$before" ]
 }
@@ -469,4 +469,16 @@ JSON
     edit f.json f /etc/key y
     [ "$status" -eq 0 ]
     [ "$(jq -c '.vms[1].components[0].options["tls-key"]' f.json)" = '{"file":"/etc/key"}' ]
+}
+
+@test "config needs new or edit <file>: new takes no file, edit needs one, each hint names the other" {
+    run --separate-stderr bash "$GEN"
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"config new"*"config edit <file>"* ]]
+    run --separate-stderr bash "$GEN" new f.json
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"config edit f.json"* ]]
+    run --separate-stderr bash "$GEN" edit
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"config new"* ]]
 }

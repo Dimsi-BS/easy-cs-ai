@@ -13,7 +13,7 @@ There are two ways to walk it, and neither is "the AI interface":
 | | Interactive session | Programmatic |
 | --- | --- | --- |
 | Who | A person at a terminal | A program, or an AI agent working for a person |
-| How | Questions and answers (`config edit`) | Arguments, a configuration file, `--json` (`catalog`, `host`, `config validate`, `script`, `apply`…) |
+| How | Questions and answers (`config new`, `config edit`) | Arguments, a configuration file, `--json` (`catalog`, `host`, `config validate`, `script`, `apply`…) |
 | Text of the instructions | The questions themselves | `easy-cs-ai guide`, which prints [`install_scripts/guide.txt`](../install_scripts/guide.txt) |
 | Produces | A [configuration](spec-config.md), then the script | The same configuration, then the same script |
 
@@ -84,7 +84,7 @@ Asked when an engine is selected (with several VMs, in **every pass that selecte
 
 Two outcomes, the user picks:
 
-- **A script** for a new VM: `script <file>`, from the configuration that steps 1 to 5 produced (`config edit`, a session; or a file written by a program), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. The configuration is opened again with `config edit <file>`; saving it does not regenerate the scripts, `script` does. With several VMs there is one script per VM, and after them the [next steps](spec-multi-vm.md#next-steps) that the user still has to do by hand.
+- **A script** for a new VM: `script <file>`, from the configuration that steps 1 to 5 produced (`config new`, a session; or a file written by a program), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. The configuration is opened again with `config edit <file>`; saving it does not regenerate the scripts, `script` does. With several VMs there is one script per VM, and after them the [next steps](spec-multi-vm.md#next-steps) that the user still has to do by hand.
 - **A change on this machine**: `sudo easy-cs-ai apply <file>`. It changes the machine, so a program does it only with the explicit agreement of the user.
 
 ### 7. Report
@@ -121,7 +121,7 @@ The decisions of a scenario are written **by hand**, as a program would write th
 
 ## Implementation status
 
-- **Session**: `vm_script/config.sh` and `vm_script/lib/questions.sh`, reached through `easy-cs-ai config edit`; the scripts of step 6 are `vm_script/script.sh`, reached through `easy-cs-ai script`.
+- **Session**: `vm_script/config.sh` and `vm_script/lib/questions.sh`, reached through `easy-cs-ai config new` and `easy-cs-ai config edit`; the scripts of step 6 are `vm_script/script.sh`, reached through `easy-cs-ai script`.
 - **Programmatic**: `install_scripts/lib/cli-ai.sh` (`catalog`, `host`, `config`, `guide`, the result documents) and `install_scripts/lib/cli-apply.sh` (the validation shared with the session).
 - **Guide**: its text is the single file `install_scripts/guide.txt`, shipped in the package (next to `ranks.conf`) and printed as it is by `guide`. It is written by hand for the final reader, so a change to a step updates this spec, the session and `guide.txt` together. `tests/unit/cli_ai.bats` checks that it names the commands and the two orders of the models step, not that it follows this spec.
 - **Parity test**: `tests/unit/parity.bats`, with the scenarios in `tests/unit/parity/` (a fake catalog and the shipped scripts). It does not cover an agent: it holds that the configuration the guide leads to is the one the session produces.
