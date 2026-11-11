@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted, implemented except the [appearance](#appearance) (`install_scripts/lib/cli-ai.sh`, `vm_script/lib/questions.sh`; tests in `tests/unit/cli_ai.bats` and `tests/unit/generate.bats`)
+**Status:** accepted, implemented (`install_scripts/lib/cli-ai.sh`, `vm_script/lib/questions.sh`; tests in `tests/unit/cli_ai.bats` and `tests/unit/generate.bats`)
 
 ## Purpose
 
@@ -53,7 +53,7 @@ An answer that has no place in the configuration (the specs of the target VM at 
 
 ### Appearance
 
-**Status: partly implemented.** Done: the style layer (`style`, `sym`, `rule`, `wrap`, `ui_unicode` in `install_scripts/lib/common.sh`), the summary of the editor, its commands line and the dimmed default of every question (tests `common_logging.bats` and `config_edit.bats`). The `hint:` line of the errors, the header lines of `apply`, the verdict that ends the text of `config validate` (`✓ valid 3 components, 1 model, 0 warnings`) and the table of `status`, which was already aligned and coloured, are done too. The fit levels of the model suggestions are coloured too. **Not done**: the text of `script`. What a person reads on a terminal is made clearer with colour, a few symbols and aligned columns, **without a full-screen interface** (no TUI, no cursor addressing: the text scrolls and can be copied, piped and logged). The appearance is a layer over the text above: **the information, the codes, the commands and the order of the lines do not change**, and `--json` is untouched.
+**Status: implemented.** Done: the style layer (`style`, `sym`, `rule`, `wrap`, `ui_unicode` in `install_scripts/lib/common.sh`), the summary of the editor, its commands line and the dimmed default of every question (tests `common_logging.bats` and `config_edit.bats`). The `hint:` line of the errors, the header lines of `apply`, the verdict that ends the text of `config validate` (`✓ valid 3 components, 1 model, 0 warnings`) and the table of `status`, which was already aligned and coloured, are done too. The fit levels of the model suggestions are coloured too, and so is the text of `script`: a symbol and the title of what was written, one line per VM in aligned columns (`VM name`, components, path of the script), the title of the next steps, their numbers dimmed and each command to copy in the accent colour. Everything of the appearance is done.What a person reads on a terminal is made clearer with colour, a few symbols and aligned columns, **without a full-screen interface** (no TUI, no cursor addressing: the text scrolls and can be copied, piped and logged). The appearance is a layer over the text above: **the information, the codes, the commands and the order of the lines do not change**, and `--json` is untouched.
 
 - **One style layer.** A single function of `lib/common.sh` gives every program the same few roles: `title`, `accent` (the names a person types or reads: types, commands, keys), `ok`, `warn`, `error` and `dim` (paths, codes, defaults, explanations). Nothing else prints an escape sequence, so a role is changed in one place.
 - **Only for a person at a terminal.** Colour and symbols are written to **stderr** only when it is a terminal. They are off with `NO_COLOR` set (any value), `TERM=dumb`, a redirected stream, `--json`, and the two overrides that already exist, `EASY_CS_AI_COLOR=always|never` for the colour and `EASY_CS_AI_CHARSET=unicode|ascii` for the symbols (which otherwise follow a UTF-8 locale, like the tree of the help). stdout, which a program may read, never carries a style.

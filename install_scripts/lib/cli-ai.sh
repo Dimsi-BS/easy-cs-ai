@@ -390,13 +390,21 @@ next_steps_text() {
     local steps="$1" n i line total
     total="$(jq 'length' <<<"$steps")"
     ((total > 0)) || return 0
-    printf '\nWhat is left to do once the VMs are up:\n'
+    printf '\n%s\n' "$(style title 'What is left to do once the VMs are up:')"
     for ((i = 0; i < total; i++)); do
         n=$((i + 1))
         jq -r --argjson i "$i" '.[$i]' <<<"$steps" | {
             local first=1
             while IFS= read -r line; do
-                if ((first)); then printf '  %s. %s\n' "$n" "$line"; first=0; else printf '     %s\n' "$line"; fi
+                if ((first)); then
+                    printf '  %s %s\n' "$(style dim "$n.")" "$line"
+                    first=0
+                elif [[ "$line" =~ ^([[:space:]]*)((sudo )?easy-cs-ai[[:space:]].*)$ ]]; then
+                    # a command to copy: its indent stays, the command is the accent
+                    printf '     %s%s\n' "${BASH_REMATCH[1]}" "$(style accent "${BASH_REMATCH[2]}")"
+                else
+                    printf '     %s\n' "$line"
+                fi
             done
         }
     done

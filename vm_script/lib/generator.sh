@@ -213,17 +213,23 @@ write_output() {
 # left to do, from the next steps the validation computes (the generator computes nothing of them).
 print_vm_scripts_report() {
     local config="$1" desc cross names total i=0 vm words
+    local -a comps=()
+    local w=0 cw=0
     desc="$(apply_describes "$config")"
     cross="$(config_cross "$config" "$desc")"
     mapfile -t names < <(apply_vms "$config")
     total=${#names[@]}
     case "$total" in 1) words="One script" ;; 2) words="Two scripts" ;; 3) words="Three scripts" ;; *) words="$total scripts" ;; esac
+    for vm in "${names[@]}"; do
+        comps+=("$(apply_slice "$config" "$vm" | jq -r '[.vms[0].components[].component | split("/")[1]] | join(", ")')")
+        ((${#vm} <= w)) || w=${#vm}
+        ((${#comps[-1]} <= cw)) || cw=${#comps[-1]}
+    done
     {
-        if ((DRY)); then printf '\n%s, nothing written (dry run), one per VM:\n' "$words"
-        else printf '\n%s written, one per VM:\n' "$words"; fi
+        if ((DRY)); then printf '\n%s %s\n\n' "$(sym todo)" "$words, nothing written (dry run), one per VM:"
+        else printf '\n%s %s\n\n' "$(sym ok)" "$words written, one per VM:"; fi
         for vm in "${names[@]}"; do
-            printf '  %s   VM %s  (%s)\n' "${SCRIPT_PATHS[$i]}" "$vm" \
-                "$(apply_slice "$config" "$vm" | jq -r '[.vms[0].components[].component | split("/")[1]] | join(", ")')"
+            printf '  %s  %s  %s\n' "$(style accent "$(printf 'VM %-*s' "$w" "$vm")")" "$(printf '%-*s' "$cw" "${comps[i]}")" "$(style dim "${SCRIPT_PATHS[$i]}")"
             i=$((i + 1))
         done
         next_steps_text "$(jq -c '.next_steps' <<<"$cross")"

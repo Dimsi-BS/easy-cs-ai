@@ -317,7 +317,21 @@ TWO_VM_SESSION=("${VM1_ANSWERS[@]}" y "${VM2_ANSWERS[@]}" n "")
     [ "$(embedded vm-engine.sh | jq 'has("links")')" = "false" ]
     [ "$(embedded vm-web.sh | jq 'has("links")')" = "false" ]
     bash -n vm-engine.sh && bash -n vm-web.sh
-    [[ "$stderr" == *"Two scripts written, one per VM:"*"vm-engine.sh   VM engine"*"vm-web.sh   VM web"* ]]
+    [[ "$stderr" == *"Two scripts written, one per VM:"*"VM engine"*"vm-engine.sh"*"VM web "*"vm-web.sh"* ]]
+}
+
+@test "the report of the scripts aligns its columns, and colours the VMs and the commands when colour is on" {
+    export EASY_CS_AI_COLOR=always
+    GEN_ARGS=("${PKG[@]}" --output vm.sh)
+    ask_script "${TWO_VM_SESSION[@]}"
+    [ "$status" -eq 0 ]
+    esc=$'\033'
+    [[ "$stderr" == *"${esc}[36mVM engine"* ]]
+    [[ "$stderr" == *"${esc}[36mVM web   "* ]]
+    [[ "$stderr" == *"${esc}[2m1."* ]]
+    plain="$(sed "s/${esc}\[[0-9;]*m//g" <<<"$stderr")"
+    [[ "$plain" == *"VM engine  "*"vm-engine.sh"* ]]
+    [[ "$plain" == *"  1. "* ]]
 }
 
 @test "without --output the scripts are ./easy-cs-ai-vm-engine.sh and ./easy-cs-ai-vm-web.sh" {
