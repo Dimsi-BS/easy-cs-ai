@@ -256,10 +256,32 @@ _suggest_models() {
     out="$(bash "$script" suggest "${args[@]}" 2>/dev/null)" || { log_warn "llmfit could not make suggestions, type the model names"; return 0; }
     # The action's own text is shown as it is; the only thing read from it is the number and the
     # name at the start of each line, so that a number can be picked.
-    printf '%s\n' "$out" >&2
+    _print_suggestions "$out"
     while read -r name; do
         [[ -n "$name" ]] && SUGGESTIONS+=("$name")
     done < <(sed -nE 's/^ *[0-9]+\) ([^ ]+).*/\1/p' <<<"$out")
+}
+
+# _print_suggestions <text>: the list of the action as it is, with the fit level in its colour
+# (Perfect and Good ok, Marginal warn) and the memory it needs dimmed; a line that is not of the
+# form "<n>) <name> <level>, needs <x> GB" is printed untouched. Without colour the text is the
+# action's, byte for byte.
+_print_suggestions() {
+    local line head level rest role
+    local re='^( *[0-9]+\) [^ ]+ +)([A-Za-z ]+), (needs .*)$'
+    while IFS= read -r line; do
+        if [[ "$line" =~ $re ]]; then
+            head="${BASH_REMATCH[1]}" level="${BASH_REMATCH[2]}" rest="${BASH_REMATCH[3]}"
+            case "$level" in
+            Perfect | Good) role=ok ;;
+            Marginal) role=warn ;;
+            *) role=dim ;;
+            esac
+            printf '%s%s, %s\n' "$head" "$(style "$role" "$level")" "$(style dim "$rest")" >&2
+        else
+            printf '%s\n' "$line" >&2
+        fi
+    done <<<"$1"
 }
 
 # _check_model <script> <model>: keep a negative verdict, or an unknown model, as a warning.

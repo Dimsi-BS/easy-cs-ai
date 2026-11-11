@@ -611,6 +611,22 @@ FAKE
     [[ "$stderr" != *"not checked for fit"* ]]
 }
 
+@test "the fit level of a suggestion has its colour when colour is on, and the text is the action's otherwise" {
+    make_llmfit
+    GEN_ARGS=(); OUTFILE=cfg.json
+    export EASY_CS_AI_COLOR=always
+    ask "" none ollama none "" 16 "" 4 "1" y y
+    [ "$status" -eq 0 ]
+    esc=$'\033'
+    [[ "$stderr" == *"${esc}[32mGood"* ]]
+    [[ "$stderr" == *"${esc}[32mPerfect"* ]]
+    plain="$(sed "s/${esc}\[[0-9;]*m//g" <<<"$stderr")"
+    [[ "$plain" == *"   1) llama3.2:3b                  Good, needs 2.4 GB"* ]]
+    export EASY_CS_AI_COLOR=never
+    ask "" none ollama none "" 16 "" 4 "1" y y
+    [[ "$stderr" == *"   1) llama3.2:3b                  Good, needs 2.4 GB"* && "$stderr" != *"$esc"* ]]
+}
+
 @test "the specs are optional, and without any there is no suggestion and no check" {
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
