@@ -7,6 +7,8 @@
 # only returns data prints JSON anyway.
 
 readonly AI_SCHEMA_VERSION=1
+# the document of `config validate` (and of `script --json`, `apply --dry-run --json`) is at version 2
+readonly CONFIG_DOC_VERSION=2
 
 # --- host ---------------------------------------------------------------------------
 
@@ -197,10 +199,11 @@ def opt_schema:
      + (if $o.warn != null then " WARNING: " + $o.warn.message else "" end)
      + (if ($o.default // "") != "" and $o.secret != true then " (default: \($o.default))" else "" end)) as $d
   | (if $o.secret == true then
-       {oneOf: [
+       {oneOf: ([
          {type: "object", properties: {file: {type: "string"}}, required: ["file"], additionalProperties: false},
          {type: "object", properties: {env: {type: "string"}}, required: ["env"], additionalProperties: false},
-         {type: "object", properties: {generate: {const: true}}, required: ["generate"], additionalProperties: false}]}
+         {type: "object", properties: {generate: {const: true}}, required: ["generate"], additionalProperties: false}]
+         | map(select(.required[0] | IN(($o.sources // ["file", "env", "generate"])[]))))}
      elif $o.type == "integer" then
        {anyOf: [
          ({type: "integer"} + (if $o.min != null then {minimum: $o.min} else {} end) + (if $o.max != null then {maximum: $o.max} else {} end)),
@@ -209,41 +212,61 @@ def opt_schema:
      elif $o.type == "enum" then {enum: $o.values}
      else {type: ["string", "number", "boolean"]} end)
     + (if $d != "" then {description: $d} else {} end);
+def options_schema($list): {type: "object", additionalProperties: false,
+  properties: (reduce ($list // [])[] as $o ({}; .[$o.name] = ($o | opt_schema)))};
+def name_schema($what): {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: $what};
+def model_schema($c): {
+  type: "object", required: ["model"], additionalProperties: false,
+  description: "one instance of a model on this engine; unique `model` and `name` in the engine",
+  properties: {
+    model: {type: "string", minLength: 1, description: "the AI model, as the engine knows it (its identity)"},
+    name: {type: "string", minLength: 1, pattern: "^[^\\u0000-\\u001f\\u007f]+$", description: "free name of the instance, needed to be the target of a link (the session writes the model)"},
+    force: {type: "boolean", description: "true skips the llmfit fit check"},
+    options: options_schema($c.describe.action_options["add-model"])}};
+def required_node($o): ($o.required_when | if type == "array" then . else [.] end) as $cs
+  | {"if": {required: ["options"], properties: {options: {required: [$cs[].option],
+        properties: (reduce $cs[] as $k ({}; .[$k.option] = {enum: $k.values}))}}},
+     "then": {required: ["options"], properties: {options: {required: [$o.name]}}},
+     description: "option \($o.name) is required when \([$cs[] | "\(.option) is \(.values | join(" or "))"] | join(" and "))"};
 def comp_schema:
   . as $c
-  | {type: "object", required: ["type", "name"], additionalProperties: false,
-     description: "\($c.type) \($c.name)\(if $c.rank != null then ", rank \($c.rank)" else "" end)\(if ($c.describe.requires // []) | length > 0 then ", requires \($c.describe.requires | join(", "))" else "" end)",
-     properties: {
-       type: {const: $c.type}, name: {const: $c.name},
-       default: {type: "boolean", description: "make it the default of its type"},
-       vm: {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: "the VM this component belongs to, when the file describes several: on every component or on none"},
-       options: {type: "object", additionalProperties: false,
-                 properties: (reduce ($c.describe.options // [])[] as $o ({}; .[$o.name] = ($o | opt_schema)))}}};
+  | ("\($c.type)/\($c.name)") as $k
+  | {type: "object", required: ["component"], additionalProperties: false,
+     description: "\($k)\(if $c.rank != null then ", rank \($c.rank)" else "" end)\(if ($c.describe.requires // []) | length > 0 then ", requires \($c.describe.requires | join(", "))" else "" end)",
+     properties: ({
+       component: {const: $k},
+       name: name_schema("how the component is called in its VM, needed only to be designated by a link; unique in the VM"),
+       default: {type: "boolean", description: "make it the default of its type, at most one per type and per VM"},
+       options: options_schema($c.describe.options)}
+       + (if $c.type == "engine" then {models: {type: "array", items: model_schema($c)}} else {} end))}
+     + (([($c.describe.options // [])[] | select(.required_when != null) | required_node(.)]) as $rn | if ($rn | length) > 0 then {allOf: $rn} else {} end);
 . as $cat
-| ([.components[] | select(.type == "engine") | .name]) as $engines
-| ([.components[] | select(.type == "chat-interface") | .name]) as $chats
+| ([$cat.components[] | "\(.type)/\(.name)"]) as $kinds
 | {"$schema": "https://json-schema.org/draft/2020-12/schema",
    title: "easy-cs-ai configuration",
    description: $rules,
-   type: "object", required: ["schema_version"], additionalProperties: false,
+   type: "object", required: ["schema_version", "vms"], additionalProperties: false,
    properties: {
-     schema_version: {type: "integer", minimum: 1, maximum: $maxver},
-     components: {type: "array", items: {oneOf: [$cat.components[] | comp_schema]}},
-     models: {type: "array", items: {
-       type: "object", required: ["name"], additionalProperties: false,
-       properties: {
-         name: {type: "string", minLength: 1, description: "model name, as the engine knows it"},
-         engine: ({type: "string", description: "default: the only engine listed, else the one with default true"} + (if ($engines | length) > 0 then {enum: $engines} else {} end)),
-         vm: {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: "the VM the model is installed on, with engine its place; only in a file whose components have a vm. Default: the VM of the engine"},
-         chat_interface: ({type: ["string", "null"], description: "default: like engine, none when no chat interface is listed; null for none"} + (if ($chats | length) > 0 then {enum: ($chats + [null])} else {} end)),
-         force: {type: "boolean", description: "true skips the llmfit fit check"}}}},
-     links: {type: "array", description: "which VM reaches the engine of which other VM, in a file whose components carry a vm; the link is finished by hand once the VMs are up",
-             items: {type: "object", required: ["web_vm", "engine_vm"], additionalProperties: false,
+     schema_version: {const: $maxver},
+     vms: {type: "array",
+           description: "the machines, each holding its components; the name of a VM is required when the file has several, unique in the file, and required when a link designates the VM",
+           items: {type: "object", required: ["components"], additionalProperties: false,
+                   properties: {
+                     name: name_schema("the name of the VM, needed to be designated (a link) and when the file has several VMs"),
+                     components: {type: "array", minItems: 1,
+                                  description: "the components installed on the VM: one per implementation for now, at most one default per type, unique names; the install order comes from requires",
+                                  items: {properties: {component: {enum: $kinds}}, oneOf: [$cat.components[] | comp_schema]}}}}},
+     links: {type: "array",
+             description: "the wiring: each entry says that a model is shown in a chat interface; every reference is complete and designates by name. One link per model for now, no link written twice; a model of a protected engine is not linked to a chat interface of another VM",
+             items: {type: "object", required: ["model", "chat_interface"], additionalProperties: false,
                      properties: {
-                       web_vm: {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: "the VM whose chat interface lists the models"},
-                       engine_vm: {type: "string", pattern: "^[a-z][a-z0-9-]*$", description: "the VM whose engine, through its proxy, serves the models"}}}}}}'
+                       model: {type: "object", required: ["vm_ref", "component_ref", "model_ref"], additionalProperties: false,
+                               properties: {vm_ref: {type: "string"}, component_ref: {type: "string"}, model_ref: {type: "string"}}},
+                       chat_interface: {type: "object", required: ["vm_ref", "component_ref"], additionalProperties: false,
+                                        properties: {vm_ref: {type: "string"}, component_ref: {type: "string"}}}}}}},
+   allOf: [{"if": {required: ["vms"], properties: {vms: {minItems: 2}}}, "then": {properties: {vms: {items: {required: ["name"]}}}}}]}'
 
-readonly CONFIG_RULES='A deployment: which components, with which options, and which models. At most one entry per component (per VM when components carry a vm: on every component or on none, a model goes to the engine of one VM), at most one default per type (and per VM), the order of the entries carries no meaning (the install order comes from requires). A component required by another (see its description) must be listed or already installed. A secret option is never a plain value: give {"file": path} (mode 0600), {"env": NAME} or {"generate": true}. Validate with: easy-cs-ai config validate FILE --target fresh|this --json'
+readonly CONFIG_RULES='A deployment: a list of VMs that hold their components, an engine component holding the models installed on it, and links saying which model is shown in which chat interface. At most one entry per implementation on a VM, at most one default per type and per VM, the order of the entries carries no meaning (the install order comes from requires). A component required by another (see its description) must be listed on the same VM or already installed. A secret option is never a plain value: give {"file": path} (mode 0600), {"env": NAME} or {"generate": true}. A link designates by name and is always complete: the VM, the engine and the model instance, the VM and the chat interface must have their name written. Validate with: easy-cs-ai config validate FILE --target fresh|this --json'
 
 config_schema_json() {
     catalog_json | jq -c --arg rules "$CONFIG_RULES" --argjson maxver "$APPLY_SCHEMA_VERSION" "$CONFIG_SCHEMA_JQ"
@@ -251,97 +274,107 @@ config_schema_json() {
 
 # --- config validate -----------------------------------------------------------------
 
+# The warnings that come from the `warn` entries of the describes, for the effective
+# value of an option (a default included). Arguments: $desc and $installed.
 # shellcheck disable=SC2016
-readonly CONFIG_WARNINGS_JQ='. as $cfg
-  | [($cfg.components // []) | if type == "array" then to_entries[] else empty end | .key as $i | .value as $c
-     | select($c | type == "object") | $desc[($c.type | tostring) + "/" + ($c.name | tostring)] as $d | select($d != null)
-     | (if ($c.options | type) == "object" then $c.options else {} end) as $o
-     | $d.options[]? | select(.warn != null) | . as $opt
-     | (if ($o | has($opt.name)) then $o[$opt.name] else $opt.default end | tostring) as $v
-     | select($v == $opt.warn.when)
-     | {path: "$.components[\($i)]", component: {type: $c.type, name: $c.name}, option: $opt.name, value: $v, message: $opt.warn.message}
-       + (if ($c.vm | type) == "string" then {vm: $c.vm} else {} end)]'
+readonly CONFIG_WARNINGS_JQ='. as $cfg | '"$APPLY_COMMON_JQ"'
+  [comps[] | . as $x | $desc[($x.comp | tostring)] as $d | select($d != null)
+   | (if ($x.c.options | type) == "object" then $x.c.options else {} end) as $o
+   | $d.options[]? | select(.warn != null) | . as $opt
+   | (if ($o | has($opt.name)) then $o[$opt.name] else $opt.default end | tostring) as $v
+   | select($v == $opt.warn.when)
+   | {path: "$.vms[\($x.vi)].components[\($x.ci)]", component_ref: $x.name, component: $x.comp, option: $opt.name, value: $v, message: $opt.warn.message}
+     + vmtag($x.vname)]'
 
+# The plan of one slice. Arguments: $order ({type, name} of each component, name being
+# the implementation, in install order), $models, $installed (null for a fresh target)
+# and $prune. Input: the slice.
 # shellcheck disable=SC2016
-readonly CONFIG_PLAN_JQ='. as $cfg
-  | {components: [$order | to_entries[] | .key as $i | .value as $k
-      | ($cfg.components[] | select(.type == $k.type and .name == $k.name)) as $c
-      | {order: ($i + 1), type: $c.type, name: $c.name, options: ($c.options // {}), default: ($c.default // false)}
-        + (if $installed != null then {installed: ($installed | index($c.name) != null)} else {} end)],
+readonly CONFIG_PLAN_JQ='. as $cfg | ($cfg.vms[0] // {}) as $vm
+  | {name: ($vm.name // null),
+     components: [$order | to_entries[] | .key as $i | .value as $k
+      | ($vm.components[] | select(.component == "\($k.type)/\($k.name)")) as $c
+      | {order: ($i + 1), component: $c.component, name: ($c.name // null), options: ($c.options // {}), default: ($c.default // false)}
+        + (if $installed != null then {installed: ($installed | index($k.name) != null)} else {} end)],
      models: $models, prune: $prune}'
 
-# The errors and warnings that come from the validation itself and the next steps of a file that
-# names VMs, see docs/spec-multi-vm.md: `models_not_checked` (per VM), `engine_unreachable` and
-# `duplicate_server_name` (errors) and `engine_address_unknown` (warning), all computed on the
-# whole file so never by a validation of one slice, and the instructions the administrator follows
-# once the VMs are up, from the file's `links` (docs/spec-config.md#links). Arguments: $desc and
-# $installed, like the validation. Output: {errors, warnings, next_steps}. The text of a step names
-# only actions and options the `describe` of the scripts declares, so the CLI never gives a command
-# that fails.
+# The models of a slice, flat, each with the engine that holds it as resolved.
+# shellcheck disable=SC2016
+readonly CONFIG_MODELS_JQ='(.vms[0] // {}) as $vm
+  | [($vm.components // [])[] | select(.component | startswith("engine/")) | . as $en
+     | (.models // [])[] | {model: .model, name: (.name // null),
+        engine: {vm_ref: ($vm.name // null), component_ref: ($en.name // null), component: $en.component},
+        force: (.force // false)}]'
+
+# The links of a file as written and resolved, for plan.links. Argument: $desc.
+# shellcheck disable=SC2016
+readonly CONFIG_LINKS_JQ='. as $cfg | '"$APPLY_COMMON_JQ$APPLY_LINKS_JQ"'
+  [resolved_links[] | {model: {vm_ref: .mvn, component_ref: .l.model.component_ref, model_ref: .mref, component: .en.comp},
+                       chat_interface: {vm_ref: .cvn, component_ref: .l.chat_interface.component_ref, component: .ch.comp}}]'
+
+# The errors and warnings that come from the validation itself and the next steps of a file,
+# see docs/spec-multi-vm.md: `models_not_checked` (per VM), `duplicate_server_name` (error) and
+# `engine_address_unknown` (warning), all computed on the whole file so never by a validation of
+# one slice, and the instructions the administrator follows once the VMs are up, from the steps
+# links (docs/spec-config.md#links). Arguments: $desc and $installed, like the validation.
+# Output: {errors, warnings, next_steps}. The text of a step names only actions and options the
+# `describe` of the scripts declares, so the CLI never gives a command that fails.
 # shellcheck disable=SC2016
 readonly CONFIG_CROSS_JQ='. as $cfg | '"$APPLY_COMMON_JQ$APPLY_LINKS_JQ"'
-def vm_has($v; $t): any(comps[]; .vm == $v and .type == $t);
-def models_on($v): [places[] | select(.p.err == null and .p.vm == $v) | .m];
-def vmw($v): if $v != null then {vm: $v} else {} end;
-def proxy_of($v): [comps[] | select(.vm == $v and .type == "proxy")][0];
-def chat_of($v): chat_on($v)[0];
-def tls_of($p): ($p.options.tls // ($desc["proxy/\($p.name)"].options[]? | select(.name == "tls") | .default) // "self-signed");
-def not_checked: [(if named then vms else [null] end)[] as $v
-  | select(any(places[]; .p.err == null and .p.vm == $v and .m.force == true) and ((listed("provisioning"; $v) | length) == 0))
-  | {path: "$.models", code: "models_not_checked", message: "models not checked for fit on the VM: llmfit is not part of the stack"} + vmw($v)];
-def linked_engines: [valid_links[] | .engine_vm] | unique;
-def unreachable: [linked_engines[] as $v
-  | select((vm_has($v; "proxy") | not) and (models_on($v) | length) == 0)
-  | {path: "$.components", code: "engine_unreachable", vm: $v,
-     message: "The engine listens on the loopback of its VM and nothing exposes it: the chat interface of the linked VM cannot reach it. Add a proxy to that VM, or remove the link"}];
-def exposed_engines: [linked_engines[] | select(vm_has(.; "proxy"))];
-def address_unknown: [exposed_engines[] as $v | select((models_on($v) | length) > 0)
-  | proxy_of($v) as $p
-  | select(($p.options // {} | has("server-name") | not) and (tls_of($p) == "self-signed"))
-  | {path: "$.components", code: "engine_address_unknown", vm: $v,
-     message: "The address of the engine VM is not known yet: its proxy will take the host name of the machine as its server name, and a self-signed certificate will also cover the addresses the machine has when it is installed. The linked VM must reach the engine VM by one of those names or addresses. If none does, re-run `install proxy \($p.name)` on the engine VM with the options it was installed with and `--server-name <name or address>` (an option left out returns to its default), before linking the models"}];
-def server_names: [(.components // []) | to_entries[]
-  | select((.value | type) == "object" and .value.type == "proxy" and ((.value.options // {}) | has("server-name")))
-  | {i: .key, vm: .value.vm, name: ((.value.options["server-name"]) | tostring | ascii_downcase)}];
-def dup_server_name: [server_names | group_by(.name)[] | select((map(.vm) | unique | length) > 1)
-  | . as $g | ($g[0].vm) as $first | $g[1:][] | select(.vm != $first)
-  | {path: "$.components[\(.i)].options.server-name", code: "duplicate_server_name", vm: .vm,
-     message: "VM \"\(.vm)\" repeats the server-name of VM \"\($first)\": two machines cannot answer to the same name. Give each VM its own name, or leave it out"}];
-def steps_links: [valid_links[] | select(vm_has(.engine_vm; "proxy") and (models_on(.engine_vm) | length) > 0)];
-def engines_of_steps: [steps_links[] | .engine_vm] | unique;
+def has_comp($vi; $t): any(comps[]; .vi == $vi and .type == $t);
+def proxy_of($vi): first(comps[] | select(.vi == $vi and .type == "proxy")) // null;
+def vname_of($vi): first(vmlist[] | select(.vi == $vi)).vname;
+def tls_of($p): ($p.c.options.tls // ($desc[$p.comp].options[]? | select(.name == "tls") | .default) // "self-signed");
+def not_checked: [vmlist[] | . as $x
+  | select(any(comps[]; .vi == $x.vi and .type == "engine" and any((.c.models // [])[]?; type == "object" and .force == true)) and (has_comp($x.vi; "provisioning") | not))
+  | {path: "$.vms[\($x.vi)]", code: "models_not_checked", message: "models not checked for fit on the VM: llmfit is not part of the stack"} + vmtag($x.vname)];
+def exposed: [steps_links[] | .mvi] | unique;
+def address_unknown: [exposed[] as $vi | select(has_comp($vi; "proxy"))
+  | proxy_of($vi) as $p
+  | select(($p.c.options // {} | has("server-name") | not) and (tls_of($p) == "self-signed"))
+  | {path: "$.vms[\($vi)].components[\($p.ci)]", code: "engine_address_unknown",
+     message: "The address of the engine VM is not known yet: its proxy will take the host name of the machine as its server name, and a self-signed certificate will also cover the addresses the machine has when it is installed. The VM that shows the models must reach the engine VM by one of those names or addresses. If none does, re-run `install proxy \($p.impl)` on the engine VM with the options it was installed with and `--server-name <name or address>` (an option left out returns to its default), before linking the models"} + vmtag($p.vname)];
+def server_names: [comps[] | select(.type == "proxy" and ((.c.options // {}) | has("server-name")))
+  | {vi, ci, vname, name: ((.c.options["server-name"]) | tostring | ascii_downcase)}];
+def dup_server_name: [server_names | group_by(.name)[] | select((map(.vi) | unique | length) > 1)
+  | . as $g | ($g[0].vi) as $first | $g[1:][] | select(.vi != $first)
+  | {path: "$.vms[\(.vi)].components[\(.ci)].options.server-name", code: "duplicate_server_name",
+     message: "VM \"\(.vname // "")\" repeats the server-name of VM \"\(vname_of($first) // "")\": two machines cannot answer to the same name. Give each VM its own name, or leave it out"} + vmtag(.vname)];
+def slug: ascii_downcase | gsub("[^a-z0-9.-]"; "-");
 def full: (steps_links | length) > 0 and all(steps_links[];
-    (proxy_of(.engine_vm)) as $p | (chat_of(.web_vm)) as $c
-    | $p != null and $c != null
-      and (["install", "status", "show-key", "list-upstreams"] - ($desc["proxy/\($p.name)"].actions // []) | length) == 0
-      and (["model", "api-key-file", "ca-file"] - (($desc["chat-interface/\($c.name)"].action_options["add-endpoint"] // []) | map(.name)) | length) == 0);
-def steps: steps_links as $sl | if ($sl | length) == 0 then (if (vms | length) < 2 then [] else ["Run each script as root on its VM."] end)
+    (proxy_of(.mvi)) as $p | .ch as $c
+    | $p != null
+      and (["install", "status", "show-key", "list-upstreams"] - ($desc[$p.comp].actions // []) | length) == 0
+      and (["model", "api-key-file", "ca-file"] - (($desc[$c.comp].action_options["add-endpoint"] // []) | map(.name)) | length) == 0);
+def steps: steps_links as $sl | if ($sl | length) == 0 then ["Run each script as root on its VM."]
   else
     full as $full
     | if ($full | not) then ["Run each script as root on its VM."]
       else
-        engines_of_steps as $evms
-        | ["Run each script as root on its VM, the \($evms | join(", ")) VM\(if ($evms | length) > 1 then "s" else "" end) first."]
-          + [$evms[] as $ev | (proxy_of($ev)) as $p
-             | "On the \($ev) VM, read the API key, the URL of each model and the names\nand addresses its certificate covers:\n  sudo easy-cs-ai component proxy \($p.name) show-key\n  easy-cs-ai component proxy \($p.name) list-upstreams\n  easy-cs-ai component proxy \($p.name) status          (certificate_names)"]
-          + [$evms[] as $ev | ([$sl[] | select(.engine_vm == $ev) | .web_vm]) as $wvms
-             | "Let the \($wvms | join(", ")) VM\(if ($wvms | length) > 1 then "s" else "" end) reach the \($ev) VM on the HTTPS port of its proxy\n(443 unless you set --port): firewall, security group."]
-          + [$sl[] as $l | (chat_of($l.web_vm)) as $c
-             | "On the \($l.web_vm) VM, link each model of the \($l.engine_vm) VM:\n"
-               + ([models_on($l.engine_vm)[] | "  sudo easy-cs-ai component chat-interface \($c.name) add-endpoint \($l.engine_vm)-\(.name) <url> \\\n    --model \(.name) --api-key-file <file>"] | join("\n"))
-               + "\n<url> is the one read in step 2, <file> holds the key (mode 0600, or - for\nstdin), and the endpoint name is suggested unique on the VM (a chat\ninterface may link several engine VMs).\nWith the default self-signed certificate, copy the certificate of the\n\($l.engine_vm) VM (/etc/easy-cs-ai/nginx/server.crt) to the \($l.web_vm) VM and add\n--ca-file <file>. The host in <url> must be one the certificate covers\n(certificate_names, step 2): the server name printed by list-upstreams,\nor, when no server name was given, an address of the \($l.engine_vm) VM, which\nyou put in place of the host. If the \($l.web_vm) VM can reach neither, or the\naddress changed since the proxy was installed, re-run on the \($l.engine_vm) VM\n  sudo easy-cs-ai install proxy \((proxy_of($l.engine_vm)).name) <the options it was installed with> \\\n    --server-name <name or address>\n(an option left out returns to its default) which renews a self-signed\ncertificate (copy it again), then read step 2 again."]
+        exposed as $evis
+        | ["Run each script as root on its VM, the engine VMs first."]
+          + [$evis[] as $ev | proxy_of($ev) as $p
+             | "On the engine VM \(vname_of($ev)), read the API key, the URL of each model and the names\nand addresses its certificate covers:\n  sudo easy-cs-ai component proxy \($p.impl) show-key\n  easy-cs-ai component proxy \($p.impl) list-upstreams\n  easy-cs-ai component proxy \($p.impl) status          (certificate_names)"]
+          + [$evis[] as $ev | ([$sl[] | select(.mvi == $ev) | .cvn] | unique) as $wvms
+             | "Let the VM\(if ($wvms | length) > 1 then "s" else "" end) \($wvms | join(", ")) reach the VM \(vname_of($ev)) on the HTTPS port of its proxy\n(443 unless you set --port): firewall, security group."]
+          + [$evis[] as $ev | ([$sl[] | select(.mvi == $ev) | .cvi] | unique)[] as $cv
+             | ([$sl[] | select(.mvi == $ev and .cvi == $cv)]) as $g | $g[0] as $f | proxy_of($ev) as $p
+             | "On the VM \($f.cvn), link each model of the VM \($f.mvn):\n"
+               + ([$g[] | "  sudo easy-cs-ai component chat-interface \(.ch.impl) add-endpoint \(.mvn)-\(.en.name)-\(.model.model | slug) <url> \\\n    --model \(.model.model) --api-key-file <file>"] | join("\n"))
+               + "\n<url> is the one read in step 2, <file> holds the key (mode 0600, or - for\nstdin), and the endpoint name is suggested unique on the VM (a chat\ninterface may link several engine VMs and several engines).\nWith the default self-signed certificate, copy the certificate of the\nVM \($f.mvn) (/etc/easy-cs-ai/nginx/server.crt) to the VM \($f.cvn) and add\n--ca-file <file>. The host in <url> must be one the certificate covers\n(certificate_names, step 2): the server name printed by list-upstreams,\nor, when no server name was given, an address of the VM \($f.mvn), which\nyou put in place of the host. If the VM \($f.cvn) can reach neither, or the\naddress changed since the proxy was installed, re-run on the VM \($f.mvn)\n  sudo easy-cs-ai install proxy \($p.impl) <the options it was installed with> \\\n    --server-name <name or address>\n(an option left out returns to its default) which renews a self-signed\ncertificate (copy it again), then read step 2 again."]
       end
   end;
-{errors: ([link_errs] + unreachable + dup_server_name), warnings: (not_checked + address_unknown), next_steps: steps}'
+{errors: dup_server_name, warnings: (not_checked + address_unknown), next_steps: steps}'
 
 # config_cross <config> <desc>: {errors, warnings, next_steps}, see CONFIG_CROSS_JQ.
 config_cross() {
     jq -c --argjson desc "$2" --argjson installed '{}' "$CONFIG_CROSS_JQ" <<<"$1"
 }
 
-# config_validate_cross <config> <desc>: print the errors that need the whole file (the `links`
-# codes, `engine_unreachable`, `duplicate_server_name`, see docs/spec-multi-vm.md#validation) and
-# exit 2 when any. `script` calls this before writing any script, as `config validate`
-# does through `config_report`'s exit code; `apply` does not, see docs/spec-config.md#links.
+# config_validate_cross <config> <desc>: print the errors that need the whole file
+# (`duplicate_server_name`, see docs/spec-multi-vm.md#validation) and exit 2 when any.
+# `script` calls this before writing any script, as `config validate` does through
+# `config_report`'s exit code; `apply` does not, see docs/spec-config.md#links.
 config_validate_cross() {
     local problems line
     problems="$(config_cross "$1" "$2" | jq -r '.errors[] | "\(.path): \(.message)"')"
@@ -357,13 +390,21 @@ next_steps_text() {
     local steps="$1" n i line total
     total="$(jq 'length' <<<"$steps")"
     ((total > 0)) || return 0
-    printf '\nWhat is left to do once the VMs are up:\n'
+    printf '\n%s\n' "$(style title 'What is left to do once the VMs are up:')"
     for ((i = 0; i < total; i++)); do
         n=$((i + 1))
         jq -r --argjson i "$i" '.[$i]' <<<"$steps" | {
             local first=1
             while IFS= read -r line; do
-                if ((first)); then printf '  %s. %s\n' "$n" "$line"; first=0; else printf '     %s\n' "$line"; fi
+                if ((first)); then
+                    printf '  %s %s\n' "$(style dim "$n.")" "$line"
+                    first=0
+                elif [[ "$line" =~ ^([[:space:]]*)((sudo )?easy-cs-ai[[:space:]].*)$ ]]; then
+                    # a command to copy: its indent stays, the command is the accent
+                    printf '     %s%s\n' "${BASH_REMATCH[1]}" "$(style accent "${BASH_REMATCH[2]}")"
+                else
+                    printf '     %s\n' "$line"
+                fi
             done
         }
     done
@@ -371,29 +412,27 @@ next_steps_text() {
 }
 
 # config_report <config> <target> [<prune> [<vm>]]: print the document of `config validate`
-# (see docs/spec-capabilities.md): errors, warnings and the plan. <config> is
-# valid JSON. The target is this (this machine) or fresh (a new VM, what is
-# installed here is ignored). A file that names VMs is validated in whole, then
-# planned one slice at a time (`plan.vms`); <vm> keeps that slice alone, with its
-# errors and warnings and those of no VM.
+# (see docs/spec-capabilities.md): errors, warnings, the plan and the next steps. <config> is
+# valid JSON. The target is this (this machine) or fresh (a new VM, what is installed here is
+# ignored). A file is validated in whole, then planned one slice at a time (`plan.vms`, one entry
+# for a file of one VM); <vm> keeps that slice alone, with its errors and warnings and those of
+# no VM.
 config_report() {
     local config="$1" target="$2" prune="${3:-false}" vm="${4:-}" desc errors warnings plan=null order models installed=null hostids='[]'
-    local named=0 v slice vmplans='[]' vmlist cross steps='[]'
+    local v slice vmplans='[]' cross steps='[]' names=() links
     if [[ "$target" == fresh ]]; then
         export EASY_CS_AI_ASSUME_EMPTY=1
     else
         hostids="$(host_ids_json)"
     fi
-    apply_named "$config" && named=1
     desc="$(apply_describes "$config")"
     errors="$(apply_problems "$config" "$desc" true "$hostids")"
-    warnings="$(jq -c --argjson desc "$desc" "$CONFIG_WARNINGS_JQ" <<<"$config" 2>/dev/null)" || warnings='[]'
-    # what the validation itself refuses or warns about (links included), and the steps left once
-    # the VMs are up
+    warnings="$(jq -c --argjson desc "$desc" --argjson installed '{}' "$CONFIG_WARNINGS_JQ" <<<"$config" 2>/dev/null)" || warnings='[]'
+    # what the validation itself refuses or warns about, and the steps left once the VMs are up
     cross="$(config_cross "$config" "$desc" 2>/dev/null)" || cross='{"errors":[],"warnings":[],"next_steps":[]}'
     if [[ -n "$vm" ]]; then
         # a validation of one slice gives none of the errors, warnings or steps that need the other VMs
-        cross='{"errors":[],"warnings":[],"next_steps":[]}'
+        cross='{"errors":[],"warnings":[],"next_steps":["Run each script as root on its VM."]}'
         errors="$(jq -c --arg vm "$vm" 'map(select(.vm == null or .vm == $vm))' <<<"$errors")"
         warnings="$(jq -c --arg vm "$vm" 'map(select(.vm == null or .vm == $vm))' <<<"$warnings")"
     fi
@@ -401,34 +440,34 @@ config_report() {
     errors="$(jq -c --argjson c "$cross" '. + $c.errors' <<<"$errors")"
     [[ "$target" != this ]] || installed="$(state_list | jq -R . | jq -sc .)"
     if [[ "$errors" == '[]' ]]; then
-        if ((named)); then
-            if [[ -n "$vm" ]]; then vmlist="$vm"; else vmlist="$(apply_vms "$config")"; fi
-            while IFS= read -r v; do
-                [[ -n "$v" ]] || continue
-                slice="$(apply_slice "$config" "$v")"
-                if order="$(apply_order "$slice" "$desc" 2>/dev/null)"; then
-                    models="$(apply_models "$slice" | jq -R 'select(length > 0) | split("\t") | {name: .[0], vm: "'"$v"'", engine: .[1], chat_interface: (if .[2] == "null" then null else .[2] end), force: (.[3] == "true")}' | jq -sc .)"
-                    plan="$(jq -c --argjson order "$(jq -R 'select(length > 0) | split(" ") | {type: .[0], name: .[1]}' <<<"$order" | jq -sc .)" \
-                        --argjson models "$models" --argjson installed "$installed" --argjson prune "$prune" "$CONFIG_PLAN_JQ" <<<"$slice")"
-                    vmplans="$(jq -c --arg v "$v" --argjson p "$plan" '. + [{vm: $v} + $p]' <<<"$vmplans")"
-                else
-                    errors="$(jq -c --arg v "$v" '. + [{path: "$.components", vm: $v, code: "circular_requirement", message: "the requirements of the listed components are circular"}]' <<<"$errors")"
-                fi
-            done <<<"$vmlist"
-            plan="$(jq -c --argjson links "$(jq -c '.links // []' <<<"$config")" '{vms: ., links: $links}' <<<"$vmplans")"
-            [[ "$errors" == '[]' ]] || plan=null
-            [[ "$errors" != '[]' ]] || steps="$(jq -c '.next_steps' <<<"$cross")"
-        elif order="$(apply_order "$config" "$desc" 2>/dev/null)"; then
-            models="$(apply_models "$config" | jq -R 'select(length > 0) | split("\t") | {name: .[0], engine: .[1], chat_interface: (if .[2] == "null" then null else .[2] end), force: (.[3] == "true")}' | jq -sc .)"
-            plan="$(jq -c --argjson order "$(jq -R 'select(length > 0) | split(" ") | {type: .[0], name: .[1]}' <<<"$order" | jq -sc .)" \
-                --argjson models "$models" --argjson installed "$installed" --argjson prune "$prune" "$CONFIG_PLAN_JQ" <<<"$config")"
+        if [[ -n "$vm" ]]; then names=("$vm"); else mapfile -t names < <(apply_vms "$config"); fi
+        ((${#names[@]})) || names=("")
+        for v in "${names[@]}"; do
+            slice="$(apply_slice "$config" "$v")"
+            if order="$(apply_order "$slice" "$desc" 2>/dev/null)"; then
+                models="$(jq -c "$CONFIG_MODELS_JQ" <<<"$slice")"
+                plan="$(jq -c --argjson order "$(jq -R 'select(length > 0) | split(" ") | {type: .[0], name: .[1]}' <<<"$order" | jq -sc .)" \
+                    --argjson models "$models" --argjson installed "$installed" --argjson prune "$prune" "$CONFIG_PLAN_JQ" <<<"$slice")"
+                vmplans="$(jq -c --argjson p "$plan" '. + [$p]' <<<"$vmplans")"
+            else
+                errors="$(jq -c --arg v "$v" '. + [{path: "$.vms", code: "circular_requirement", message: "the requirements of the listed components are circular"} + (if $v != "" then {vm: $v} else {} end)]' <<<"$errors")"
+            fi
+        done
+        if [[ "$errors" == '[]' ]]; then
+            if [[ -n "$vm" ]]; then links="$(apply_slice "$config" "$vm")"; else links="$config"; fi
+            links="$(jq -c --argjson desc "$desc" --argjson installed '{}' "$CONFIG_LINKS_JQ" <<<"$links")"
+            plan="$(jq -c --argjson links "$links" '{vms: ., links: $links}' <<<"$vmplans")"
+            steps="$(jq -c '.next_steps' <<<"$cross")"
         else
-            errors='[{"path":"$.components","code":"circular_requirement","message":"the requirements of the listed components are circular"}]'
+            plan=null
         fi
     fi
-    jq -nc --argjson sv "$AI_SCHEMA_VERSION" --arg target "$target" --argjson e "$errors" --argjson w "$warnings" --argjson p "$plan" \
-        --argjson named "$named" --argjson ns "$steps" \
-        '{schema_version: $sv, ok: ($e | length == 0), target: $target, errors: $e, warnings: $w, plan: $p} + (if $named == 1 then {next_steps: $ns} else {} end)'
+    # the document names a VM `vm_ref` (null for a lone VM that has no name)
+    errors="$(jq -c 'map((.vm // null) as $v | del(.vm) | . + {vm_ref: $v})' <<<"$errors")"
+    warnings="$(jq -c 'map((.vm // null) as $v | del(.vm) | . + {vm_ref: $v})' <<<"$warnings")"
+    jq -nc --argjson sv "$CONFIG_DOC_VERSION" --arg target "$target" --argjson e "$errors" --argjson w "$warnings" --argjson p "$plan" \
+        --argjson ns "$steps" \
+        '{schema_version: $sv, ok: ($e | length == 0), target: $target, errors: $e, warnings: $w, plan: $p, next_steps: $ns}'
 }
 
 # config_report_text <document>: the human form of a report, on stderr.
@@ -436,17 +475,36 @@ config_report_text() {
     local doc="$1" line
     while IFS= read -r line; do
         log_error "$line"
-    done < <(jq -r '.errors[] | "\(.path): \(.message)\(if .vm then " (VM \(.vm))" else "" end)"' <<<"$doc")
+    done < <(jq -r '.errors[] | "\(.path): \(.message)\(if .vm_ref then " (VM \(.vm_ref))" else "" end)"' <<<"$doc")
     while IFS= read -r line; do
         log_info "$line"
-    done < <(jq -r '.plan // empty | (if .vms then .vms[] else . end) | (if .vm then "[\(.vm)] " else "" end) as $t
-        | (.components[] | "plan: \($t)install \(.type) \(.name) \(.options | to_entries | map("--\(.key) \(.value)") | join(" "))"),
-        (.models[] | "plan: \($t)add \(.name) to \(.engine) (chat interface: \(.chat_interface // "none"))"),
+    done < <(jq -r '.plan // empty | .vms[] | (if .name then "[\(.name)] " else "" end) as $t
+        | (.components[] | "plan: \($t)install \(.component) \(.options | to_entries | map("--\(.key) \(.value)") | join(" "))"),
+        (.models[] | "plan: \($t)add \(.model) to \(.engine.component_ref // .engine.component)"),
         (if .prune then "plan: \($t)prune what the file does not name" else empty end)' <<<"$doc")
     while IFS= read -r line; do
         log_warn "$line"
-    done < <(jq -r '.warnings[] | (if .code then .message else "\(.component.name) --\(.option)=\(.value): \(.message)" end) + (if .vm then " (VM \(.vm))" else "" end)' <<<"$doc")
+    done < <(jq -r '.warnings[] | (if .code then .message else "\(.component) --\(.option)=\(.value): \(.message)" end) + (if .vm_ref then " (VM \(.vm_ref))" else "" end)' <<<"$doc")
     next_steps_text "$(jq -c '.next_steps // []' <<<"$doc")" >&2
+    config_verdict "$doc"
+}
+
+# config_verdict <document>: the last line of the text of a validation, what it found in a few
+# words: a symbol, valid or invalid, and the counts (docs/spec-rendering.md#appearance).
+config_verdict() {
+    local doc="$1" counts
+    counts="$(jq -r '(.warnings | length) as $w
+        | [(if .plan == null then empty else
+              ([.plan.vms[] | (.components | length)] | add // 0) as $c
+              | ([.plan.vms[] | (.models | length)] | add // 0) as $m
+              | ($c | tostring) + (if $c == 1 then " component" else " components" end),
+                ($m | tostring) + (if $m == 1 then " model" else " models" end) end),
+           ($w | tostring) + (if $w == 1 then " warning" else " warnings" end)] | join(", ")' <<<"$doc")"
+    if [[ "$(jq -r '.ok' <<<"$doc")" == true ]]; then
+        printf '%s %s %s\n' "$(sym ok)" "$(style ok valid)" "$(style dim "$counts")" >&2
+    else
+        printf '%s %s %s\n' "$(sym error)" "$(style error invalid)" "$(style dim "$(jq -r '.errors | length | tostring + (if . == 1 then " error" else " errors" end)' <<<"$doc"), $counts")" >&2
+    fi
 }
 
 # config_exit_code <document> [<missing-requirement-code>]: 0 when ok, else 2;
@@ -482,8 +540,8 @@ read_config() {
 
 # not_json_document <target>: the report of a file that is not JSON.
 not_json_document() {
-    jq -nc --argjson sv "$AI_SCHEMA_VERSION" --arg target "$1" \
-        '{schema_version: $sv, ok: false, target: $target, errors: [{path: "$", code: "not_json", message: "the configuration is not valid JSON"}], warnings: [], plan: null}'
+    jq -nc --argjson sv "$CONFIG_DOC_VERSION" --arg target "$1" \
+        '{schema_version: $sv, ok: false, target: $target, errors: [{path: "$", code: "not_json", message: "the configuration is not valid JSON"}], warnings: [], plan: null, next_steps: []}'
 }
 
 cmd_config() {
@@ -533,8 +591,8 @@ cmd_config() {
         rc="$(config_exit_code "$doc")"
         return "$rc"
         ;;
-    "") fail "$EXIT_USAGE" "config needs a subcommand" "easy-cs-ai config edit [<file>], easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
-    *) fail "$EXIT_USAGE" "unknown config subcommand '$sub'" "easy-cs-ai config edit [<file>], easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
+    "") fail "$EXIT_USAGE" "config needs a subcommand" "easy-cs-ai config new, easy-cs-ai config edit <file>, easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
+    *) fail "$EXIT_USAGE" "unknown config subcommand '$sub'" "easy-cs-ai config new, easy-cs-ai config edit <file>, easy-cs-ai config validate <file|-> or easy-cs-ai config schema" ;;
     esac
 }
 

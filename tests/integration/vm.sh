@@ -239,7 +239,7 @@ cmd_destroy() {
 # configuration, run as root in the VM. A configuration that names several VMs gives one script per
 # VM: --vm picks the one of this VM. Returns the exit code of the script.
 cmd_run() {
-    local config="${1:-}" which="" version dist script gw http_pid="" rc=0 end
+    local config="${1:-}" which="" name version dist script gw http_pid="" rc=0 end
     [[ "${2:-}" != --vm ]] || which="${3:-}"
     [[ -r "$config" ]] || die "usage: $0 run <config.json> [--vm <name>]"
     need_libvirt
@@ -254,10 +254,16 @@ cmd_run() {
     EASY_CS_AI_CLI_VERSION="$version" bash "$ROOT/vm_script/script.sh" "$config" --package-format tarball \
         --package-url "http://$gw:$HTTP_PORT/easy-cs-ai-$version.tar.gz" --package-file "$dist/easy-cs-ai-$version.tar.gz" \
         --package-version "$version" --output "$script" >&2
-    if jq -e 'any(.components[]?; has("vm"))' "$config" >/dev/null; then
+    if jq -e '(.vms | length) > 1' "$config" >/dev/null; then
         [[ -n "$which" ]] || die "$config names several VMs: say which one this VM is with --vm <name>"
         script="${script%.sh}-$which.sh"
         [[ -f "$script" ]] || die "$config has no VM named $which"
+    elif jq -e '.vms[0] | has("name")' "$config" >/dev/null; then
+        # a file of one VM that names it: one script, named after the VM, and no --vm needed
+        name="$(jq -r '.vms[0].name' "$config")"
+        [[ -z "$which" || "$which" == "$name" ]] || die "--vm $which: $config names the VM $name only"
+        script="${script%.sh}-$name.sh"
+        [[ -f "$script" ]] || die "$config gave no script $script"
     else
         [[ -z "$which" ]] || die "--vm $which: $config names no VM"
     fi

@@ -2,7 +2,7 @@
 # easy-cs-ai: dispatcher over the layer 1 install scripts, see docs/spec-cli.md.
 # Implemented: help, version, status, install, uninstall, add, remove (in
 # lib/cli-models.sh), apply (lib/cli-apply.sh), component (contract actions of a
-# component, and the lists), exec (native tool commands), config edit and script (hand over to
+# component, and the lists), exec (native tool commands), config new, config edit and script (hand over to
 # vm_script/).
 set -euo pipefail
 
@@ -111,8 +111,9 @@ print_tree() {
     tree_row 1 "$V" "$T" '<model> [--engine <n>]' 'one model'
     tree_row 1 "$V" "$L" '--all [--engine <n>]' 'every model'
     tree_row 0 '' "$T" 'apply <file|-> [--vm <n>] [--prune]' 'make the machine match a file'
-    tree_row 0 '' "$T" 'config' 'the configuration: edit, check, format'
-    tree_row 1 "$V" "$T" 'edit [<file>]' 'create or edit a configuration (session)'
+    tree_row 0 '' "$T" 'config' 'the configuration: create, edit, check'
+    tree_row 1 "$V" "$T" 'new' 'create a configuration (session)'
+    tree_row 1 "$V" "$T" 'edit <file>' 'change a configuration (session)'
     tree_row 1 "$V" "$T" 'validate <file|-> [--target] [--vm <n>]' 'check a file, show its plan'
     tree_row 1 "$V" "$L" 'schema' 'the format, as a JSON Schema'
     tree_row 0 '' "$T" 'script <file> [--output <path>] [package options]' 'VM post-install scripts from a file'
@@ -617,7 +618,7 @@ cmd_component() {
     run_script "$type" "$name" "$@"
 }
 
-# --- config edit and script ------------------------------------------------------
+# --- config new, config edit and script ------------------------------------------------------
 
 # hand_over <program> <args…>: hand over to a program of the VM script generator, which reads the
 # same scripts tree. Streams and exit code are the program's.
@@ -712,17 +713,16 @@ main() {
     catalog) cmd_catalog "$@" ;;
     host) cmd_host "$@" ;;
     config)
-        if [[ "${1:-}" == edit ]]; then
-            shift
-            hand_over config.sh "$@"
-        fi
+        case "${1:-}" in
+        new | edit) hand_over config.sh "$@" ;;
+        esac
         cmd_config "$@"
         ;;
     guide) cmd_guide "$@" ;;
     component) cmd_component "$@" ;;
     *)
         if [[ "$command" == generate ]]; then
-            fail "$EXIT_USAGE" "unknown command 'generate': it is split in two commands" "to create or edit a configuration: easy-cs-ai config edit; to make the scripts from it: easy-cs-ai script <file>"
+            fail "$EXIT_USAGE" "unknown command 'generate': it is split in two commands" "to create a configuration: easy-cs-ai config new, to change one: easy-cs-ai config edit <file>; to make the scripts from it: easy-cs-ai script <file>"
         fi
         if is_type "$command"; then
             fail "$EXIT_USAGE" "unknown command '$command'" "the commands of a component go through component: easy-cs-ai component $command …"

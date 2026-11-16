@@ -47,6 +47,83 @@ _color_code() {
     esac
 }
 
+# ui_unicode: succeeds when symbols and rules may be drawn with Unicode: a UTF-8 locale (LC_ALL,
+# else LC_CTYPE, else LANG), whether or not the output is a terminal; EASY_CS_AI_CHARSET=unicode|
+# ascii overrides it (the same rule as the tree of the help, docs/spec-rendering.md#appearance).
+ui_unicode() {
+    case "${EASY_CS_AI_CHARSET:-auto}" in
+    unicode) return 0 ;;
+    ascii) return 1 ;;
+    esac
+    local locale="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+    locale="${locale,,}"
+    [[ "$locale" == *utf-8* || "$locale" == *utf8* ]]
+}
+
+# style <role> <text…>: the text in the colour of its role (title, accent, ok, warn, error, dim)
+# when stderr may be coloured, as it is otherwise. Nothing else prints an escape sequence for
+# what a person reads.
+style() {
+    local role="$1" code
+    shift
+    case "$role" in
+    title) code='1;35' ;;
+    accent) code='36' ;;
+    ok) code='32' ;;
+    warn) code='33' ;;
+    error) code='1;31' ;;
+    dim) code='2' ;;
+    *) code='' ;;
+    esac
+    if [[ -n "$code" ]] && use_color 2; then
+        printf '\033[%sm%s\033[0m' "$code" "$*"
+    else
+        printf '%s' "$*"
+    fi
+}
+
+# sym <ok|warn|error|todo>: a symbol in its colour, and a word in plain ASCII, so that no meaning
+# is carried by colour or by a glyph alone.
+sym() {
+    case "$1" in
+    ok) if ui_unicode; then style ok '✓'; else style ok 'ok'; fi ;;
+    warn) if ui_unicode; then style warn '!'; else style warn '[WARN]'; fi ;;
+    error) if ui_unicode; then style error '✗'; else style error '[ERROR]'; fi ;;
+    todo) if ui_unicode; then style dim '·'; else style dim '-'; fi ;;
+    esac
+}
+
+# rule <title> [<width>]: a titled rule, ━━ title ──── (== title ---- in ASCII), padded to the
+# width ($COLUMNS, 80 when unknown, at most 100).
+rule() {
+    local title="$1" width="${2:-${COLUMNS:-80}}" pad fill lead
+    ((width <= 100)) || width=100
+    if ui_unicode; then lead='━━'; fill='─'; else lead='=='; fill='-'; fi
+    pad=$((width - ${#title} - 4))
+    ((pad >= 3)) || pad=3
+    local line="" i
+    for ((i = 0; i < pad; i++)); do line+="$fill"; done
+    printf '%s %s %s' "$(style title "$lead")" "$(style title "$title")" "$(style dim "$line")"
+}
+
+# wrap <indent> <text…>: the text wrapped at the width ($COLUMNS, 80 when unknown, at most 100),
+# every line indented; words are never cut, so a command stays whole when it fits.
+wrap() {
+    local indent="$1" width="${COLUMNS:-80}" pad
+    shift
+    ((width <= 100)) || width=100
+    printf -v pad '%*s' "$indent" ''
+    printf '%s\n' "$*" | fold -s -w $((width - indent)) | sed "s/^/$pad/; s/ *$//"
+}
+
+# progress <n> <total> <text…>: the header line of a step, [3/7] text. The steps print their own
+# lines, so it is printed once per step, never rewritten in place.
+progress() {
+    local n="$1" total="$2"
+    shift 2
+    printf '%s %s\n' "$(style dim "[$n/$total]")" "$*" >&2
+}
+
 _log() {
     local level="$1"
     shift

@@ -2,7 +2,7 @@
 
 One scenario is two files, played by [`../parity.bats`](../parity.bats):
 
-- `<name>.answers`: what a person types in the session (`easy-cs-ai config edit`; the name of the file written is added after them), one answer per line.
+- `<name>.answers`: what a person types in the session (`easy-cs-ai config new`; the name of the file written is added after them), one answer per line.
   A line that starts with `#` is a comment and is dropped. A trailing ` # comment` is cut. An empty
   line is an answer (the default), so write it as `  # default` to keep a note on it.
 - `<name>.json`: the same decisions written by hand, the way a program would write them from

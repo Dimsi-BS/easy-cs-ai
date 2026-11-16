@@ -12,8 +12,8 @@ Two questions were asked: is a generator worth having, since one command can alr
 
 ## Decision
 
-- **One interactive generator, for layer 3, in two commands**: `script` produces a small parameterless VM post-install script (one per VM when the configuration names several VMs, see [spec: several VMs](spec-multi-vm.md)) from a configuration file, and `config edit` is the session that creates that file, or edits it when it exists: the configuration, not the script, is what a session produces. It downloads the package/CLI from a pinned source, embeds a configuration and runs `easy-cs-ai apply` on it.
-- **`config edit` writes only the configuration file** ([spec: config](spec-config.md)), and that file is what `script <file>` takes, which makes a generation reproducible and testable without prompts. **Why the split** (a decision of 2026-11-06, replacing the single `generate` with its `--config-only`, `--edit` and `--config`): the two jobs have different users and different rules. `config edit` prompts and writes a file; `script` must never prompt, so that a program, a test or a pipeline can call it. In one command the mode decided what the command did (a session, a copy, an edit that regenerated the scripts, a generation with no session), and saving an edit rewrote scripts as a side effect, which needed rules of its own (all-or-nothing writing of the file and the scripts, stale scripts). Apart, saving a configuration changes one file, and generating scripts is an explicit step.
+- **One interactive generator, for layer 3, in two commands**: `script` produces a small parameterless VM post-install script (one per VM when the configuration names several VMs, see [spec: several VMs](spec-multi-vm.md)) from a configuration file, and `config new` and `config edit` are the sessions that create and change that file, or edits it when it exists: the configuration, not the script, is what a session produces. It downloads the package/CLI from a pinned source, embeds a configuration and runs `easy-cs-ai apply` on it.
+- **`config new` and `config edit` write only the configuration file** ([spec: config](spec-config.md)), and that file is what `script <file>` takes, which makes a generation reproducible and testable without prompts. **Why the split** (a decision of 2026-11-06, replacing the single `generate` with its `--config-only`, `--edit` and `--config`): the two jobs have different users and different rules. `config edit` prompts and writes a file; `script` must never prompt, so that a program, a test or a pipeline can call it. In one command the mode decided what the command did (a session, a copy, an edit that regenerated the scripts, a generation with no session), and saving an edit rewrote scripts as a side effect, which needed rules of its own (all-or-nothing writing of the file and the scripts, stale scripts). Apart, saving a configuration changes one file, and generating scripts is an explicit step.
 - **No generator for layer 1.** It was planned for the case where layer 2 turned out too hard to build. With `apply`, the CLI chains the components, orders them from `requires` and fixes their parameters from the configuration, so a layer 1 generated script would only duplicate it. Layer 1 scripts stay usable on their own, with their own options.
 - **The package is downloaded, not embedded.** The script carries the URL, the version and the sha256 of the package, and verifies it before installing. The source is configurable, so a restricted network points at an internal mirror.
 
@@ -30,7 +30,7 @@ The behaviour is specified in [spec: VM script generator](spec-vm-generator.md).
 
 ## Consequences
 
-- `config edit` is the **only interactive part** of the project; `script` is not. The scripts and the CLI keep their rule of never prompting, which is what makes the generated script usable unattended.
+- `config new` and `config edit` are the **only interactive part** of the project; `script` is not. The scripts and the CLI keep their rule of never prompting, which is what makes the generated script usable unattended.
 - The generator never hardcodes a component or an option: it reads the shipped scripts and their `describe`. A new component needs no generator change.
 - A generated script is a snapshot: it pins a package version and embeds a configuration, regenerate it to upgrade.
 - The VM needs network access to the package source at run time. Where the package is hosted is open (see below).
@@ -44,7 +44,7 @@ The behaviour is specified in [spec: VM script generator](spec-vm-generator.md).
 | No generator, document the command sequence | Every administrator rewrites the chain by hand and the invalid combinations are found at install time |
 | A generator for layer 1 scripts | Duplicates what `apply` does, and constrains the scripts to be inlinable |
 | Embed the whole package in the generated script | Too large for user-data, only useful for isolated machines |
-| Non-interactive generator only (no `config edit` session) | Hides the choices the administrator has to make, the interactive guidance is the point |
+| Non-interactive generator only (no `config new` session) | Hides the choices the administrator has to make, the interactive guidance is the point |
 
 ## Open questions
 

@@ -34,7 +34,7 @@ capability → document ─┬─ person:  text, tables, questions   (default)
 - **A result is printed even when it is negative.** For the commands that validate or plan, the document is printed with exit 2 when the input is invalid (the list of problems *is* the result). For anything else that fails (usage error, missing root, network…), stdout stays empty and stderr says why; the changing commands print a [result document](spec-capabilities.md#result-of-the-changing-commands).
 - **Secrets are never in a document.** A secret option appears as its source (`{"env": "NAME"}`…), `"generate"` or `"masked"`, never as a value ([contract](spec-script-contract.md#secrets)).
 - **Read-only commands need no root and no installed state**: they run on the administrator's machine as well as on the target.
-- **Where `--json` goes.** Before the command (`easy-cs-ai --json status`) for every command; after it for `status`, `add`, `remove`, `apply`, `catalog`, `host`, `config` and `guide` (the CLI takes it, as it takes `--dry-run` and `--verbose` there), for `install` and `uninstall` (the CLI takes `--json`; `--dry-run` stays with the components) and for `script` (which takes it itself; `config edit` is the session, which is interactive, so `--json` there is exit 2). A component command (`component engine ollama list-models`) is forwarded as it is, and prints the JSON of the script, but the listings `component` and `component <type>` are a human rendering only and refuse `--json` (exit 2, pointing to `catalog` and `status`). `exec` refuses `--json`: its output is the tool's.
+- **Where `--json` goes.** Before the command (`easy-cs-ai --json status`) for every command; after it for `status`, `add`, `remove`, `apply`, `catalog`, `host`, `config` and `guide` (the CLI takes it, as it takes `--dry-run` and `--verbose` there), for `install` and `uninstall` (the CLI takes `--json`; `--dry-run` stays with the components) and for `script` (which takes it itself; `config new` and `config edit` are the sessions, which are interactive, so `--json` there is exit 2). A component command (`component engine ollama list-models`) is forwarded as it is, and prints the JSON of the script, but the listings `component` and `component <type>` are a human rendering only and refuse `--json` (exit 2, pointing to `catalog` and `status`). `exec` refuses `--json`: its output is the tool's.
 - **`--dry-run`** prints the plan as the document, see [spec: capabilities](spec-capabilities.md#result-of-the-changing-commands).
 
 ## For a person: the interactive session
@@ -50,6 +50,49 @@ capability → document ─┬─ person:  text, tables, questions   (default)
 The link between the two renderings is the configuration. **Each question fills one field; each field has a question.** The session builds the configuration answer by answer, a program writes it in one go, and both go through the same validation ([`config validate`](spec-capabilities.md#config-validate)). So that a person can always replay a session, `config edit` writes the file a session would have produced, `config edit <file>` opens it again, and `script <file>` turns a file into scripts with no prompt. The question of another VM adds an entry to `vms` and the question of where each model is shown fills `links`; the **role** of a VM is the one answer with no field, an early opinion that only restricts the types a pass asks.
 
 An answer that has no place in the configuration (the specs of the target VM at the models step) is an **early opinion**: it feeds a capability (`suggest`, `plan`) and is not stored.
+
+### Appearance
+
+**Status: implemented.** Done: the style layer (`style`, `sym`, `rule`, `wrap`, `ui_unicode` in `install_scripts/lib/common.sh`), the summary of the editor, its commands line and the dimmed default of every question (tests `common_logging.bats` and `config_edit.bats`). The `hint:` line of the errors, the header lines of `apply`, the verdict that ends the text of `config validate` (`✓ valid 3 components, 1 model, 0 warnings`) and the table of `status`, which was already aligned and coloured, are done too. The fit levels of the model suggestions are coloured too, and so is the text of `script`: a symbol and the title of what was written, one line per VM in aligned columns (`VM name`, components, path of the script), the title of the next steps, their numbers dimmed and each command to copy in the accent colour. Everything of the appearance is done.What a person reads on a terminal is made clearer with colour, a few symbols and aligned columns, **without a full-screen interface** (no TUI, no cursor addressing: the text scrolls and can be copied, piped and logged). The appearance is a layer over the text above: **the information, the codes, the commands and the order of the lines do not change**, and `--json` is untouched.
+
+- **One style layer.** A single function of `lib/common.sh` gives every program the same few roles: `title`, `accent` (the names a person types or reads: types, commands, keys), `ok`, `warn`, `error` and `dim` (paths, codes, defaults, explanations). Nothing else prints an escape sequence, so a role is changed in one place.
+- **Only for a person at a terminal.** Colour and symbols are written to **stderr** only when it is a terminal. They are off with `NO_COLOR` set (any value), `TERM=dumb`, a redirected stream, `--json`, and the two overrides that already exist, `EASY_CS_AI_COLOR=always|never` for the colour and `EASY_CS_AI_CHARSET=unicode|ascii` for the symbols (which otherwise follow a UTF-8 locale, like the tree of the help). stdout, which a program may read, never carries a style.
+- **A plain fallback, the same text.** Without style the output is the text of today, with ASCII symbols (`tree_unicode` already does this for the tree of commands): `✓` is `ok`, `!` is `[WARN]`, `✗` is `[ERROR]`, a rule of `━` is `==`, a rule of `─` is `--`. The bats tests run in this mode, so they keep comparing plain text; one test per role checks the style in a pseudo-terminal, and that `NO_COLOR` and `--json` remove it.
+- **No meaning in colour alone.** Every colour comes with a word or a symbol (`✓`, `!`, `✗`, `[WARN]`), so a colour-blind person, a log and a screen reader lose nothing.
+- **Log levels.** `[INFO]`, `[WARN]` and `[ERROR]` keep their text and become the coloured badges of their role. The hint of an error goes on its own line, `hint:` in `dim`.
+- **Width.** Columns are aligned to the widest cell and the text wraps at `$COLUMNS` (80 when it is unknown or not a terminal); a value that does not fit is cut at the end of the cell, never in the middle of a command a person has to copy.
+- **The questions.** The default is shown in `dim` between square brackets after the question, `Add a proxy? (y/n) [y]`. The only numbered list, the models `llmfit` suggests, keeps the aligned text of its action (`  1) llama3.2:3b   Good, needs 2.4 GB`, which the session reads the number and the name from); the session colours the fit level (`ok` for Perfect and Good, `warn` for Marginal) and dims what the model needs, and prints the text unchanged when colour is off. A secret is still not echoed.
+- **Progress.** `apply`, the one command that runs several steps, prints a header line before each one, `[3/7] install ollama`, and a closing line, `✓ applied 7 steps` or `✗ stopped at step 3 of 7`. The steps print their own lines between the headers, so a line is never rewritten in place: a terminal and a log show the same thing.
+
+**The summary of the editor** is the screen the appearance is designed around: a title rule per VM, the components in aligned columns (`type`, implementation, options), the models and where they are shown below, the warnings with what to do about them, errors numbered with their path and code, and then the commands, each letter in brackets:
+
+```text
+━━ VM 2 of 3 · web ───────────────────────────────────────
+
+  1  proxy           nginx       --server-name=localhost
+  2  chat-interface  librechat   defaults
+
+  models  none   ·   platforms  debian, ubuntu
+
+  ! librechat --allow-registration=true
+    registration is open: the first account created becomes the administrator
+    close it with: easy-cs-ai install chat-interface librechat --allow-registration false
+
+  [a] add   [e] edit   [m] models   [l] links   [n] rename   [r] remove   [f] fix   [y] write   [q] quit   [?] help
+```
+
+Each command is named by its word after the letter, so the line reads without `?`. The commands that take a VM (`e`, `m`, `n`, `r`) are still typed with it (`e web`); `?` prints the longer help.
+
+The plain fallback of the same screen, for a log or `NO_COLOR`:
+
+```text
+== VM 2 of 3: web ----------------------------------------
+  1  proxy           nginx       --server-name=localhost
+  2  chat-interface  librechat   defaults
+  models: none   platforms: debian, ubuntu
+  [WARN] librechat --allow-registration=true: registration is open ...
+  [a] add   [e] edit   [m] models   [l] links   [n] rename   [r] remove   [f] fix   [y] write   [q] quit   [?] help
+```
 
 ## `guide`
 

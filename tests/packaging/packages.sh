@@ -153,7 +153,7 @@ if "$PRE/package/build.sh" --output "$PRE/dist" >/dev/null 2>&1 && "$PRE/package
     if command -v dpkg-deb >/dev/null 2>&1; then
         expect "the deb metadata carry the tilde form" "${PREV/-/"~"}" "$(dpkg-deb -f "$PRE/dist/easy-cs-ai_${PREV}_all.deb" Version)"
     fi
-    echo '{"schema_version":1,"components":[{"type":"engine","name":"ollama"}]}' >"$PRE/config.json"
+    echo '{"schema_version":2,"vms":[{"components":[{"component":"engine/ollama"}]}]}' >"$PRE/config.json"
     for f in deb:easy-cs-ai_${PREV}_all.deb rpm:easy-cs-ai-$PREV-1.noarch.rpm; do
         EASY_CS_AI_CLI_VERSION="$PREV" bash "$PRE/vm_script/script.sh" "$PRE/config.json" --package-format "${f%%:*}" \
             --package-version "$PREV" --package-file "$PRE/dist/${f#*:}" --output "$PRE/vm-${f%%:*}.sh" >/dev/null 2>&1
@@ -178,7 +178,7 @@ $install
 easy-cs-ai --version
 ecsai --version
 easy-cs-ai status
-echo '{"schema_version":1,"components":[{"type":"engine","name":"ollama","default":true}]}' >/tmp/config.json
+echo '{"schema_version":2,"vms":[{"components":[{"component":"engine/ollama","default":true}]}]}' >/tmp/config.json
 easy-cs-ai script /tmp/config.json --package-file "/pkgs/$pkg" --package-format $format --output /tmp/vm.sh
 bash -n /tmp/vm.sh
 grep -q "\$(sha256sum "/pkgs/$pkg" | cut -d' ' -f1)" /tmp/vm.sh

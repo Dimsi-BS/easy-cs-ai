@@ -1,9 +1,13 @@
 {
-  "schema_version": 1,
-  "components": [
-    { "type": "provisioning", "name": "llmfit" },
-    { "type": "proxy", "name": "prox" },
-    { "type": "engine", "name": "ollama" }
-  ],
-  "models": [{ "name": "m1" }, { "name": "m2" }]
+  "schema_version": 2,
+  "vms": [
+    {
+      "name": "vm-1",
+      "components": [
+        { "component": "provisioning/llmfit" },
+        { "component": "proxy/prox" },
+        { "component": "engine/ollama", "models": [{ "model": "m1" }, { "model": "m2" }] }
+      ]
+    }
+  ]
 }

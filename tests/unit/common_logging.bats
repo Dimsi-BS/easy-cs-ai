@@ -69,3 +69,37 @@ setup() {
     run --separate-stderr bash -c "export EASY_CS_AI_COLOR=never; source '$LIB'; log_warn a"
     [ "$stderr" = "[WARN] a" ]
 }
+
+# --- the appearance of the text for a person (docs/spec-rendering.md#appearance) ----------
+
+@test "style adds the colour of its role only when colour is on, and never anywhere else" {
+    run bash -c "export EASY_CS_AI_COLOR=never; source '$LIB'; style ok done; style bogus x"
+    [ "$output" = "donex" ]
+    run bash -c "export EASY_CS_AI_COLOR=always; source '$LIB'; style ok done"
+    [ "$output" = $'\033[32mdone\033[0m' ]
+    run bash -c "export NO_COLOR=1 EASY_CS_AI_COLOR=auto; source '$LIB'; style error bad"
+    [ "$output" = "bad" ]
+}
+
+@test "sym draws a glyph in Unicode and a word in ASCII, so no meaning rests on a glyph or a colour" {
+    run bash -c "export EASY_CS_AI_COLOR=never EASY_CS_AI_CHARSET=unicode; source '$LIB'; sym ok; sym warn; sym error"
+    [ "$output" = "✓!✗" ]
+    run bash -c "export EASY_CS_AI_COLOR=never EASY_CS_AI_CHARSET=ascii; source '$LIB'; sym ok; sym warn; sym error"
+    [ "$output" = "ok[WARN][ERROR]" ]
+}
+
+@test "rule is a titled rule of the width of the terminal, at most 100, in ASCII or Unicode" {
+    run bash -c "export EASY_CS_AI_COLOR=never EASY_CS_AI_CHARSET=ascii COLUMNS=30; source '$LIB'; rule 'VM 1 of 2 · web'"
+    [ "$output" = "== VM 1 of 2 · web -----------" ]
+    run bash -c "export EASY_CS_AI_COLOR=never EASY_CS_AI_CHARSET=unicode COLUMNS=20; source '$LIB'; rule web"
+    [ "$output" = "━━ web ─────────────" ]
+    run bash -c "export EASY_CS_AI_COLOR=never EASY_CS_AI_CHARSET=ascii COLUMNS=300; source '$LIB'; rule x"
+    [ "${#output}" -eq 100 ]
+}
+
+@test "wrap breaks at the width, indents every line and never cuts a word" {
+    run bash -c "export COLUMNS=24; source '$LIB'; wrap 2 'one two three four five six seven'"
+    [ "${lines[0]}" = "  one two three four" ]
+    [ "${lines[1]}" = "  five six seven" ]
+    [ "${#lines[@]}" -eq 2 ]
+}

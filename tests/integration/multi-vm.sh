@@ -194,20 +194,22 @@ done
 CONFIG="$WORK/multi-vm.json"
 cat >"$CONFIG" <<EOF
 {
-  "schema_version": 1,
-  "components": [
-    { "type": "provisioning", "name": "llmfit", "vm": "engine" },
-    { "type": "proxy", "name": "nginx", "vm": "engine" },
-    { "type": "engine", "name": "ollama", "vm": "engine" },
-    { "type": "proxy", "name": "nginx", "vm": "web", "options": { "server-name": "localhost" } },
-    { "type": "chat-interface", "name": "librechat", "vm": "web" },
-    { "type": "proxy", "name": "nginx", "vm": "web2", "options": { "server-name": "localhost2" } },
-    { "type": "chat-interface", "name": "librechat", "vm": "web2" }
+  "schema_version": 2,
+  "vms": [
+    { "name": "engine", "components": [
+        { "component": "provisioning/llmfit" },
+        { "component": "proxy/nginx" },
+        { "component": "engine/ollama", "name": "ollama", "models": [ { "model": "$MODEL", "name": "$MODEL" } ] } ] },
+    { "name": "web", "components": [
+        { "component": "proxy/nginx", "options": { "server-name": "localhost" } },
+        { "component": "chat-interface/librechat", "name": "librechat" } ] },
+    { "name": "web2", "components": [
+        { "component": "proxy/nginx", "options": { "server-name": "localhost2" } },
+        { "component": "chat-interface/librechat", "name": "librechat" } ] }
   ],
-  "models": [ { "name": "$MODEL", "vm": "engine", "engine": "ollama" } ],
   "links": [
-    { "web_vm": "web", "engine_vm": "engine" },
-    { "web_vm": "web2", "engine_vm": "engine" }
+    { "model": { "vm_ref": "engine", "component_ref": "ollama", "model_ref": "$MODEL" },
+      "chat_interface": { "vm_ref": "web", "component_ref": "librechat" } }
   ]
 }
 EOF
@@ -219,8 +221,8 @@ W2 ssh 'sudo easy-cs-ai uninstall --all --purge >/dev/null 2>&1; true' || true
 step "the configuration is valid, and the validation gives the steps left to do"
 validation="$(EASY_CS_AI_HOME="$HERE/../../install_scripts" bash "$HERE/../../package/bin/easy-cs-ai" config validate "$CONFIG" --target fresh --json 2>/dev/null)"
 expect "the configuration is valid" true "$(jq -r '.ok' <<<"$validation")"
-expect "five steps are given (one engine VM, two links)" 5 "$(jq '.next_steps | length' <<<"$validation")"
-expect "the address of the engine VM is announced as unknown (self-signed, no server name)" '["engine"]' "$(jq -c '[.warnings[] | select(.code == "engine_address_unknown") | .vm]' <<<"$validation")"
+expect "four steps are given (one engine VM, one link: the second chat VM is linked by hand)" 4 "$(jq '.next_steps | length' <<<"$validation")"
+expect "the address of the engine VM is announced as unknown (self-signed, no server name)" '["engine"]' "$(jq -c '[.warnings[] | select(.code == "engine_address_unknown") | .vm_ref]' <<<"$validation")"
 
 # --- 1. each script on its VM, the engine VM first --------------------------------------------------
 

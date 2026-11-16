@@ -12,7 +12,7 @@ Usage: script <file> [options]
 
 Writes the VM post-install script (default ./easy-cs-ai-vm.sh) from a
 configuration file, with no prompt at all. The file must be complete: create or
-fix it with `easy-cs-ai config edit`. When the file names several VMs, it writes
+fix it with `easy-cs-ai config edit <file>`. When the file names several VMs, it writes
 one script per VM, the VM inserted before the extension of the name
 (easy-cs-ai-vm-engine.sh, easy-cs-ai-vm-web.sh), then prints what is left to do
 once the VMs are up.
@@ -64,7 +64,7 @@ parse_args() {
         esac
     done
     [[ -n "$CONFIG_FILE" ]] ||
-        die "$EXIT_USAGE" "script needs a configuration file (easy-cs-ai script <file>; to create one: easy-cs-ai config edit)"
+        die "$EXIT_USAGE" "script needs a configuration file (easy-cs-ai script <file>; to create one: easy-cs-ai config new)"
     case "$PACKAGE_FORMAT" in deb | rpm | tarball) ;; *) die "$EXIT_USAGE" "unknown package format '$PACKAGE_FORMAT' (deb, rpm or tarball)" ;; esac
 }
 

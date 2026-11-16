@@ -2,7 +2,7 @@
 
 [← Back to docs](README.md)
 
-**Status:** accepted. **Implemented, for the configuration format of version 1** (`vm_script/`, `install_scripts/lib/cli-ai.sh`): the two ways to walk the journey (see [implementation status](#implementation-status); the parity test is in `tests/unit/parity.bats`), any number of VMs with optional roles, the question of another VM and the passes per VM (steps 1, 2 and 4, and what concerns several VMs in 5 and 6), the editor, the [proposal of a proxy](#4-models) for models on an engine that is not `protected`, and the recommendation of a VM that ends with no model ([spec: model fit](spec-model-fit.md#a-stack-with-no-model)); tests `generator.bats`, `generator_vm.bats`, `config_edit.bats`, `parity.bats`. **Decided, not implemented**: the [configuration format of version 2](spec-config.md#format) (a list of VMs that hold their components, models held by their engine, and a `links` array that says which model is shown in which chat interface, no root `models`), with the role and the name asked first for every VM and the question of where each model is shown at the end of the session, see [spec: several VMs](spec-multi-vm.md); where this spec still speaks of a split in two, it describes what is implemented today.
+**Status:** accepted. **Implemented, for the configuration format of version 2** (`vm_script/`, `install_scripts/lib/cli-ai.sh`): the two ways to walk the journey (see [implementation status](#implementation-status); the parity test is in `tests/unit/parity.bats`), any number of VMs with optional roles, the role and the name asked first for every VM, the question of another VM and the passes per VM (steps 1, 2 and 4, and what concerns several VMs in 5 and 6), the question of where each model is shown, the editor, the [proposal of a proxy](#4-models) for models on an engine that is not `protected`, and the recommendation of a VM that ends with no model ([spec: model fit](spec-model-fit.md#a-stack-with-no-model)); tests `generator.bats`, `generator_vm.bats`, `config_edit.bats`, `parity.bats`.
 
 ## Purpose
 
@@ -13,7 +13,7 @@ There are two ways to walk it, and neither is "the AI interface":
 | | Interactive session | Programmatic |
 | --- | --- | --- |
 | Who | A person at a terminal | A program, or an AI agent working for a person |
-| How | Questions and answers (`config edit`) | Arguments, a configuration file, `--json` (`catalog`, `host`, `config validate`, `script`, `apply`…) |
+| How | Questions and answers (`config new`, `config edit`) | Arguments, a configuration file, `--json` (`catalog`, `host`, `config validate`, `script`, `apply`…) |
 | Text of the instructions | The questions themselves | `easy-cs-ai guide`, which prints [`install_scripts/guide.txt`](../install_scripts/guide.txt) |
 | Produces | A [configuration](spec-config.md), then the script | The same configuration, then the same script |
 
@@ -25,7 +25,8 @@ Both call the same [capabilities](spec-capabilities.md), validate with the same 
 2. **A question is a field.** Every question of the session fills one field of the configuration (or one argument), and every field the journey exposes has a question. A step with no field to carry its answer cannot exist; a new question means a new field, which then shows up in `config schema` and in `--json` without further work.
 3. **The user decides.** Nothing is chosen silently: a component is in the result only if the user picked it or accepted a dependency that was proposed. Defaults and ranks are suggestions. A program acting for a person asks that person the same questions the session asks, it does not answer them.
 4. **A step holds no logic.** It asks, calls a capability, and shows the document the capability returns. A filter, a margin, a validation rule or a warning is the capability's, so that improving it improves both ways at once.
-5. **A missing answer is reported, never filled in.** Without a session, an incomplete configuration is an error (exit 2, with the list of what is missing), not a guess. This is the equivalent, for a program, of the session asking again.
+5. **A question that follows a wait has no default.** A person who leans on Enter while a step runs (llmfit being checked, a list of models being asked for, a model being checked) would take the default of the next question without reading it. The session says before such a step that it takes a few seconds, and the **next question has no default**: none is shown, an empty answer is refused with a line saying so and the question is asked again, and an answer that is a wrong one is asked again without a default too. A question that would have accepted an empty answer takes `none` instead (the models: `none for none`). The other questions keep their defaults.
+6. **A missing answer is reported, never filled in.** Without a session, an incomplete configuration is an error (exit 2, with the list of what is missing), not a guess. This is the equivalent, for a program, of the session asking again.
 
 ## The steps
 
@@ -65,6 +66,7 @@ What can be installed, and what the target is.
 
 Asked when an engine is selected (with several VMs, in **every pass that selected an engine**: the VM is sized from its own components, and the chat interface that shows a model is chosen afterwards, once every VM exists, see [Where the models are shown](#where-the-models-are-shown) below and [spec: several VMs](spec-multi-vm.md#in-the-session)). The user either has a VM imposed (**hardware first**) or has models in mind (**models first**). The detail, the actions and the sizing are in [spec: model fit](spec-model-fit.md):
 
+- **A number is the number of a suggestion, never a model name.** When the list of suggestions is shown, a number outside it is refused and the question is asked again; without a list a bare number is refused too (no engine has a model named `44`).
 - **Hardware first**: the specs of the VM (RAM, GPU memory, cores) give `suggest`; a model the user names goes through `check`.
 - **Models first**: the names give `plan`, which says what VM to ask for, the estimated margin (the sum of what the components of the VM [declare](spec-model-fit.md#declared-resources)) shown apart from the model figure, and which models or components could not be sized. A VM that ends with no model is sized from its components alone, see [a stack with no model](spec-model-fit.md#a-stack-with-no-model).
 - llmfit is optional. Without it the user gives the names, and the models are written with `force` and a warning that they are not checked for fit on the VM.
@@ -84,7 +86,7 @@ Asked when an engine is selected (with several VMs, in **every pass that selecte
 
 Two outcomes, the user picks:
 
-- **A script** for a new VM: `script <file>`, from the configuration that steps 1 to 5 produced (`config edit`, a session; or a file written by a program), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. The configuration is opened again with `config edit <file>`; saving it does not regenerate the scripts, `script` does. With several VMs there is one script per VM, and after them the [next steps](spec-multi-vm.md#next-steps) that the user still has to do by hand.
+- **A script** for a new VM: `script <file>`, from the configuration that steps 1 to 5 produced (`config new`, a session; or a file written by a program), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. The configuration is opened again with `config edit <file>`; saving it does not regenerate the scripts, `script` does. With several VMs there is one script per VM, and after them the [next steps](spec-multi-vm.md#next-steps) that the user still has to do by hand.
 - **A change on this machine**: `sudo easy-cs-ai apply <file>`. It changes the machine, so a program does it only with the explicit agreement of the user.
 
 ### 7. Report
@@ -121,7 +123,7 @@ The decisions of a scenario are written **by hand**, as a program would write th
 
 ## Implementation status
 
-- **Session**: `vm_script/config.sh` and `vm_script/lib/questions.sh`, reached through `easy-cs-ai config edit`; the scripts of step 6 are `vm_script/script.sh`, reached through `easy-cs-ai script`.
+- **Session**: `vm_script/config.sh` and `vm_script/lib/questions.sh`, reached through `easy-cs-ai config new` and `easy-cs-ai config edit`; the scripts of step 6 are `vm_script/script.sh`, reached through `easy-cs-ai script`.
 - **Programmatic**: `install_scripts/lib/cli-ai.sh` (`catalog`, `host`, `config`, `guide`, the result documents) and `install_scripts/lib/cli-apply.sh` (the validation shared with the session).
 - **Guide**: its text is the single file `install_scripts/guide.txt`, shipped in the package (next to `ranks.conf`) and printed as it is by `guide`. It is written by hand for the final reader, so a change to a step updates this spec, the session and `guide.txt` together. `tests/unit/cli_ai.bats` checks that it names the commands and the two orders of the models step, not that it follows this spec.
 - **Parity test**: `tests/unit/parity.bats`, with the scenarios in `tests/unit/parity/` (a fake catalog and the shipped scripts). It does not cover an agent: it holds that the configuration the guide leads to is the one the session produces.

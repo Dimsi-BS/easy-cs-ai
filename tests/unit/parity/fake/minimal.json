@@ -1,5 +1,12 @@
 {
-  "schema_version": 1,
-  "components": [{ "type": "proxy", "name": "prox" }, { "type": "engine", "name": "ollama" }],
-  "models": [{ "name": "m1", "force": true }]
+  "schema_version": 2,
+  "vms": [
+    {
+      "name": "vm-1",
+      "components": [
+        { "component": "proxy/prox" },
+        { "component": "engine/ollama", "models": [{ "model": "m1", "force": true }] }
+      ]
+    }
+  ]
 }
