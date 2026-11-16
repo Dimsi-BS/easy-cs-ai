@@ -589,9 +589,9 @@ FAKE
     GEN_ARGS=(); OUTFILE=cfg.json
     # VM1 (engine role, "engine"): llmfit, proxy, engine, hardware first, no spec, no model.
     # VM2 (engine role, "engine-2"): same, but 16 GB RAM, no GPU and 4 cores. VM3 (web role).
-    ask engine "" "" "" "" "" "" "" "" "" "" "" "" y \
+    ask engine "" "" "" "" "" "" "" h "" "" "" "" y \
         y \
-        engine "" "" "" "" "" "" "" "" 16 "" 4 "" y \
+        engine "" "" "" "" "" "" "" h 16 "" 4 none y \
         y \
         web "" "" "" "" "" y \
         n

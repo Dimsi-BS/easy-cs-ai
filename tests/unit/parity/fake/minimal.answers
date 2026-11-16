@@ -7,7 +7,7 @@ y  # engine
   # engine: ollama, the rank 1
 n  # chat-interface
   # ollama --port, the default (api-key is a secret, not asked)
-  # llmfit is not installed here: install it now? no
+n  # llmfit is not installed here: install it now? no
 m1  # models to add
 y  # m1 needs a proxy: add prox? yes
 y  # confirm

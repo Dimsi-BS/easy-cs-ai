@@ -10,7 +10,7 @@ y  # chat-interface
 y  # chat requires proxy: add proxy prox?
 9999  # ollama --port
   # chat --allow-registration: the default (true), which warns
-  # llmfit is not installed here: install it now? no
+n  # llmfit is not installed here: install it now? no
 m1, m2  # models to add
 y  # confirm
   # add another VM: no (default)

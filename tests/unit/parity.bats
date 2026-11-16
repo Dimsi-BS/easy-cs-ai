@@ -266,6 +266,17 @@ parity_vms() {
 
 # every_option_is_asked (the options that only matter with another choice, relevant_when, are not asked by default): for each component of the catalog, a session that selects it (and accepts
 # what it requires) asks every option of it, and says it will generate a secret.
+# _engine_tail <catalog> <type> <name>: with an engine the models step follows the options, and it
+# looks for llmfit first, so its question (install it now?) has no default: one empty answer for
+# each option of the engine, then no.
+_engine_tail() {
+    [[ "$2" == engine ]] || return 0
+    local n
+    n="$(jq -r --arg t "$2" --arg n "$3" '[.components[] | select(.type == $t and .name == $n) | .describe.options[]? | select((.secret // false) == false and .relevant_when == null)] | length' <<<"$1")"
+    printf '"""+bs+"""n%.0s' $(seq 1 "$n")
+    printf 'n"""+bs+"""n'
+}
+
 every_option_is_asked() {
     local catalog selection type name opt secret a asked=0
     run --separate-stderr bash "$CLI" catalog --json
@@ -277,7 +288,7 @@ every_option_is_asked() {
         selection="$(jq -r --arg t "$type" --arg n "$name" '. as $c | $c.types[]
             | select(. as $x | $c.components | any(.type == $x)) | if . == $t then $n else "none" end' <<<"$catalog")"
         # the role and the name of the VM (defaults), then "Add a <type>?" and the choice for each type
-        { printf '\n\n'; while IFS= read -r a; do if [[ "$a" == none ]]; then printf 'n\n'; else printf 'y\n%s\n' "$a"; fi; done <<<"$selection"; printf '\n%.0s' {1..200}; } >stdin.txt
+        { printf '\n\n'; while IFS= read -r a; do if [[ "$a" == none ]]; then printf 'n\n'; else printf 'y\n%s\n' "$a"; fi; done <<<"$selection"; _engine_tail "$catalog" "$type" "$name"; printf '\n%.0s' {1..200}; } >stdin.txt
         session_cfg cfg.json
         [ "$status" -eq 0 ]
         [ -s cfg.json ]

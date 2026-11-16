@@ -8,7 +8,7 @@ y  # engine
   # engine: ollama
 n  # chat-interface
   # ollama --port, the default
-  # order: hardware first, the default
+h  # order: hardware first
 16  # RAM of the VM in GB
   # GPU memory: none
 4  # CPU cores

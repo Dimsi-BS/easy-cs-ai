@@ -48,10 +48,10 @@ A model name is engine-specific and nothing tells the administrator whether it f
 
 | Choice | Meaning |
 | --- | --- |
-| `h` (hardware first, default) | The administrator gives the specs of the VM, the session suggests the models that fit them (below) |
+| `h` (hardware first) | The administrator gives the specs of the VM, the session suggests the models that fit them (below) |
 | `m` (models first) | The administrator names the models, the session computes the VM they need, see [Recommended VM](#recommended-vm) |
 
-The choice is offered again as the default when the step is redone, which is how the administrator switches order. In the `m` order no spec is asked: the cores given in an earlier run of this step, in the `h` order and **for the same VM**, if any, are the vCPU of the recommendation. The cores belong to the VM they were given for: with [several VMs](spec-multi-vm.md#in-the-session) a pass of a VM with no engine (a `web` VM, for instance) has no models step, so it never has any, and the cores of the engine VM are never the vCPU of the web VM. In the `h` order, the step asks for the **specs of the target VM**, each answer optional (empty means "do not size on it"):
+The choice **has no default**: it is asked right after llmfit was looked for, a wait, so that Enter alone is not an answer ([journey, rule 5](spec-journey.md#rules)). It is asked again each time the step is redone, which is how the administrator switches order. In the `m` order no spec is asked: the cores given in an earlier run of this step, in the `h` order and **for the same VM**, if any, are the vCPU of the recommendation. The cores belong to the VM they were given for: with [several VMs](spec-multi-vm.md#in-the-session) a pass of a VM with no engine (a `web` VM, for instance) has no models step, so it never has any, and the cores of the engine VM are never the vCPU of the web VM. In the `h` order, the step asks for the **specs of the target VM**, each answer optional (empty means "do not size on it"):
 
 | Question | Forwarded as |
 | --- | --- |
@@ -161,7 +161,7 @@ The rules:
 
 llmfit has two roles around the session, and neither is mandatory.
 
-- **On the machine running the session** (the administrator's own): it only feeds [Choosing models in a session](#choosing-models-in-a-session). It is available when `provisioning llmfit status` reports it installed and healthy, whatever the stack chosen for the VM. If it is not, and the package ships it, the step **offers to install it now** (`llmfit is not installed here: install it now, to get model suggestions and a fit check? (y/n)`, default `n`, asked once per session, not again when the step is redone) so that the session goes on with the specs and the suggestions.
+- **On the machine running the session** (the administrator's own): it only feeds [Choosing models in a session](#choosing-models-in-a-session). It is available when `provisioning llmfit status` reports it installed and healthy, whatever the stack chosen for the VM. If it is not, and the package ships it, the step **offers to install it now** (`llmfit is not installed here: install it now, to get model suggestions and a fit check? (y/n)`, **no default** (it follows the check of llmfit, a wait, so `y` or `n` is typed), asked once per session, not again when the step is redone) so that the session goes on with the specs and the suggestions.
   - The answer is the consent: nothing is installed without a `y`. The install is `provisioning llmfit install` run on this machine (the session's "fresh VM" planning, `EASY_CS_AI_ASSUME_EMPTY`, is lifted for it), with `sudo` when the session does not run as root. It needs root and the network (the release archive is downloaded and its checksum verified), so an administrator on a restricted network answers `n`.
   - Declined, impossible (no `sudo`) or failed (no network, checksum, exit code of the script): a message with the command to run later (`sudo easy-cs-ai install provisioning llmfit`), a warning for a failure, then the model names as free text. The session never fails because of llmfit, and a failed install leaves the session as if it had been declined.
   - A package that ships no llmfit offers nothing, and says so. The same package has no `plan` either, see [a stack with no model](#a-stack-with-no-model).

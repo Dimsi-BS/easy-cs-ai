@@ -27,7 +27,7 @@ false  # librechat --allow-registration
   # librechat --version
   # librechat --health-timeout
   # librechat --lock-timeout
-  # llmfit is not installed here: install it now? no
+n  # llmfit is not installed here: install it now? no
 llama3.2:3b  # models to add
 y  # confirm
   # add another VM: no (default)

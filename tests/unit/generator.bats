@@ -591,7 +591,7 @@ FAKE
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
     # llmfit, proxy, engine, chat; specs (RAM, GPU, cores); models: the first suggestion, then two typed names
-    ask "" none ollama none "" 16 "" 4 "1, big, unknown" y y
+    ask "" none ollama none h 16 "" 4 "1, big, unknown" y y
     [ "$status" -eq 0 ]
     # best score first, only the Ollama tags, nothing that is Too Tight
     [[ "$stderr" == *" 1) llama3.2:3b"*" 2) small:1b"* ]]
@@ -615,7 +615,7 @@ FAKE
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
     export EASY_CS_AI_COLOR=always
-    ask "" none ollama none "" 16 "" 4 "1" y y
+    ask "" none ollama none h 16 "" 4 "1" y y
     [ "$status" -eq 0 ]
     esc=$'\033'
     [[ "$stderr" == *"${esc}[32mGood"* ]]
@@ -623,14 +623,14 @@ FAKE
     plain="$(sed "s/${esc}\[[0-9;]*m//g" <<<"$stderr")"
     [[ "$plain" == *"   1) llama3.2:3b                  Good, needs 2.4 GB"* ]]
     export EASY_CS_AI_COLOR=never
-    ask "" none ollama none "" 16 "" 4 "1" y y
+    ask "" none ollama none h 16 "" 4 "1" y y
     [[ "$stderr" == *"   1) llama3.2:3b                  Good, needs 2.4 GB"* && "$stderr" != *"$esc"* ]]
 }
 
 @test "the specs are optional, and without any there is no suggestion and no check" {
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask "" none ollama none "" "" "" "" m1 y y
+    ask "" none ollama none h "" "" "" m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"no spec given"* ]]
     ! grep -q -e suggest -e check -e plan "$CALLS"
@@ -640,7 +640,7 @@ FAKE
 @test "a spec that is not a positive whole number is asked again" {
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask "" none ollama none "" abc 0 8 "" "" "" y
+    ask "" none ollama none h abc 0 8 "" "" none y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"'abc' is not a positive whole number"* ]]
     [[ "$stderr" == *"'0' is not a positive whole number"* ]]
@@ -650,19 +650,19 @@ FAKE
 @test "redoing the models offers the specs given before as defaults" {
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask "" none ollama none "" 16 "" 4 "" m "" "" "" "" m1 y y
+    ask "" none ollama none h 16 "" 4 none m h "" "" "" m1 y y
     [ "$status" -eq 0 ]
     [ "$(grep -c '^suggest --target-ram 16 --target-cpu-cores 4$' "$CALLS")" -eq 2 ]
     [[ "$stderr" == *"RAM of the VM in GB [16]"* ]]
 }
 
-@test "llmfit shipped but not installed here: it is offered, declined by default, then typed names" {
+@test "llmfit shipped but not installed here: it is offered, with no default, declined, then typed names" {
     make_llmfit
     export FAKE_LLMFIT=missing
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask "" none ollama none "" m1 y y
+    ask "" none ollama none n m1 y y
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"llmfit is not installed here: install it now"*"(y/n) [n]"* ]]
+    [[ "$stderr" == *"llmfit is not installed here: install it now"*"fit check? (y/n): "* ]]
     [[ "$stderr" == *"sudo easy-cs-ai install provisioning llmfit"* ]]
     ! grep -q -e suggest -e check -e install "$CALLS"
     [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m1"]' ]
@@ -676,7 +676,7 @@ FAKE
     make_llmfit
     export FAKE_LLMFIT=missing
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask "" none ollama none y "" 16 "" "" 1 y y
+    ask "" none ollama none y h 16 "" "" 1 y y
     [ "$status" -eq 0 ]
     grep -qx install "$CALLS"
     grep -qx 'suggest --target-ram 16' "$CALLS"
@@ -707,7 +707,7 @@ FAKE
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
     # llmfit is installed on this machine whatever the stack: the specs are still asked
-    ask none none ollama none "" "" "" "" m1 y y
+    ask none none ollama none h "" "" "" m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"with none, the models are added unchecked"* ]]
     [ "$(jq -c '.vms[0].components[] | select(.component == "engine/ollama") | .models' cfg.json)" = '[{"model":"m1","force":true}]' ]
@@ -718,19 +718,20 @@ FAKE
 @test "no llmfit in the stack and no model: no force, no warning" {
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask none none ollama none "" "" "" "" "" y
+    ask none none ollama none h "" "" "" "" y
     [ "$status" -eq 0 ]
     [ "$(jq '[.vms[0].components[] | has("models")] | any' cfg.json)" = "false" ]
     [[ "$stderr" != *"not checked for fit"* ]]
 }
 
-@test "the order is asked first, hardware first by default, and a wrong answer is asked again" {
+@test "the order is asked first, with no default, and a wrong or an empty answer is asked again" {
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask "" none ollama none x "" "" "" "" m1 y y
+    ask "" none ollama none x "" h "" "" "" m1 y y
     [ "$status" -eq 0 ]
     [[ "$stderr" == *"'x' is not h or m"* ]]
-    [[ "$stderr" == *"Order, hardware first (h) or models first (m) [h]"* ]]
+    [[ "$stderr" == *"Order, hardware first (h) or models first (m): "* && "$stderr" != *"(m) [h]"* ]]
+    [[ "$stderr" == *"Enter alone is not an answer"* ]]
     [[ "$stderr" == *"RAM of the VM in GB"* ]]
     [[ "$stderr" != *"Recommended VM"* ]]
 }
@@ -778,7 +779,7 @@ FAKE
 @test "models first: the cores given before are passed to the plan as the vCPU" {
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask "" none ollama none "" "" "" 4 "" m m "m1, unknown" y y
+    ask "" none ollama none h "" "" 4 none m m "m1, unknown" y y
     [ "$status" -eq 0 ]
     grep -qx 'plan m1@ollama unknown@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama --target-cpu-cores 4' "$CALLS"
     [[ "$stderr" == *"vcpu: 4"* ]]
@@ -799,9 +800,9 @@ FAKE
 @test "models first: the order is offered again when the step is redone, and the recommendation follows the models" {
     make_llmfit
     GEN_ARGS=(); OUTFILE=cfg.json
-    ask "" none ollama none m m1 y m "" m2 y
+    ask "" none ollama none m m1 y m m m2 y
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"Order, hardware first (h) or models first (m) [m]"* ]]
+    [[ "$stderr" == *"Order, hardware first (h) or models first (m): "* ]]
     grep -qx 'plan m1@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama' "$CALLS"
     grep -qx 'plan m2@ollama --component provisioning/llmfit --component proxy/prox --component engine/ollama' "$CALLS"
     # the summary shows the second one only
@@ -906,4 +907,37 @@ FAKE
     [ "$status" -eq 0 ]
     [ -s cfg.json ]
     [[ "$stderr" != *"[ERROR]"* ]]
+}
+
+@test "after a slow step the question has no default, Enter alone is refused, and none says nothing" {
+    make_llmfit
+    GEN_ARGS=(); OUTFILE=cfg.json
+    # the suggestions are slow: the models question that follows is asked again on an empty answer
+    ask "" none ollama none h 16 "" 4 "" none y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"Enter alone is not an answer"* ]]
+    [[ "$stderr" == *"empty for none"* || "$stderr" == *"none for none"* ]]
+    [[ "$stderr" != *"comma separated, empty for none)"* ]]
+    [ "$(jq '[.vms[0].components[] | has("models")] | any' cfg.json)" = "false" ]
+}
+
+@test "a number outside the list of suggestions is refused and asked again, it is never a model name" {
+    make_llmfit
+    GEN_ARGS=(); OUTFILE=cfg.json
+    ask "" none ollama none h 16 "" 4 44 0 1 y y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"'44' is not in the list: a number from 1 to "* ]]
+    [[ "$stderr" == *"'0' is not in the list"* ]]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["llama3.2:3b"]' ]
+    ! grep -q 'check 44' "$CALLS"
+}
+
+@test "without a list a bare number is not a model name either" {
+    make_llmfit
+    export FAKE_LLMFIT=missing
+    GEN_ARGS=(); OUTFILE=cfg.json
+    ask "" none ollama none n 7 m1 y y
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"'7' is not a model name: there is no list to pick a number from"* ]]
+    [ "$(jq -c '[.vms[0].components[].models[]?.model]' cfg.json)" = '["m1"]' ]
 }

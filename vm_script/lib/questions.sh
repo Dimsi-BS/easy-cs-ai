@@ -14,16 +14,33 @@ PASS_REQUIRED=""           # the type that defines the VM of this pass, which `n
 VM_MODE=""                 # "", or the VM of the pass when the stack is split: engine or web
 PROXY_DECLINED=0           # the proxy of the engine VM was refused: back to its components
 
-# _read <prompt> [<default>]: answer in REPLY. End of input cancels the session.
+# AFTER_SLOW: the question that comes next follows a step that took time (a check of llmfit, a
+# list of suggestions, a sizing). A person leaning on Enter while waiting would take its default
+# without reading it, so that question has no default and Enter alone is not an answer
+# (docs/spec-journey.md#rules). It is set by the slow steps and cleared by the answer.
+AFTER_SLOW=0
+LAST_NODEFAULT=""   # the prompt of the last question that had no default, so that asking it again
+                    # after a wrong answer keeps it without one
+
+# _read <prompt> [<default>]: answer in REPLY. End of input cancels the session. After a slow
+# step the default is not offered and an empty answer is refused, asked again.
 _read() {
     local prompt="$1" default="${2:-}"
-    printf '%s%s: ' "$prompt" "${default:+ $(style dim "[$default]")}" >&2
-    if ! IFS= read -r REPLY; then
-        printf '\n' >&2
-        log_info "no more input, session cancelled, nothing written"
-        exit 0
-    fi
-    [[ -n "$REPLY" ]] || REPLY="$default"
+    [[ "$prompt" != "$LAST_NODEFAULT" ]] || AFTER_SLOW=1
+    LAST_NODEFAULT=""
+    ((! AFTER_SLOW)) || { default=""; LAST_NODEFAULT="$prompt"; }
+    while :; do
+        printf '%s%s: ' "$prompt" "${default:+ $(style dim "[$default]")}" >&2
+        if ! IFS= read -r REPLY; then
+            printf '"""+bs+"""n' >&2
+            log_info "no more input, session cancelled, nothing written"
+            exit 0
+        fi
+        [[ -z "$REPLY" ]] || break
+        ((AFTER_SLOW)) || { REPLY="$default"; break; }
+        log_info "this follows a step that takes time: Enter alone is not an answer, type one (none for nothing)"
+    done
+    AFTER_SLOW=0
 }
 
 _describe_of() {
@@ -219,6 +236,7 @@ _offer_llmfit() {
         log_warn "installing llmfit needs root and sudo is not available: run it as root (easy-cs-ai install provisioning llmfit)"
         return 0
     fi || log_warn "llmfit could not be installed, type the model names"
+    AFTER_SLOW=1
 }
 
 # _read_spec <prompt> <variable>: a positive whole number or empty, asked again otherwise.
@@ -260,6 +278,7 @@ _suggest_models() {
     while read -r name; do
         [[ -n "$name" ]] && SUGGESTIONS+=("$name")
     done < <(sed -nE 's/^ *[0-9]+\) ([^ ]+).*/\1/p' <<<"$out")
+    AFTER_SLOW=1
 }
 
 # _print_suggestions <text>: the list of the action as it is, with the fit level in its colour
@@ -295,6 +314,7 @@ _check_model() {
     elif [[ "$(jq -r '.fits' <<<"$out")" != true ]]; then
         SESSION_FIT_WARN+=("$model: $(jq -r '.reason' <<<"$out")")
     fi
+    AFTER_SLOW=1
 }
 
 # _read_order: hardware first or models first, offered again as the default when redone.
@@ -417,6 +437,7 @@ step_models() {
     # Looking for llmfit and asking its status can take a moment before anything is asked.
     [[ ! -f "$(script_path provisioning llmfit)" ]] || printf '  checking whether llmfit is available on this machine, a few seconds...
 ' >&2
+    [[ ! -f "$(script_path provisioning llmfit)" ]] || AFTER_SLOW=1
     _llmfit_ready || _offer_llmfit
     if _llmfit_ready; then
         script="$(script_path provisioning llmfit)"
@@ -435,17 +456,39 @@ step_models() {
             fi
         fi
     fi
-    prompt="Models to add on ${SEL[engine]} (comma separated, empty for none)"
-    ((${#SUGGESTIONS[@]})) && prompt="Models to add on ${SEL[engine]} (names or numbers of the list, comma separated, empty for none)"
-    _read "$prompt" "$default_models"
+    local none_for="empty for none" bad
+    ((! AFTER_SLOW)) || none_for="none for none"
+    prompt="Models to add on ${SEL[engine]} (comma separated, $none_for)"
+    ((${#SUGGESTIONS[@]})) && prompt="Models to add on ${SEL[engine]} (names or numbers of the list, comma separated, $none_for)"
+    while :; do
+        _read "$prompt" "$default_models"
+        [[ "$REPLY" != none ]] || REPLY=""
+        # a bare number is the number of a suggestion, never a model name: one outside the list is
+        # refused and asked again, it is not taken for a model
+        bad=""
+        local IFS=','
+        for m in $REPLY; do
+            m="${m#"${m%%[![:space:]]*}"}"
+            m="${m%"${m##*[![:space:]]}"}"
+            if [[ "$m" =~ ^[0-9]+$ ]] && { ((${#SUGGESTIONS[@]} == 0)) || ((10#$m < 1 || 10#$m > ${#SUGGESTIONS[@]})); }; then bad="$m"; break; fi
+        done
+        IFS=$' \t\n'
+        [[ -z "$bad" ]] && break
+        if ((${#SUGGESTIONS[@]})); then
+            log_warn "'$bad' is not in the list: a number from 1 to ${#SUGGESTIONS[@]}, or a model name"
+        else
+            log_warn "'$bad' is not a model name: there is no list to pick a number from"
+        fi
+        AFTER_SLOW=1
+    done
     local IFS=','
     for m in $REPLY; do
         m="${m#"${m%%[![:space:]]*}"}"
         m="${m%"${m##*[![:space:]]}"}"
         [[ -n "$m" ]] || continue
         picked=0
-        if [[ "$m" =~ ^[1-9][0-9]*$ ]] && ((m <= ${#SUGGESTIONS[@]})); then
-            m="${SUGGESTIONS[m - 1]}"
+        if [[ "$m" =~ ^[0-9]+$ ]]; then
+            m="${SUGGESTIONS[10#$m - 1]}"
             picked=1
         else
             for s in "${SUGGESTIONS[@]}"; do [[ "$s" == "$m" ]] && picked=1; done

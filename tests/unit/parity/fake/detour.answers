@@ -11,7 +11,7 @@ y  # chat-interface
 y  # add proxy prox
 9999  # ollama --port
   # chat --allow-registration: the default
-  # llmfit is not installed here: install it now? no
+n  # llmfit is not installed here: install it now? no
 wrong  # models to add
 m  # redo the models
 m1, m2  # models to add
