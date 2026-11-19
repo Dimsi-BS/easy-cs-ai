@@ -126,6 +126,14 @@ There is no list of `install` / `add` commands to generate: the orchestration, o
 - **Header**: a comment recording the generator version, the date (ISO 8601 UTC), the package version, the components with their versions and the non-secret options, so a script found on a VM can be traced back. The version written for the generator is the **same string** as the package version (`0.1.0-rc3`, not `0.1.0`), and a component with no version or no option writes its line without a trailing space. When the VM has a name (a session always writes it, even for one VM), one more line gives the VM and its rank (`VM: engine (1 of 2)`, `VM: a (1 of 1)`); a lone VM with no name has no such line, and its script is written at the path of `--output` as it is.
 - It is a **snapshot**: it pins one package version, regenerate to upgrade.
 
+### Follow-up scripts
+
+**Proposed, not implemented** ([decision: no command typed on a VM](decision-no-manual-commands.md)). The principle: a person never types an `easy-cs-ai` command on a VM, so the generator writes, besides the post-install script, **the scripts of the steps that follow** when the configuration has any. For a link between two VMs (a model shown in the chat interface of another VM) that is a **link script** per chat-interface VM, `<output>-<vm>-link.<extension>`, fed by a **link file** that the post-install script of the engine VM writes at run time (the URL of each model, the API key and the certificate: never generated, see [secrets](#open-questions)). The details are in [spec: several VMs](spec-multi-vm.md#follow-up-scripts).
+
+- They are written with the post-install scripts, all or nothing, with the same header (`VM:` line), and listed as stale like them.
+- They contain no logic of their own: they call the actions of the contract (`list-upstreams`, `show-key`, `add-endpoint`), like the post-install script calls `apply`.
+- A configuration with no link between two VMs gives none: the post-install scripts are all there is.
+
 ## Exit codes
 
 The [contract codes](spec-script-contract.md#exit-codes) with the same meaning:
