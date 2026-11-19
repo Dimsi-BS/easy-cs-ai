@@ -33,6 +33,7 @@ The behaviour is specified in [spec: VM script generator](spec-vm-generator.md).
 - `config edit` is the **only interactive part** of the project; `script` is not. The scripts and the CLI keep their rule of never prompting, which is what makes the generated script usable unattended.
 - The generator never hardcodes a component or an option: it reads the shipped scripts and their `describe`. A new component needs no generator change.
 - A generated script is a snapshot: it pins a package version and embeds a configuration, regenerate it to upgrade.
+- **The generator also writes the scripts of what follows the installation** (proposed): a person never types an `easy-cs-ai` command on a VM, see [decision: no command typed on a VM](decision-no-manual-commands.md).
 - The VM needs network access to the package source at run time. Where the package is hosted is open (see below).
 - The layer 1 scripts no longer have to be inlinable by a generator, which relaxes the [script contract](spec-script-contract.md#layout): they must work standalone, and only need `lib/common.sh`.
 - A fully offline script (package embedded) is not planned. It would be added if a real need appears, for example a script copied by hand to an isolated machine.

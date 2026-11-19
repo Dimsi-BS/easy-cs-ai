@@ -84,7 +84,7 @@ Asked when an engine is selected (with several VMs, in **every pass that selecte
 
 Two outcomes, the user picks:
 
-- **A script** for a new VM: `script <file>`, from the configuration that steps 1 to 5 produced (`config edit`, a session; or a file written by a program), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. The configuration is opened again with `config edit <file>`; saving it does not regenerate the scripts, `script` does. With several VMs there is one script per VM, and after them the [next steps](spec-multi-vm.md#next-steps) that the user still has to do by hand.
+- **A script** for a new VM: `script <file>`, from the configuration that steps 1 to 5 produced (`config edit`, a session; or a file written by a program), with the [package source](spec-vm-generator.md#package-source). The user reviews it and runs it on the VM. The configuration is opened again with `config edit <file>`; saving it does not regenerate the scripts, `script` does. With several VMs there is one script per VM, and after them the [next steps](spec-multi-vm.md#next-steps) that the user still has to do. **The user never types an `easy-cs-ai` command on a VM** ([decision](decision-no-manual-commands.md)): what follows the post-install scripts is itself a generated script (the [link script](spec-multi-vm.md#follow-up-scripts) of a VM that shows models of another VM), and what stays for the user is not a command of ours (let the VMs reach one another, copy a file between two VMs).
 - **A change on this machine**: `sudo easy-cs-ai apply <file>`. It changes the machine, so a program does it only with the explicit agreement of the user.
 
 ### 7. Report

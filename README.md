@@ -158,6 +158,8 @@ See [docs/cli-commands](docs/cli-commands.md) for the full command reference and
 
 A generator, run interactively by an administrator, produces the VM post-install script (one per VM when the stack is spread over several VMs; the generator also creates and edits the configuration, see [docs/spec-multi-vm](docs/spec-multi-vm.md)). The generated script is small and self-contained: it downloads the package from a pinned source (version and checksum fixed in the script, a mirror URL for restricted networks), embeds the configuration and hands it to `easy-cs-ai apply`. The package is downloaded rather than embedded because VM user-data is size-limited, see [docs/decision-vm-generator](docs/decision-vm-generator.md).
 
+**Principle (proposed, not implemented): nobody types an `easy-cs-ai` command on a VM.** What a person does on a VM is run a script the generator wrote, or nothing when the cloud runs it as user-data. Besides the post-install script, the generator writes the scripts of the steps that follow when there are any, for instance the *link script* of a web VM that shows the models of an engine VM, fed by a file that the engine VM writes (its URL, API key and certificate: nothing secret is ever generated). See [docs/decision-no-manual-commands](docs/decision-no-manual-commands.md).
+
 ### Apache CloudStack integration
 
 Specified, not implemented: see [docs/spec-cloudstack](docs/spec-cloudstack.md). A new section of the CloudStack UI, to be contributed to [apache/cloudstack](https://github.com/apache/cloudstack) (not an iframe plugin), gives the features of the project from inside Apache CloudStack, for a local AI spread over several VMs (for instance a `web` VM and an `engine` VM):
@@ -189,7 +191,6 @@ Planned work, in dependency order:
 | VM post-install | Engine and web interfaces on several VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [several-VM scenario](tests/integration/README.md#the-scenario-of-several-vms-multi-vmsh) is written |
 | VM post-install | Post-install script              | Written (emitted by the generator), unit-tested |
 | VM post-install | Script generator (`config edit`, `script`) | Written, unit-tested |
-| Package / CLI   | `component` and `exec` commands  | Written, unit-tested with fake components (`component` replaces the types as commands of the root) |
-| VM post-install | Engine and web interfaces on several VMs | Written, unit-tested (one script per VM, the next steps, the certificate and the endpoint link); the [several-VM scenario](tests/integration/README.md#the-scenario-of-several-vms-multi-vmsh) is written |
+| VM post-install | Follow-up scripts (no `easy-cs-ai` command typed on a VM) | Specified ([docs/decision-no-manual-commands](docs/decision-no-manual-commands.md)), not started: a link file written by the engine VM and a link script per web VM |
 | CloudStack      | Topology page (define, create, monitor) | Specified ([docs/spec-cloudstack](docs/spec-cloudstack.md)), not started; depends on the models of the format of version 2 (a model names its engine and its chat interface) and the editor of [several VMs](docs/spec-multi-vm.md) (proposed) |
 | CloudStack      | Status document of the proxy (use of the models) | Specified, not started |

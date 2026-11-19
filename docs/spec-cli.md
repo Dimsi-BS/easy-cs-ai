@@ -414,6 +414,7 @@ Generates the layer 3 scripts from a [configuration](spec-config.md): **one per 
 
 - Without `<file>`, `script` is a usage error (exit 2) whose message points to `easy-cs-ai config edit`, which creates the file.
 - The scripts are written together, all or nothing, and the next steps are printed (step 1 always, the steps of a link when one goes to a chat interface of another VM; see [spec: several VMs](spec-multi-vm.md#next-steps)).
+- **Proposed:** for such a link `script` also writes a link script per chat-interface VM (`<output>-<vm>-link.<extension>`), so that no `easy-cs-ai` command has to be typed on a VM ([decision](decision-no-manual-commands.md)); `--json` would list it in its own entry, to specify with the implementation.
 - `--json` prints the document of `config validate --target fresh --json` extended with the `script` entry (`scripts`, one entry per VM, and `next_steps`), see [spec: capabilities](spec-capabilities.md#commands).
 
 ## The former `generate`
